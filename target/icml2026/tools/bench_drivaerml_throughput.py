@@ -117,6 +117,7 @@ def main() -> None:
     )
     train_loader, val_loaders, test_loaders = build_loaders(config, bundle)
     val_loader = next(iter(val_loaders.values()))
+    test_loader = next(iter(test_loaders.values()))
 
     model = build_model(config, bundle).to(device)
     optimizer = build_optimizer(model.parameters(), config)
@@ -132,6 +133,9 @@ def main() -> None:
         "train_views": len(bundle.train_dataset),
         "val_views": len(next(iter(bundle.val_datasets.values()))),
         "test_views": len(next(iter(bundle.test_datasets.values()))),
+        "train_batches": len(train_loader),
+        "val_batches": len(val_loader),
+        "test_batches": len(test_loader),
     }
     if args.compile:
         model = torch.compile(model)
@@ -190,8 +194,8 @@ def main() -> None:
     train_total = mean(train_times["total"])
     eval_total = mean(eval_times["total"])
     epoch_estimate_s = (
-        len(bundle.train_dataset) * train_total
-        + (len(next(iter(bundle.val_datasets.values()))) + len(next(iter(bundle.test_datasets.values())))) * eval_total
+        len(train_loader) * train_total
+        + (len(val_loader) + len(test_loader)) * eval_total
     )
     result = {
         **summary,
