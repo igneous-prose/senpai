@@ -147,6 +147,19 @@ def _load_npy(path: Path) -> np.ndarray:
     )
 
 
+def _npy_row_count(path: Path) -> int:
+    for candidate in _candidate_artifact_paths(path):
+        if candidate.exists():
+            arr = np.load(candidate, mmap_mode="r")
+            if arr.ndim == 0:
+                return 1
+            return int(arr.shape[0])
+    raise FileNotFoundError(
+        "Could not resolve DrivAerML artifact "
+        f"{path}; checked {[str(candidate) for candidate in _candidate_artifact_paths(path)]}"
+    )
+
+
 def _column(value: np.ndarray) -> np.ndarray:
     arr = np.asarray(value, dtype=np.float32)
     return arr[:, None] if arr.ndim == 1 else arr
@@ -205,6 +218,22 @@ def load_drivaerml_case(root: str | Path, case_id: str) -> DrivAerMLCase:
     )
 
 
+def load_drivaerml_case_point_counts(root: str | Path, case_id: str) -> dict[str, int]:
+    case_dir = _case_dir(Path(root), case_id)
+    surface_count = _npy_row_count(case_dir / "surface_xyz.npy")
+
+    volume_xyz_path = case_dir / "volume_xyz.npy"
+    volume_count = 0
+    if any(candidate.exists() for candidate in _candidate_artifact_paths(volume_xyz_path)):
+        volume_count = _npy_row_count(volume_xyz_path)
+
+    return {
+        "case_id": case_id,
+        "n_surface": surface_count,
+        "n_volume": volume_count,
+    }
+
+
 class DrivAerMLCaseStore:
     """Thin manifest-backed store for the processed DrivAerML PVC layout."""
 
@@ -213,6 +242,7 @@ class DrivAerMLCaseStore:
         self.manifest = _load_manifest(self.manifest_path)
         self.root = _resolve_case_root(self.manifest, override_root=root)
         self.normalizers_path = self.root / "normalizers.json"
+        self._point_count_cache: dict[str, dict[str, int]] = {}
 
     def case_ids(self, split: str, domain: str = "surface") -> list[str]:
         if domain == "surface":
@@ -223,6 +253,13 @@ class DrivAerMLCaseStore:
 
     def load_case(self, case_id: str) -> DrivAerMLCase:
         return load_drivaerml_case(self.root, case_id)
+
+    def case_point_counts(self, case_id: str) -> dict[str, int]:
+        cached = self._point_count_cache.get(case_id)
+        if cached is None:
+            cached = load_drivaerml_case_point_counts(self.root, case_id)
+            self._point_count_cache[case_id] = cached
+        return dict(cached)
 
     def load_normalizers(self) -> dict:
         with self.normalizers_path.open() as f:

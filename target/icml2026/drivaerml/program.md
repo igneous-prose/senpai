@@ -27,6 +27,10 @@ Use the **DrivAerML relative-L2 contract** used by AB-UPT and continued in later
   - Evaluation is done on **unnormalized** targets and predictions.
   - The shared trainer now follows that same contract for paper-facing DrivAerML metrics and logs the validation scalar as `val_primary/surface_rel_l2_pct`, with the matching test scalar logged as `test_primary/surface_rel_l2_pct`.
   - For debugging and auditability, the trainer also logs the raw ratio before percent-scaling as `surface_rel_l2`.
+  - When point-limited DrivAerML sampling is enabled in the shared trainer:
+    - training repeats each case `ceil(N / points_per_view)` times per epoch and draws random point subsets with replacement
+    - validation/test split each case into deterministic strided point views so every point is evaluated exactly once
+    - the reported relative-L2 metric is then re-aggregated back to the exact per-case numerator/denominator over the full case, not averaged over chunk-level scores
 
 - **Field names for literature comparison**
   - Surface:
