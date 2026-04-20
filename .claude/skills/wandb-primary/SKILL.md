@@ -4,7 +4,7 @@
 # SPDX-PackageName: skills
 
 name: wandb-primary
-description: Comprehensive primary skill for agents working with Weights & Biases. Covers both the W&B SDK (training runs, metrics, artifacts, sweeps) and the Weave SDK (GenAI traces, evaluations, scorers). Includes helper libraries, gotcha tables, and data analysis patterns. Use this skill whenever the user asks about W&B runs, Weave traces, evaluations, training metrics, loss curves, model comparisons, or any Weights & Biases data — even if they don't say "W&B" explicitly.
+description: Comprehensive primary skill for agents working with Weights & Biases. Covers both the W&B SDK (training runs, metrics, artifacts, sweeps) and the Weave SDK (GenAI traces, evaluations, scorers). Includes helper libraries, gotcha tables, and data analysis patterns. Use this skill whenever the user asks about W&B runs, Weave traces, evaluations, training metrics, loss curves, model comparisons, or any Weights & Biases data — even if they don't say "W&B" explicitly. Also trigger on training-curve diagnostics questions — run health, divergence, overfit/convergence/plateau, spikes, LR-schedule/grad-norm/grad-histogram reading, dead layers, step-axis choice, and run comparisons.
 ---
 
 # W&B Primary Skill
@@ -65,6 +65,7 @@ This skill covers everything an agent needs to work with Weights & Biases:
 | Build a DataFrame from training runs | **`wandb_helpers.runs_to_dataframe()`** |
 | Extract eval results for analysis | **`weave_helpers.eval_results_to_dicts()`** |
 | Need low-level Weave filtering (CallsFilter, Query) | **Raw Weave SDK** (`weave.init()`, `client.get_calls()`) — see `references/WEAVE_SDK.md` |
+| Judge curve shape (spikes, smoothness, slope, overfit) | **`training_diagnostics` + `curve_plots`** — use the workflow below, then load `references/TRAINING_DIAGNOSTICS.md` for the heuristics |
 
 ---
 
@@ -92,6 +93,31 @@ from wandb_helpers import (
     runs_to_dataframe,       # Convert runs to a clean pandas DataFrame
     diagnose_run,            # Quick diagnostic summary of a training run
     compare_configs,         # Side-by-side config diff between two runs
+    fast_scan_history,       # beta_scan_history (parquet) with scan_history fallback
+)
+
+# X-axis (step metric) detection — ALWAYS confirm before curve analysis
+from step_axis import (
+    list_candidate_step_keys,       # Scan history for plausible step keys
+    guess_step_key_from_workspace,  # Peek at the user's W&B workspace panels
+    format_step_candidates,         # Format candidate choices for user confirmation
+)
+
+# Curve-shape diagnostics (numerical)
+from training_diagnostics import (
+    curve_features,            # Spikes, slopes at every 5%, smoothness, plateau, divergence
+    compare_runs_curves,       # DataFrame of features across many runs
+    lr_schedule_features,      # Warmup / peak / decay shape / restarts
+    grad_norm_features,        # curve_features + kurtosis + dead-layer flag
+    grad_histogram_features,   # Per-(layer, step) stats from W&B histograms
+)
+
+# Chart rendering for LLM vision (Read the returned PNG)
+from curve_plots import (
+    plot_single_run_overview,    # 2x3 composite: train/val/lr/grad-norm/...
+    plot_run_comparison,         # Overlay up to 6 runs on one metric
+    plot_grad_histogram_heatmap, # Layer x step heatmap of grad-hist stat
+    plot_grad_norm_by_layer,     # Small-multiples of per-layer scalar norms
 )
 ```
 
@@ -101,6 +127,7 @@ Read these as needed — they contain full API surfaces and recipes:
 
 - **`references/WEAVE_SDK.md`** — Weave SDK for GenAI traces (`client.get_calls()`, `CallsFilter`, `Query`, stats). Start here for Weave queries.
 - **`references/WANDB_SDK.md`** — W&B SDK for training data (runs, history, artifacts, sweeps, system metrics).
+- **`references/TRAINING_DIAGNOSTICS.md`** — reference heuristics for reading loss / LR / grad-norm / grad-histogram charts. Load this when you are actively interpreting training curves.
 
 ---
 
@@ -305,6 +332,41 @@ report = wr.Report(
 ```
 
 Use `expr.Config("lr")`, `expr.Summary("loss")`, `expr.Tags().isin([...])` for runset filters — not dot-path strings.
+
+---
+
+## Training curve analysis workflow
+
+Reach for this when the user asks whether a run is healthy, why it diverged, whether it overfit, or which of several runs has the best training dynamics.
+
+The loop is: confirm the x-axis, compute features, render a PNG, read the image, write a verdict. Numbers and pictures cross-check each other — the helpers exist so you're not hand-rolling spike detection or slope fits while also trying to interpret them.
+
+### Pin the x-axis first
+
+Different training stacks log different step keys (`_step`, `global_step`, `trainer/global_step`, `epoch`, `train/step`), and picking the wrong one turns an overlay into nonsense. `list_candidate_step_keys(run)` scans the history for plausible columns; `guess_step_key_from_workspace(entity, project)` checks what the W&B workspace actually plots. If both agree on one candidate, say which you picked and move on. If they disagree or there are several plausible choices, ask the user before plotting — this is cheap and avoids silently baking `_step` into a verdict.
+
+### For one run
+
+Render `plot_single_run_overview(run, step_key=step_key)`, Read the PNG, and pair it with a compact feature table from `curve_features` on the metrics that actually exist. If the run logs gradient histograms or per-layer scalar norms, add `plot_grad_histogram_heatmap()` or `plot_grad_norm_by_layer()` — they surface dead layers and vanishing-gradient signatures that the top-line grad-norm scalar hides.
+
+### For multiple runs
+
+`compare_runs_curves()` gives you the ranking table; `plot_run_comparison()` gives you the overlay. Overlays get unreadable past ~6 runs, so rank first, then plot the shortlist — the function will refuse to render more than 6 for exactly this reason.
+
+### Write it up
+
+Keep the summary compact. Don't dump raw history rows or full spike/slope payloads into the response unless you're drilling into a specific anomaly — the helpers already reduce those to scalars for a reason.
+
+```text
+Verdict: <healthy | unstable | overfit | plateaued | diverged | converged>
+Evidence:
+- <specific step range> — <what the metrics and plot show>
+- <specific step range> — <what changed and why it matters>
+Next actions:
+- <concrete hyperparameter, logging, or code change>
+```
+
+When the numbers and the image disagree — and they will — `references/TRAINING_DIAGNOSTICS.md` is where the resolution heuristics live. Load it while you're interpreting, not before.
 
 ---
 

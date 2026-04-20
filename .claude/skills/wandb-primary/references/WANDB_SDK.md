@@ -187,6 +187,16 @@ df = pd.DataFrame(rows)
 
 **Behavior**: Returns ALL logged rows, unsampled. Use when you need precision.
 
+### `run.beta_scan_history()` — faster, parquet-backed (beta)
+
+```python
+# Same shape as scan_history, reads local parquet when available
+for row in run.beta_scan_history(keys=["loss"], page_size=1000):
+    ...
+```
+
+**Behavior**: Reads the run's exported parquet via wandb-core instead of paginating the API — significantly faster, especially on repeat queries. W&B flags this as "still in development," but we rely on it across the curve-diagnostics helpers; `wandb_helpers.fast_scan_history(run, ...)` is the thin wrapper you should call rather than the beta method directly.
+
 ### When to use which
 
 | Use case | Method |

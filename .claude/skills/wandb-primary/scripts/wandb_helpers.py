@@ -20,7 +20,41 @@ Usage (in sandbox):
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, Iterator
+
+import pandas as pd
+
+
+def fast_scan_history(
+    run: Any,
+    keys: list[str] | None = None,
+    page_size: int = 1000,
+    min_step: int = 0,
+    max_step: int | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Iterate a run's history via `beta_scan_history` (local parquet, no API round-trips)."""
+    yield from run.beta_scan_history(
+        keys=keys,
+        page_size=page_size,
+        min_step=min_step,
+        max_step=max_step,
+    )
+
+
+def discover_history_keys(
+    run: Any,
+    predicate: Callable[[str, Any], bool],
+    max_rows: int = 500,
+) -> list[str]:
+    """Find history keys matching `predicate` — useful for sparsely-logged keys."""
+    found: set[str] = set()
+    for i, row in enumerate(fast_scan_history(run)):
+        for key, value in row.items():
+            if predicate(key, value):
+                found.add(key)
+        if found or i + 1 >= max_rows:
+            break
+    return sorted(found)
 
 
 # ---------------------------------------------------------------------------
@@ -32,19 +66,7 @@ def runs_to_dataframe(
     limit: int = 200,
     metric_keys: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert W&B runs to a list of flat dicts (ready for pd.DataFrame).
-
-    Always slices runs to avoid loading entire projects into memory.
-
-    Args:
-        runs: W&B Runs object from api.runs().
-        limit: Max runs to process (default 200).
-        metric_keys: Summary metric keys to include. If None, includes
-                     "loss", "val_loss", "accuracy".
-
-    Returns:
-        List of dicts with run metadata + config + selected metrics.
-    """
+    """Flatten up to `limit` runs into pd.DataFrame-ready dicts (metadata + config + summary metrics)."""
     if metric_keys is None:
         metric_keys = ["loss", "val_loss", "accuracy"]
 
@@ -72,22 +94,8 @@ def runs_to_dataframe(
 # ---------------------------------------------------------------------------
 
 def diagnose_run(run: Any) -> dict[str, Any]:
-    """Quick diagnostic summary of a training run.
-
-    Loads the full loss history and checks for convergence, overfitting,
-    NaN values, and other common training issues.
-
-    Args:
-        run: A W&B Run object from api.run().
-
-    Returns:
-        Dict with diagnostic keys: total_steps, final_loss, min_loss,
-        min_loss_step, has_nan, final_10pct_mean, train_val_gap,
-        likely_overfit, converged.
-    """
-    import pandas as pd
-
-    df = pd.DataFrame(list(run.scan_history(keys=["loss", "val_loss"])))
+    """Quick diagnostic summary: convergence, overfit gap, NaNs, tail stats."""
+    df = pd.DataFrame(list(fast_scan_history(run, keys=["loss", "val_loss"])))
     loss = df["loss"].dropna()
 
     diagnostics: dict[str, Any] = {
@@ -124,17 +132,7 @@ def diagnose_run(run: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def compare_configs(run_a: Any, run_b: Any) -> list[dict[str, Any]]:
-    """Side-by-side config comparison between two W&B runs.
-
-    Returns only the keys that differ between the two runs.
-
-    Args:
-        run_a: First W&B Run object.
-        run_b: Second W&B Run object.
-
-    Returns:
-        List of dicts with: key, run_a_name, run_a_value, run_b_name, run_b_value
-    """
+    """Return config keys that differ between two runs, with both values."""
     config_a = {k: v for k, v in run_a.config.items() if not k.startswith("_")}
     config_b = {k: v for k, v in run_b.config.items() if not k.startswith("_")}
 
