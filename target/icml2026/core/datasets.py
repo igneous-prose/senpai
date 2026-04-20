@@ -186,8 +186,9 @@ class DrivAerMLCaseDataset(Dataset):
             counts = self.store.case_point_counts(case_id)
             surface_views = self._view_count(counts["n_surface"], self.max_surface_points)
             view_count = surface_views
-            if self.sampling_mode == "train_random" and not self.surface_only:
-                view_count = max(view_count, self._view_count(counts["n_volume"], self.max_volume_points))
+            if not self.surface_only:
+                volume_views = self._view_count(counts["n_volume"], self.max_volume_points)
+                view_count = max(view_count, volume_views)
             for view_index in range(view_count):
                 views.append(
                     DrivAerMLPointView(
@@ -250,6 +251,9 @@ class DrivAerMLCaseDataset(Dataset):
                 volume_y = volume_y.index_select(0, volume_idx)
             metadata["n_volume_full"] = int(case.volume_x.shape[0])  # type: ignore[union-attr]
             metadata["n_volume_loaded"] = int(volume_x.shape[0])
+            metadata["volume_view_index"] = int(view.view_index)
+            metadata["volume_view_count"] = int(view.view_count)
+            metadata["volume_sampling_mode"] = view.sampling_mode
 
         sample = CaseSample(
             case_id=case.case_id,
