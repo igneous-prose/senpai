@@ -230,13 +230,19 @@ class DrivAerMLCaseDataset(Dataset):
 
     def __getitem__(self, idx: int) -> CaseSample:
         view = self.views[idx]
-        case = self.store.load_case(view.case_id)
+        counts = self.store.case_point_counts(view.case_id)
+        surface_idx = self._surface_indices(counts["n_surface"], view)
+        volume_idx = None if self.surface_only else self._volume_indices(counts["n_volume"], view)
+        case = self.store.load_case(
+            view.case_id,
+            surface_rows=None if surface_idx is None else surface_idx.numpy(),
+            volume_rows=None if volume_idx is None else volume_idx.numpy(),
+        )
         metadata = dict(case.metadata)
 
-        surface_idx = self._surface_indices(case.surface_x.shape[0], view)
-        surface_x = case.surface_x if surface_idx is None else case.surface_x.index_select(0, surface_idx)
-        surface_y = case.surface_y if surface_idx is None else case.surface_y.index_select(0, surface_idx)
-        metadata["n_surface_full"] = int(case.surface_x.shape[0])
+        surface_x = case.surface_x
+        surface_y = case.surface_y
+        metadata["n_surface_full"] = int(counts["n_surface"])
         metadata["n_surface_loaded"] = int(surface_x.shape[0])
         metadata["surface_view_index"] = int(view.view_index)
         metadata["surface_view_count"] = int(view.view_count)
@@ -245,11 +251,7 @@ class DrivAerMLCaseDataset(Dataset):
         volume_x = None if self.surface_only else case.volume_x
         volume_y = None if self.surface_only else case.volume_y
         if volume_x is not None and volume_y is not None:
-            volume_idx = self._volume_indices(volume_x.shape[0], view)
-            if volume_idx is not None:
-                volume_x = volume_x.index_select(0, volume_idx)
-                volume_y = volume_y.index_select(0, volume_idx)
-            metadata["n_volume_full"] = int(case.volume_x.shape[0])  # type: ignore[union-attr]
+            metadata["n_volume_full"] = int(counts["n_volume"])
             metadata["n_volume_loaded"] = int(volume_x.shape[0])
             metadata["volume_view_index"] = int(view.view_index)
             metadata["volume_view_count"] = int(view.view_count)

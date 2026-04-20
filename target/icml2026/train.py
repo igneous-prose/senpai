@@ -68,6 +68,9 @@ class TrainConfig:
     ema_decay: float = 0.999
     ema_start_step: int = 50
     num_workers: int = 0
+    pin_memory: bool = True
+    persistent_workers: bool = True
+    prefetch_factor: int = 4
     debug: bool = False
     max_train_batches: int = 0
     max_eval_batches: int = 0
@@ -488,21 +491,29 @@ def build_loaders(config: TrainConfig, bundle: DatasetBundle) -> tuple[DataLoade
         )
         shuffle = False
 
+    loader_kwargs = {
+        "num_workers": config.num_workers,
+        "pin_memory": config.pin_memory and torch.cuda.is_available(),
+    }
+    if config.num_workers > 0:
+        loader_kwargs["persistent_workers"] = config.persistent_workers
+        loader_kwargs["prefetch_factor"] = config.prefetch_factor
+
     train_loader = DataLoader(
         bundle.train_dataset,
         batch_size=config.batch_size,
         shuffle=shuffle if train_sampler is None else False,
         sampler=train_sampler,
-        num_workers=config.num_workers,
         collate_fn=train_collate,
+        **loader_kwargs,
     )
     val_loaders = {
         name: DataLoader(
             dataset,
             batch_size=1 if config.model == "reference_abupt" else config.batch_size,
             shuffle=False,
-            num_workers=config.num_workers,
             collate_fn=eval_collate,
+            **loader_kwargs,
         )
         for name, dataset in bundle.val_datasets.items()
     }
@@ -511,8 +522,8 @@ def build_loaders(config: TrainConfig, bundle: DatasetBundle) -> tuple[DataLoade
             dataset,
             batch_size=1 if config.model == "reference_abupt" else config.batch_size,
             shuffle=False,
-            num_workers=config.num_workers,
             collate_fn=eval_collate,
+            **loader_kwargs,
         )
         for name, dataset in bundle.test_datasets.items()
     }

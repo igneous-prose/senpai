@@ -21,6 +21,7 @@ class _FakeStore:
     def __init__(self, *args, **kwargs):
         surface = torch.arange(10, dtype=torch.float32).unsqueeze(-1).repeat(1, 3)
         volume = torch.arange(11, dtype=torch.float32).unsqueeze(-1).repeat(1, 3)
+        self.calls: list[dict[str, object]] = []
         self._cases = {
             "case-a": CaseSample(
                 case_id="case-a",
@@ -41,8 +42,25 @@ class _FakeStore:
             "n_volume": int(case.volume_x.shape[0]),
         }
 
-    def load_case(self, case_id: str) -> CaseSample:
-        return self._cases[case_id]
+    def load_case(self, case_id: str, *, surface_rows=None, volume_rows=None) -> CaseSample:
+        case = self._cases[case_id]
+        self.calls.append(
+            {
+                "case_id": case_id,
+                "surface_rows": None if surface_rows is None else surface_rows.tolist(),
+                "volume_rows": None if volume_rows is None else volume_rows.tolist(),
+            }
+        )
+        return CaseSample(
+            case_id=case.case_id,
+            dataset_name=case.dataset_name,
+            space_dim=case.space_dim,
+            surface_x=case.surface_x if surface_rows is None else case.surface_x.index_select(0, torch.as_tensor(surface_rows)),
+            surface_y=case.surface_y if surface_rows is None else case.surface_y.index_select(0, torch.as_tensor(surface_rows)),
+            volume_x=case.volume_x if volume_rows is None else case.volume_x.index_select(0, torch.as_tensor(volume_rows)),
+            volume_y=case.volume_y if volume_rows is None else case.volume_y.index_select(0, torch.as_tensor(volume_rows)),
+            metadata=dict(case.metadata),
+        )
 
 
 class _IdentitySurfaceModel(torch.nn.Module):
@@ -83,6 +101,8 @@ def test_eval_chunk_covers_all_surface_and_volume_points_once(monkeypatch):
 
     assert sorted(surface_seen) == list(range(10))
     assert sorted(volume_seen) == list(range(11))
+    assert dataset.store.calls[0]["surface_rows"] == [0, 4, 8]
+    assert dataset.store.calls[0]["volume_rows"] == [0, 4, 8]
 
 
 def test_train_random_repeats_case_enough_times(monkeypatch):
@@ -111,6 +131,8 @@ def test_train_random_repeats_case_enough_times(monkeypatch):
 
     assert total_surface_loaded >= 10
     assert total_volume_loaded >= 11
+    assert all(call["surface_rows"] is not None for call in dataset.store.calls)
+    assert all(call["volume_rows"] is not None for call in dataset.store.calls)
 
 
 def test_chunked_eval_reaggregates_per_case_rel_l2():
