@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--amp-mode", default="none", choices=["none", "bf16"])
     parser.add_argument("--surface-refine", action="store_true", default=False)
+    parser.add_argument("--compile", action="store_true", default=False)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--train-surface-points", type=int, default=1_048_576)
     parser.add_argument("--eval-surface-points", type=int, default=1_048_576)
@@ -127,10 +128,13 @@ def main() -> None:
         "num_workers": args.num_workers,
         "amp_mode": args.amp_mode,
         "surface_refine": args.surface_refine,
+        "compile": args.compile,
         "train_views": len(bundle.train_dataset),
         "val_views": len(next(iter(bundle.val_datasets.values()))),
         "test_views": len(next(iter(bundle.test_datasets.values()))),
     }
+    if args.compile:
+        model = torch.compile(model)
     print(json.dumps({"config": summary}, sort_keys=True))
 
     torch.cuda.reset_peak_memory_stats(device)
