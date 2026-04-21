@@ -1,0 +1,104 @@
+{
+  "skill_name": "analyze-experiments",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "pull the latest noam branch experiments and give me a full category breakdown — what's been tried, what merged, what closed",
+      "expected_output": "A markdown report with: (1) full PR catalogue table, (2) category breakdown table with merge rates, (3) merged-only summary, (4) closed-only failure patterns, (5) key narrative insights. Should use parallel subagents to analyze the PRs.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "uses-9-category-taxonomy",
+          "description": "Report uses the exact 9 categories: Loss function, LR / optimizer, Model architecture, Training efficiency, Regularization, Physics / normalization, Loss weighting, Feature engineering, Inference fix — at least 7 of 9 must appear",
+          "type": "content_check"
+        },
+        {
+          "name": "has-three-views",
+          "description": "Report contains all three views: all PRs, merged-only, and closed-only sections",
+          "type": "content_check"
+        },
+        {
+          "name": "includes-merge-rates",
+          "description": "Category breakdown table includes merge rate percentages",
+          "type": "content_check"
+        },
+        {
+          "name": "includes-pr-catalogue",
+          "description": "Report includes a full PR catalogue table with individual PR rows (not just summaries)",
+          "type": "content_check"
+        },
+        {
+          "name": "identifies-cp-normalization-as-step-change",
+          "description": "Report identifies PR #392 (Cp normalization) as a major/step-change improvement",
+          "type": "content_check"
+        },
+        {
+          "name": "has-narrative-insights",
+          "description": "Report includes a narrative insights or key findings section with cross-cutting patterns",
+          "type": "content_check"
+        },
+        {
+          "name": "report-length",
+          "description": "Report is at least 1000 words (comprehensive analysis of 150 PRs)",
+          "type": "length_check"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "i want to understand which experiment categories have had the best success rate in the senpai project. fetch the latest data and categorize all the PRs",
+      "expected_output": "A category breakdown showing merge rates per category, with the full PR catalogue and identification of which categories produced the most merged PRs.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "uses-9-category-taxonomy",
+          "description": "Report uses the exact 9 categories from the skill taxonomy — at least 7 must appear",
+          "type": "content_check"
+        },
+        {
+          "name": "has-merge-rate-comparison",
+          "description": "Report ranks or compares categories by success/merge rate",
+          "type": "content_check"
+        },
+        {
+          "name": "includes-pr-catalogue",
+          "description": "Report includes individual PR entries, not just aggregate counts",
+          "type": "content_check"
+        },
+        {
+          "name": "fetches-fresh-data",
+          "description": "Report mentions fetching data or running a script (not just working from memory)",
+          "type": "content_check"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "bucket the experiment prs — show me all, then just the merged ones, then just the failed ones",
+      "expected_output": "Three views of the experiment PRs: all PRs categorized, merged-only view, closed-only failure patterns view. Categories from the 9-category taxonomy.",
+      "files": [],
+      "assertions": [
+        {
+          "name": "has-all-prs-section",
+          "description": "Report has a section showing all PRs (or a full catalogue)",
+          "type": "content_check"
+        },
+        {
+          "name": "has-merged-only-section",
+          "description": "Report has a distinct section for merged/successful PRs only",
+          "type": "content_check"
+        },
+        {
+          "name": "has-closed-only-section",
+          "description": "Report has a distinct section for closed/failed PRs only",
+          "type": "content_check"
+        },
+        {
+          "name": "uses-consistent-categories",
+          "description": "All three views use consistent category names from the 9-category taxonomy",
+          "type": "content_check"
+        }
+      ]
+    }
+  ]
+}
