@@ -135,7 +135,7 @@ while true; do
         echo "$TRIAGE_INFO"
         
         CONTINUE_PROMPT="${HEARTBEAT_PROMPT}"$'\n\n'"${TRIAGE_INFO}"
-        run_senpai_claude 50 "$CONTINUE_PROMPT" -c || EXIT_CODE=$?
+        run_senpai_claude 1000 "$CONTINUE_PROMPT" -c || EXIT_CODE=$?
     fi
     DURATION=$(( $(date +%s) - START_TS ))
 
