@@ -42,11 +42,11 @@ class Args:
     names: str = ""  # comma-separated student names (e.g. "frieren,fern")
     n_students: int = 4  # number of students to launch (ignored if --names is provided)
     repo_url: str = "https://github.com/wandb/senpai.git"  # git repo URL
-    repo_branch: str = "kaiming"  # git branch to clone
+    repo_branch: str = "main"  # git branch to clone
     image: str = "ghcr.io/wandb/senpai:latest"  # container image for students
     wandb_entity: str = "wandb-applied-ai-team"  # W&B entity (team or username)
     wandb_project: str = "senpai-v1"  # W&B project name
-    advisor_branch: str = "kaiming"  # branch the advisor works on (PRs target this, not main)
+    advisor_branch: str = "research"  # branch the advisor works on (PRs target this, created from repo_branch if missing)
     pvc_claim_name: str = "new-pvc"  # PVC name mounted into pods
     pvc_mount_path: str = "/mnt/new-pvc"  # mount path for the dataset PVC inside the containers
     advisor: bool = False  # also deploy the advisor pod (default: students only)
