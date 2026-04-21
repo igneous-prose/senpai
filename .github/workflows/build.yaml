@@ -5,6 +5,8 @@ on:
     branches: [main, docker]
     paths:
       - Dockerfile
+      - pyproject.toml
+      - .github/workflows/build.yaml
   workflow_dispatch:
 
 env:
