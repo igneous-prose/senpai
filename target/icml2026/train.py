@@ -1236,6 +1236,10 @@ def restore_module_state(module: torch.nn.Module | None, state: dict[str, torch.
     module.load_state_dict(state)
 
 
+def best_checkpoint_metric_aliases(metrics: dict[str, float]) -> dict[str, float]:
+    return {f"best_{key}": value for key, value in metrics.items()}
+
+
 def evaluate_phase_metrics(
     *,
     bundle: DatasetBundle,
@@ -1515,12 +1519,21 @@ def main() -> None:
                 phase="test",
             )
             if run is not None:
-                run.summary["best_epoch"] = best_epoch
-                run.summary["best_val_primary_metric_name"] = best_val_primary_metric_name
+                best_checkpoint_metrics: dict[str, float | int | str] = {
+                    "best_epoch": int(best_epoch) if best_epoch is not None else -1,
+                    "best_val_primary_metric_name": best_val_primary_metric_name or "",
+                }
                 if best_val_primary_metric is not None:
-                    run.summary["best_val_primary_metric"] = best_val_primary_metric
-                run.summary.update({f"best_val/{key}": value for key, value in best_val_metrics.items()})
-                run.summary.update({f"best_test/{key}": value for key, value in best_test_metrics.items()})
+                    best_checkpoint_metrics["best_val_primary_metric"] = best_val_primary_metric
+                best_checkpoint_metrics.update({f"best_val/{key}": value for key, value in best_val_metrics.items()})
+                best_checkpoint_metrics.update({f"best_test/{key}": value for key, value in best_test_metrics.items()})
+                best_checkpoint_metrics.update(best_checkpoint_metric_aliases(best_val_metrics))
+                best_checkpoint_metrics.update(best_checkpoint_metric_aliases(best_test_metrics))
+                wandb.log(
+                    best_checkpoint_metrics,
+                    step=int(best_epoch) if best_epoch is not None else (int(history[-1]["epoch"]) if history else 0),
+                )
+                run.summary.update(best_checkpoint_metrics)
             print(
                 json.dumps(
                     {
