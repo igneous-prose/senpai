@@ -6,47 +6,44 @@
 
 """Launch senpai advisor and student agents as K8s resources."""
 
-import subprocess
+import base64
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import simple_parsing as sp
 
+from launch_helpers import (
+    expand_student_names,
+    kubectl_apply,
+    preflight_check_target_repo_access,
+    render_configmap,
+    render_template,
+    render_token_secret,
+    resolve_github_token,
+    target_repo_slug,
+)
+
 STUDENT_TEMPLATE = Path(__file__).parent / "student-deployment.yaml"
 ADVISOR_TEMPLATE = Path(__file__).parent / "advisor-deployment.yaml"
 SENPAI_CONFIG = Path(__file__).parent.parent / "senpai.yaml"
-
-STUDENT_NAMES = [
-    "frieren", "fern", "tanjiro", "nezuko", "alphonse", "edward",
-    "thorfinn", "askeladd", "violet", "gilbert", "senku", "kohaku",
-    "emma", "norman", "chihiro", "haku", "shoya", "shouko",
-    "mitsuha", "taki", "shinji", "rei", "kaneda", "tetsuo",
-    "naruto", "sasuke", "sakura", "kakashi", "hinata", "itachi",
-    "roy", "winry", "eren", "mikasa", "armin", "levi",
-    "historia", "ymir", "zenitsu", "inosuke", "giyu", "shinobu",
-    "chrome", "gen", "ray", "asuka", "kaworu", "luffy",
-    "zoro", "nami", "sanji", "robin", "chopper", "usopp",
-    "franky", "brook", "yuji", "megumi", "nobara", "gojo",
-    "sukuna", "spike", "jet", "faye", "vash", "wolfwood",
-    "guts", "casca", "griffith", "einar", "canute", "stark",
-    "himmel", "mugen", "jin",
-]
+DOTENV_PATH = Path(__file__).parent.parent / ".env"
 
 
 @dataclass
 class Args:
     """Launch senpai advisor and/or student agents on Kubernetes."""
     tag: str  # research tag (e.g. mar13)
-    problem: str = "target/icml2026"  # active problem directory path (from senpai.yaml)
+    target_repo_url: str  # problem-package repo (entrypoint clones this into $PROBLEM_DIR; agent commits/PRs land here) — REQUIRED, no default
+    problem_dir: str = "target/"  # active problem directory — entrypoint clones target_repo_url here (from senpai.yaml)
     names: str = ""  # comma-separated student names (e.g. "frieren,fern")
     n_students: int = 4  # number of students to launch (ignored if --names is provided)
-    repo_url: str = "https://github.com/wandb/senpai.git"  # git repo URL
-    repo_branch: str = "main"  # git branch to clone
+    repo_url: str = "https://github.com/wandb/senpai.git"  # git repo URL (senpai runner)
+    repo_branch: str = "main"  # git branch to clone (senpai runner)
     image: str = "ghcr.io/wandb/senpai:latest"  # container image for students
     wandb_entity: str = "wandb-applied-ai-team"  # W&B entity (team or username)
     wandb_project: str = "senpai-v1"  # W&B project name
-    advisor_branch: str = "research"  # branch the advisor works on (PRs target this, created from repo_branch if missing)
+    advisor_branch: str = "schmidhuber"  # branch the advisor works on inside the problem-package repo (students PR into it; created from the problem-package default branch if missing)
     pvc_claim_name: str = "new-pvc"  # PVC name mounted into pods
     pvc_mount_path: str = "/mnt/new-pvc"  # mount path for the dataset PVC inside the containers
     advisor: bool = False  # also deploy the advisor pod (default: students only)
@@ -56,32 +53,15 @@ class Args:
     dry_run: bool = False  # print manifests without applying
 
 
-def render_template(template: str, replacements: dict[str, str]) -> str:
-    """Replace {{PLACEHOLDER}} tokens in a K8s manifest template."""
-    out = template
-    for key, value in replacements.items():
-        out = out.replace(f"{{{{{key}}}}}", value)
-    return out
-
-
-def render_configmap(name: str, labels: dict[str, str], data: dict[str, str]) -> str:
-    """Generate a ConfigMap YAML document."""
-    lines = ["apiVersion: v1", "kind: ConfigMap", "metadata:", f"  name: {name}", "  labels:"]
-    for k, v in labels.items():
-        lines.append(f"    {k}: {v}")
-    lines.append("data:")
-    for k, v in data.items():
-        lines.append(f"  {k}: \"{v}\"")
-    return "\n".join(lines)
-
-
-def render_student(template: str, student_name: str, tag: str, args: Args) -> str:
+def render_student(template: str, student_name: str, tag: str, secret_name: str, args: Args) -> str:
     configmap = render_configmap(
         name=f"senpai-config-student-{student_name}",
         labels={"app": "senpai", "role": "student", "research-tag": tag},
         data={
             "REPO_URL": args.repo_url,
             "REPO_BRANCH": args.repo_branch,
+            "TARGET_REPO_URL": args.target_repo_url,
+            "GH_REPO": target_repo_slug(args.target_repo_url),
             "STUDENT_NAME": student_name,
             "RESEARCH_TAG": tag,
             "WANDB_ENTITY": args.wandb_entity,
@@ -90,7 +70,7 @@ def render_student(template: str, student_name: str, tag: str, args: Args) -> st
             "WANDB_MODE": "online",
             "SENPAI_TIMEOUT_MINUTES": str(args.timeout_minutes),
             "SENPAI_MAX_EPOCHS": str(args.max_epochs),
-            "PROBLEM_DIR": args.problem,
+            "PROBLEM_DIR": args.problem_dir,
             "PVC_MOUNT_PATH": args.pvc_mount_path,
         },
     )
@@ -101,21 +81,23 @@ def render_student(template: str, student_name: str, tag: str, args: Args) -> st
         "ADVISOR_BRANCH": args.advisor_branch,
         "PVC_CLAIM_NAME": args.pvc_claim_name,
         "PVC_MOUNT_PATH": args.pvc_mount_path,
+        "GITHUB_TOKEN_SECRET_NAME": secret_name,
     })
     return configmap + "\n---\n" + deployment
 
 
-def render_advisor(template: str, tag: str, student_list: list[str], args: Args) -> str:
-    import base64
+def render_advisor(template: str, tag: str, student_list: list[str], secret_name: str, args: Args) -> str:
     data = {
         "REPO_URL": args.repo_url,
         "REPO_BRANCH": args.repo_branch,
+        "TARGET_REPO_URL": args.target_repo_url,
+        "GH_REPO": target_repo_slug(args.target_repo_url),
         "RESEARCH_TAG": tag,
         "STUDENT_NAMES": ",".join(student_list),
         "WANDB_ENTITY": args.wandb_entity,
         "WANDB_PROJECT": args.wandb_project,
         "ADVISOR_BRANCH": args.advisor_branch,
-        "PROBLEM_DIR": args.problem,
+        "PROBLEM_DIR": args.problem_dir,
         "PVC_MOUNT_PATH": args.pvc_mount_path,
     }
     if args.extra_instructions:
@@ -131,43 +113,39 @@ def render_advisor(template: str, tag: str, student_list: list[str], args: Args)
         "RESEARCH_TAG": tag,
         "PVC_CLAIM_NAME": args.pvc_claim_name,
         "PVC_MOUNT_PATH": args.pvc_mount_path,
+        "GITHUB_TOKEN_SECRET_NAME": secret_name,
     })
     return configmap + "\n---\n" + deployment
 
 
-def kubectl_apply(manifest: str, name: str):
-    """Apply a manifest via kubectl."""
-    print(f"Launching: {name}")
-    result = subprocess.run(
-        ["kubectl", "apply", "-f", "-"],
-        input=manifest,
-        text=True,
-        capture_output=True,
-    )
-    if result.returncode != 0:
-        print(f"  ERROR: {result.stderr.strip()}", file=sys.stderr)
-    else:
-        print(f"  {result.stdout.strip()}")
-
-
 def main():
     args = sp.parse(Args, config_path=str(SENPAI_CONFIG))
+    token = resolve_github_token(DOTENV_PATH)
+
+    if not args.dry_run:
+        preflight_check_target_repo_access(args.target_repo_url, token)
 
     # Resolve student list
     if args.names:
         student_list = [n.strip() for n in args.names.split(",")]
     else:
-        if args.n_students > len(STUDENT_NAMES):
-            print(f"ERROR: max {len(STUDENT_NAMES)} students (got {args.n_students})", file=sys.stderr)
-            sys.exit(1)
-        student_list = STUDENT_NAMES[:args.n_students]
+        student_list = expand_student_names(args.n_students)
 
     student_template = STUDENT_TEMPLATE.read_text()
     advisor_template = ADVISOR_TEMPLATE.read_text()
+    secret_name = f"senpai-github-token-{args.tag}"
+
+    # --- Apply per-launch token secret first (pods reference it on startup) ---
+    if args.dry_run:
+        print(f"--- Secret: {secret_name} ---")
+        print(render_token_secret(args.tag, "<REDACTED>"))
+        print()
+    else:
+        kubectl_apply(render_token_secret(args.tag, token), f"secret {secret_name}")
 
     # --- Deploy students ---
     for name in student_list:
-        manifest = render_student(student_template, name, args.tag, args)
+        manifest = render_student(student_template, name, args.tag, secret_name, args)
         if args.dry_run:
             print(f"--- Student: {name} ---")
             print(manifest)
@@ -177,7 +155,7 @@ def main():
 
     # --- Deploy advisor ---
     if args.advisor:
-        manifest = render_advisor(advisor_template, args.tag, student_list, args)
+        manifest = render_advisor(advisor_template, args.tag, student_list, secret_name, args)
         if args.dry_run:
             print("--- Advisor ---")
             print(manifest)
@@ -195,7 +173,7 @@ def main():
         if student_list:
             print(f"  kubectl logs -f deployment/senpai-{student_list[0]}")
         print(f"\nStop:")
-        print(f"  kubectl delete deployments,configmaps -l research-tag={args.tag}")
+        print(f"  kubectl delete deployments,configmaps,secrets -l research-tag={args.tag}")
 
 
 if __name__ == "__main__":

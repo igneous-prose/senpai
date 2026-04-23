@@ -54,9 +54,10 @@ GitHub's `gh pr edit --remove-label X --add-label Y` silently strips **all other
 
 ### Queries (both roles)
 
+The default repo for `gh` is set via the injected `GH_REPO` env var, so no `--repo` flag is needed.
+
 | Function | What it does |
 |---|---|
-| `print_gh_repo` | Print `owner/repo` from the git remote (cached). |
 | `check_gh_issues <role_label>` | List open human issues for a role label + team issues, deduplicated. Returns JSON array. |
 | `list_ready_for_review_prs <branch>` | List PRs with `status:review` on a branch. Returns JSON array. |
 | `list_all_prs <branch>` | List all open PRs on a branch (any status). Returns JSON array. |
