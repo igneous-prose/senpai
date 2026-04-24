@@ -113,7 +113,7 @@ State lives in pull requests and W\&B runs, not in agent memory or scratchpad fi
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=0.92\textwidth]{section2_image.png}
+  \includegraphics[width=0.78\textwidth]{section2_image.png}
   \caption{SENPAI deployment architecture. A thin harness deploys one Advisor and $N$ Student pods; both roles can call a shared researcher agent. Program state lives outside the cluster in the experiment ledger: GitHub PRs, git history, and W\&B runs.}
   \label{fig:architecture}
 \end{figure*}
@@ -148,9 +148,10 @@ The outer harness loop is a shell wrapper, not an LLM. The Advisor entrypoint wr
 
 \begin{figure*}[t]
 \centering
+{\setlength{\fboxsep}{2pt}%
 \fbox{%
-  \begin{minipage}{0.94\textwidth}
-    \small
+  \begin{minipage}{0.84\textwidth}
+    \scriptsize
     \begin{algorithmic}[1]
       \STATE \texttt{iteration} $\gets 0$; \texttt{last\_check} $\gets \varnothing$
       \LOOP
@@ -174,7 +175,7 @@ The outer harness loop is a shell wrapper, not an LLM. The Advisor entrypoint wr
       \ENDLOOP
     \end{algorithmic}
   \end{minipage}%
-}
+}}
 \caption{Simplified Advisor outer loop. Polling and triage happen outside the LLM; the agent is invoked only when there is actionable work.}
 \label{fig:advisor-loop}
 \end{figure*}
