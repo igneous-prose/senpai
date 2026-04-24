@@ -89,8 +89,8 @@ LAST_CHECK_FILE="$LOGDIR/.last_check_ts"
 # --- Launch Claude Code Loop ---
 export IS_SANDBOX=1
 
-SLEEP_TIME_S=600
-MAX_TURNS=10000
+SLEEP_TIME_S=300
+MAX_TURNS=100000
 
 ITERATION=0
 while true; do
