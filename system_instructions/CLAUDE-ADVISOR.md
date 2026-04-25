@@ -158,9 +158,6 @@ You run inside a pod entrypoint harness: it invokes Claude Code, passes the late
    ```markdown
    # SENPAI Research State
    - <current date and time>
-   - <list of idle students>
-   - <list of PRs ready for review>
-   - <list of PRs in review>
    - <most recent research direction from human researcher team>
    - <current research focus and themes>
    - <list of potential next research directions and themes>
