@@ -14,6 +14,7 @@ from pathlib import Path
 import simple_parsing as sp
 
 from launch_helpers import (
+    existing_student_names,
     expand_student_names,
     kubectl_apply,
     preflight_check_target_repo_access,
@@ -153,9 +154,13 @@ def main():
         else:
             kubectl_apply(manifest, f"student {name}")
 
+    advisor_student_list = student_list
+    if args.advisor and not args.dry_run:
+        advisor_student_list = list(dict.fromkeys(existing_student_names(args.tag) + student_list))
+
     # --- Deploy advisor ---
     if args.advisor:
-        manifest = render_advisor(advisor_template, args.tag, student_list, secret_name, args)
+        manifest = render_advisor(advisor_template, args.tag, advisor_student_list, secret_name, args)
         if args.dry_run:
             print("--- Advisor ---")
             print(manifest)

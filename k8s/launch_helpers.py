@@ -50,6 +50,14 @@ def expand_student_names(n: int, names: list[str] = STUDENT_NAMES) -> list[str]:
     return out
 
 
+def existing_student_names(tag: str) -> list[str]:
+    result = subprocess.run(
+        ["kubectl", "get", "deployments", "-l", f"app=senpai,role=student,research-tag={tag}", "-o", "name"],
+        capture_output=True, text=True, check=True,
+    )
+    return [line.split("/senpai-", 1)[1] for line in result.stdout.splitlines()]
+
+
 def render_template(template: str, replacements: dict[str, str]) -> str:
     """Replace {{PLACEHOLDER}} tokens in a K8s manifest template."""
     out = template
