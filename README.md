@@ -102,13 +102,18 @@ wandb_project: senpai-v1
 timeout_minutes: 30.0
 max_epochs: 50
 n_students: 4
+student_prefix: ""
+gpus_per_student: 8
+cpu_per_gpu: 15
+memory_gi_per_gpu: 120
+preflight_only: false
 ```
 
 `launch.py` reads this via `simple_parsing` — every field can be overridden on the CLI.
 
 ### Launch credentials
 
-`launch.py` resolves these at launch time, preflights them (including `--dry_run`), and writes them to a per-tag Secret named `senpai-launch-secrets-<tag>`:
+`launch.py` resolves and preflights these for real launches and `--preflight_only`, then writes them to a per-tag Secret named `senpai-launch-secrets-<tag>`:
 
 | Env var | Pod env | Resolution |
 |---|---|---|
@@ -123,7 +128,7 @@ cp example.env .env
 # edit .env and set GITHUB_TOKEN, ANTHROPIC_API_KEY, and EXA_API_KEY
 ```
 
-Notes: `--dry_run` prints redacted Secret values only. Real launches pass the Secret manifest to `kubectl apply` via stdin, but Kubernetes Secrets are still readable to anyone with namespace Secret read access. Delete launch resources when done: `kubectl delete deployments,configmaps,secrets -l research-tag=<tag>`.
+Notes: `--dry_run` renders redacted manifests without resolving or preflighting credentials. Real launches pass the Secret manifest to `kubectl apply` via stdin, but Kubernetes Secrets are still readable to anyone with namespace Secret read access. Delete launch resources when done: `kubectl delete deployments,configmaps,secrets -l research-tag=<tag>`.
 
 GitHub token requirements: use a PAT with `repo` and `read:org`; it must clone `target_repo_url` and push/open PRs there.
 
@@ -157,6 +162,10 @@ python k8s/launch.py --tag <research-tag> --advisor
 python k8s/launch.py --tag <research-tag> --advisor --n_students 7 --pvc_mount_path "/mnt/pai-amf1-cfd"
 python k8s/launch.py --tag <research-tag> --n_students 7 --dry_run
 python k8s/launch.py --tag <research-tag> --advisor --extra_instructions "Only consider optimizer changes."
+
+# Parallel launches: use unique tags, plus --student_prefix when runs share student names
+python k8s/launch.py --tag <tag-a> --advisor --student_prefix a
+python k8s/launch.py --tag <tag-b> --advisor --student_prefix b
 
 # Stop a launch
 kubectl delete deployments,configmaps,secrets -l research-tag=<research-tag>
