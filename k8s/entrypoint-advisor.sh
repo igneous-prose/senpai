@@ -11,6 +11,7 @@ WORKDIR="/workspace/senpai"
 GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
 export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
 GIT_CREDENTIAL_FILE="$WORKDIR/.git-credentials"
+SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
 
 echo "=== Senpai Advisor ==="
 echo "Runner repo:  $REPO_URL (branch: $REPO_BRANCH)"
@@ -22,35 +23,8 @@ echo "GitHub history: $GH_HISTORY_SCOPE"
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
-git remote set-url --push origin DISABLED
-git config remote.origin.pushurl DISABLED
-git config --unset-all url."https://${GITHUB_TOKEN}@github.com/".insteadOf 2>/dev/null || true
-export SENPAI_REAL_GIT="$(command -v git)"
-mkdir -p .git/hooks
-cat > .git/hooks/pre-push <<'EOF'
-#!/bin/sh
-echo "ERROR: refusing to push from the senpai runner repo; use the cloned target repo instead." >&2
-exit 1
-EOF
-chmod +x .git/hooks/pre-push
-mkdir -p "$WORKDIR/git-guard-bin"
-cat > "$WORKDIR/git-guard-bin/git" <<'EOF'
-#!/bin/sh
-real_git="${SENPAI_REAL_GIT:-/usr/bin/git}"
-if [ "$1" = "push" ]; then
-    top="$("$real_git" rev-parse --show-toplevel 2>/dev/null || true)"
-    if [ -n "${TARGET_WORKDIR:-}" ] && [ "$top" != "${TARGET_WORKDIR%/}" ]; then
-        echo "ERROR: refusing git push outside target repo; cwd=$(pwd), top=${top:-none}, target=$TARGET_WORKDIR" >&2
-        exit 2
-    fi
-fi
-exec "$real_git" "$@"
-EOF
-chmod +x "$WORKDIR/git-guard-bin/git"
-export PATH="$WORKDIR/git-guard-bin:$PATH"
-printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > "$GIT_CREDENTIAL_FILE"
-chmod 600 "$GIT_CREDENTIAL_FILE"
-git config --global credential.helper "store --file=$GIT_CREDENTIAL_FILE"
+source "$SENPAI_PLUGIN/scripts/senpai-gh.sh"
+install_senpai_git_guard "$WORKDIR" "$TARGET_WORKDIR" "$GIT_CREDENTIAL_FILE"
 
 clone_target_repo() {
     local depth=()
@@ -102,9 +76,16 @@ fi
 LOGDIR="$WORKDIR/advisor_logs"
 mkdir -p "$LOGDIR"
 
+# --- Install checked-in Claude Code config into user scope ---
+mkdir -p "$HOME/.claude"
+cp -a "$WORKDIR/.claude/." "$HOME/.claude/"
+
+echo "=== Claude config installed ==="
+ls "$HOME/.claude/skills/wandb-primary/SKILL.md" "$HOME/.claude/agents/researcher-agent.md"
+
 # --- Start Hivemind logging service (streams CC session logs to hivemind.wandb.tools) ---
 if [ "${SENPAI_ENABLE_AGENT_TRACING:-true}" = "true" ]; then
-    mkdir -p ~/.claude/projects
+    mkdir -p "$HOME/.claude/projects"
     uvx --from wandb-hivemind hivemind run &
     echo "=== Hivemind started (PID=$!) ==="
 else
@@ -119,10 +100,6 @@ export PATH="$HOME/.claude/bin:$PATH"
 if [ "${SENPAI_ENABLE_AGENT_TRACING:-true}" = "true" ]; then
     source "$WORKDIR/k8s/install-weave-cc-plugin.sh"
 fi
-
-# --- Register Senpai CC plugin (skills + tools for common git tasks; CC uses --plugin-dir SENPAI_PLUGIN for tools) ---
-SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
-source "$SENPAI_PLUGIN/scripts/senpai-gh.sh"
 
 # $GH_REPO comes from the ConfigMap (set by launch.py = owner/repo of the
 # problem-package repo). The gh CLI honours it natively, so every `gh`
@@ -181,11 +158,12 @@ while true; do
     [ -f "$LAST_CHECK_FILE" ] && SINCE=$(cat "$LAST_CHECK_FILE")
 
     # --- Check research state before invoking CC ---
-    REVIEW_JSON=$(list_ready_for_review_prs "$ADVISOR_BRANCH" "$SINCE" || printf '[]')
+    POLL_OK=1
+    REVIEW_JSON=$(poll_or_empty "review-ready PR poll" list_ready_for_review_prs "$ADVISOR_BRANCH" "$SINCE") || POLL_OK=0
     REVIEW_COUNT=$(printf '%s' "$REVIEW_JSON" | json_len)
-    ISSUE_JSON=$(check_gh_issues "$ADVISOR_BRANCH" "$SINCE" || printf '[]')
+    ISSUE_JSON=$(poll_or_empty "GitHub issue poll" check_gh_issues "$ADVISOR_BRANCH" "$SINCE") || POLL_OK=0
     ISSUE_COUNT=$(printf '%s' "$ISSUE_JSON" | json_len)
-    IDLE_JSON=$(list_idle_students "$STUDENT_NAMES" "$ADVISOR_BRANCH" || printf '[]')
+    IDLE_JSON=$(poll_or_empty "idle-student poll" list_idle_students "$STUDENT_NAMES" "$ADVISOR_BRANCH") || POLL_OK=0
     IDLE_COUNT=$(printf '%s' "$IDLE_JSON" | json_len)
 
     # --- Derive watermark from the data we actually fetched (no gap, no overlap) ---
@@ -226,9 +204,11 @@ while true; do
     fi
     DURATION=$(( $(date +%s) - START_TS ))
 
-    # --- Advance watermark to max updatedAt of items we fetched (only on success so failed runs retry) ---
-    if [ "$EXIT_CODE" -eq 0 ] && [ -n "$WATERMARK" ]; then
+    # --- Advance watermark only after a complete poll and successful CC run. ---
+    if [ "$EXIT_CODE" -eq 0 ] && [ "$POLL_OK" -eq 1 ] && [ -n "$WATERMARK" ]; then
         echo "$WATERMARK" > "$LAST_CHECK_FILE"
+    elif [ "$EXIT_CODE" -eq 0 ] && [ "$POLL_OK" -ne 1 ]; then
+        echo "=== Poll incomplete; not advancing last-check timestamp ==="
     fi
 
     echo "=== Advisor exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds ==="
