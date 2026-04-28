@@ -9,6 +9,9 @@ set -o pipefail
 
 WORKDIR="/workspace/senpai"
 GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
+export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
+GIT_CREDENTIAL_FILE="$WORKDIR/.git-credentials"
+SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
 
 echo "=== Senpai Student: $STUDENT_NAME ==="
 echo "Runner repo:  $REPO_URL (branch: $REPO_BRANCH)"
@@ -19,7 +22,8 @@ echo "GPUs:         $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/n
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
-git remote set-url --push origin DISABLED
+source "$SENPAI_PLUGIN/scripts/senpai-gh.sh"
+install_senpai_git_guard "$WORKDIR" "$TARGET_WORKDIR" "$GIT_CREDENTIAL_FILE"
 
 clone_target_repo() {
     local depth=()
@@ -34,6 +38,7 @@ clone_target_repo() {
 # Clone the problem-package repo into $PROBLEM_DIR (bring-your-own-repo —
 # agent commits/PRs live in $TARGET_REPO_URL, not wandb/senpai).
 [ -d "$PROBLEM_DIR/.git" ] || clone_target_repo
+git config --global --unset-all credential.helper 2>/dev/null || true
 
 uv pip install --system -e .
 
@@ -41,6 +46,8 @@ uv pip install --system -e .
 cd "$WORKDIR/$PROBLEM_DIR"
 git config user.name "senpai-$STUDENT_NAME"
 git config user.email "senpai-$STUDENT_NAME@senpai"
+gh repo set-default "$GH_REPO"
+git config credential.helper "store --file=$GIT_CREDENTIAL_FILE"
 if [ "$GH_HISTORY_SCOPE" != "repo" ]; then
     git remote set-branches origin "$ADVISOR_BRANCH"
     git config remote.origin.tagOpt --no-tags
@@ -64,10 +71,6 @@ source "$WORKDIR/k8s/run-senpai-claude.sh"
 # --- Register Weave Claude Code Plugin (tools already baked into Docker image) ---
 export PATH="$HOME/.claude/bin:$PATH"
 source "$WORKDIR/k8s/install-weave-cc-plugin.sh"
-
-# --- Register Senpai CC plugin ---
-SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
-source "$SENPAI_PLUGIN/scripts/senpai-gh.sh"
 
 # $GH_REPO comes from the ConfigMap (set by launch.py = owner/repo of the
 # problem-package repo). The gh CLI honours it natively, so every `gh`
@@ -114,10 +117,16 @@ while true; do
     echo "=== GPU: $(nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null) ==="
 
     # --- Check for work before invoking CC ---
-    ASSIGNED_JSON=$(student_poll_for_work "$STUDENT_NAME")
+    ASSIGNED_JSON=$(student_poll_for_work "$STUDENT_NAME" || printf '[]')
     ASSIGNED_COUNT=$(printf '%s' "$ASSIGNED_JSON" | json_len)
-    ISSUE_JSON=$(check_gh_issues "student:$STUDENT_NAME")
+    ISSUE_JSON=$(check_gh_issues "student:$STUDENT_NAME" || printf '[]')
     ISSUE_COUNT=$(printf '%s' "$ISSUE_JSON" | json_len)
+
+    if [ "$ASSIGNED_COUNT" -eq 1 ]; then
+        ASSIGNED_HEAD=$(printf '%s' "$ASSIGNED_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["headRefName"])')
+        git fetch origin "$ASSIGNED_HEAD"
+        git checkout -B "$ASSIGNED_HEAD" FETCH_HEAD
+    fi
 
     # --- Build triage info ---
     TRIAGE_INFO="## Student research state"
