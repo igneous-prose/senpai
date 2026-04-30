@@ -84,7 +84,7 @@ swap_gh_pr_label <pr#> "status:wip" "status:review"
    cd "$PROBLEM_DIR" && python train.py --dataset <dataset> --agent <your-name> --wandb_name "<your-name>/<description>" [--wandb_group "<idea>"]
    ```
    - Before the first run in a target, read `python train.py --help` and use the exact flag names it exposes.
-   - **Timeout**: The `SENPAI_MAX_EPOCHS` and `SENPAI_TIMEOUT_MINUTES` env vars control the max epochs and timeout for each training run in train.py. Ensure training runs do not exceed these limits.
+   - **Run limits**: `SENPAI_MAX_EPOCHS` and `SENPAI_TIMEOUT_MINUTES` are hard upper bounds, not targets. Choose epochs/steps that fit the evidence: tiny debug runs when useful, medium screening runs, and longer confirmation runs only for stable promising ideas. Ensure training runs do not exceed these limits.
    - Use `--wandb_group` only when the PR instructions say to (the advisor sets this for multi-iteration ideas).
    - Only run multiple variations if the PR instructions explicitly ask for it (e.g. "try surface weight 5, 10, 20"). Otherwise, run the single experiment described.
    - For active training, prefer `ScheduleWakeup` every 10-30 minutes plus `training_log_status <logfile>` or W&B queries. Do not stream per-epoch training logs into `Monitor`.
