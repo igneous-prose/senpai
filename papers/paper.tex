@@ -137,6 +137,13 @@ In our longest observed SENPAI deployment on DrivAerML, the system ran continuou
 
 \begin{figure*}[t]
   \centering
+  \includegraphics[width=0.98\textwidth]{icml2026/figures/cfd_problem_gallery/cfd_problem_gallery.pdf}
+  \caption{CFD surrogate problems used by SENPAI, shown as representative dataset geometries rather than benchmark results. (a) DrivAerML is a 3D automotive aerodynamics task. (b) AirfRANS contains families of 2D airfoil cross-sections. (c) TandemFoilSet contains 2D tandem-airfoil cases; the panel shows four geometry-diverse tandem cases, with two foils per case, drawn from race-car and cruise configurations.}
+  \label{fig:cfd-problem-gallery}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
   \includegraphics[width=0.98\textwidth]{icml2026/figures/drivaerml_surface_pareto/drivaerml_surface_pressure_pareto.pdf}
   \caption{Evolution of DrivAerML surface-pressure test error across two SENPAI campaigns. Faded markers show individual completed experiments from the \texttt{yi} and \texttt{tay} branches, while solid curves show the cumulative Pareto frontier: the best surface-pressure relative $L_2$ error achieved up to each experiment count. The vertical lines mark GitHub-recorded human researcher/operator interventions. \texttt{tay} was instructed to use DDP8 and was given a 6 hour per-experiment training budget, hence the better performance.}
   \label{fig:drivaerml-surface-pareto}
@@ -153,13 +160,6 @@ Over the course of the research programme, SENPAI created over 3,000 PRs and rec
 \subsection{Datasets and Metrics}
 
 To demonstrate SENPAI's CFD performance across multiple benchmarks, we train and evaluate on three CFD surrogate datasets spanning 2D tandem-airfoil flow, 2D airfoil RANS, and 3D automotive aerodynamics: TandemFoilSet \citep{lim2026tandemfoilset}, AirfRANS \citep{bonnet2022airfrans}, and DrivAerML \citep{ashton2024drivaerml}.
-
-\begin{figure*}[t]
-  \centering
-  \includegraphics[width=0.98\textwidth]{icml2026/figures/cfd_problem_gallery/cfd_problem_gallery.pdf}
-  \caption{CFD surrogate problems used by SENPAI, shown as geometry-and-field examples rather than benchmark results. (a) DrivAerML is a 3D automotive aerodynamics task with millions of surface and volume sample points; the panel shows pressure-colored surface samples together with downstream wake nodes. (b) AirfRANS contains families of 2D airfoil cross-sections. (c) TandemFoilSet contains paired-foil fields, here shown for race-car and cruise configurations with surface nodes overlaid on field samples.}
-  \label{fig:cfd-problem-gallery}
-\end{figure*}
 
 \paragraph{TandemFoilSet.}
 We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
@@ -271,7 +271,7 @@ To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \te
 \end{table}
 
 \paragraph{Interpretation.}
-In a direct 12-hour head-to-head, \texttt{kagent} behaved like a public Kaggle sprint: agents trained short variants, watched the leaderboard and shared hosted-logger configs, and quickly reused recipes that worked for peers. This fast peer diffusion, including copied hyperparameters and occasional prediction ensembles, likely gave it an exploitation-speed edge over SENPAI's slower PR-mediated review loop. While this was successful in a 12-hour experiment setting, the inability to steer these agents and the less rigorous polling and monitoring infrastructure are likely to lead to drift and context rot as each Claude Code agent's context window fills.
+In a direct 12-hour head-to-head, \texttt{kagent} behaved like a public Kaggle sprint: agents trained short variants, watched the leaderboard and shared hosted-logger configs, and quickly reused recipes that worked for peers. This fast peer diffusion, including copied hyperparameters and occasional prediction ensembles, likely gave it an exploitation-speed edge over SENPAI's slower PR-mediated review loop. While this was successful in a 12-hour experiment setting, the inability to steer these agents and the less rigorous polling and monitoring infrastructure are likely to lead to drift and context rot as each Claude Code agent's context window fills. A later external validation strengthened this interpretation: a 30-hour autonomous \texttt{kagent} run, with a 30 minute per-experiment budget, was submitted to the GRaM ICLR 2026 submission subsequently ranking 4th of 22 valid entries on the official held-out leaderboard, with relative-$L_2$ error $0.0553 \pm 0.0168$.
 
 \section{Discussion}
 
@@ -332,7 +332,7 @@ SENPAI's contribution is therefore not to replace the researcher, but to increas
 
 \section*{Software and Data}
 
-For double-blind review, non-anonymous links to the harness repository and hosted run ledger are withheld from this version and will be included in the camera-ready version. The CFD datasets used in the experiments are DrivAerML, AirfRANS, and TandemFoilSet; access and redistribution follow the licenses and terms provided by the original dataset authors.
+Identifying repository and hosted-ledger URLs are omitted for double-blind review and will be included in the camera-ready version. The CFD datasets used in the experiments are DrivAerML, AirfRANS, and TandemFoilSet; access and redistribution follow the licenses and terms provided by the original dataset authors.
 
 \section*{Impact Statement}
 
@@ -595,7 +595,7 @@ An eight-agent \texttt{kagent} cohort ran on the TandemFoilSet parity benchmark 
 The most important qualitative finding was rapid peer diffusion. Once visible leaderboard commits exposed strong configurations, several agents copied or adapted hyperparameters, warm-start strategies, and W\&B-observed recipes. The decisive improvement was a full-mesh fine-tuning unlock: several top agents concluded that training on heavily subsampled point sets created a train/eval mismatch for attention layers that pool over nodes, and moved from subsampled pretraining to batch-size-2 full-mesh fine-tuning. Same-lineage ensembles often regressed unless members were both strong and sufficiently decorrelated, and several agents sanity-checked physical constraints against the observed data before relying on them. A separate scorer-race incident marked partially written prediction directories as terminally incomplete, illustrating the same infrastructure-contract fragility discussed in \Cref{app:evidence-taxonomy}.
 
 \paragraph{External competition run.}
-As an additional stress test, sixteen Claude Opus 4.6 \texttt{kagent} agents were pointed at the GRaM ICLR 2026 open competition from 2026-03-29 to 2026-03-30. The winning cohort member reached 0.8526 mean L2 against a roughly 1.75 reference-MLP baseline, and the strongest checkpoint was packaged and submitted to the upstream competition as a live pull request. This run predates the later experiment-journal convention, so its evidence is primarily leaderboard and commit based.
+As an additional stress test, sixteen Claude Opus 4.6 \texttt{kagent} agents were pointed at the GRaM ICLR 2026 open competition from 2026-03-29 to 2026-03-30. Starting from the reference MLP and with only about 30 hours of autonomous search, the best cohort checkpoint was packaged as submission PR~\#4 and later ranked 4th of 22 valid submissions on the official held-out leaderboard, scoring relative-$L_2$ error $0.0553 \pm 0.0168$. Internally, the winning cohort member had reached 0.8526 mean L2 against a roughly 1.75 reference-MLP baseline.
 
 \section{Evidence Artifacts and Failure Taxonomy}
 \label{app:evidence-taxonomy}
