@@ -14,11 +14,22 @@
 \usepackage{mathtools}
 \usepackage{amsthm}
 \usepackage{xurl}
+\usepackage{fvextra}
 \usepackage{hyperref}
 \usepackage[capitalize,noabbrev]{cleveref}
 
 \newcommand{\theHalgorithm}{\arabic{algorithm}}
 \newcommand{\best}[1]{\textbf{#1}}
+\fvset{
+  fontsize=\scriptsize,
+  breaklines=true,
+  breakanywhere=true,
+  numbers=left,
+  numbersep=3pt,
+  frame=single,
+  framesep=2mm
+}
+\newcommand{\promptfile}[1]{\VerbatimInput{#1}}
 
 % Use blind mode for the initial workshop submission.
 \usepackage{icml2026/algorithm}
@@ -337,7 +348,7 @@ This work aims to make autonomous ML research more auditable, recoverable, and s
 \section{Agent Instructions and Source Map}
 \label{app:agent-instructions}
 
-The experiments in this paper were controlled by a small number of versioned text artifacts rather than by hidden agent memory. The exact prompt files will be released with the SENPAI harness; this appendix summarizes their operational content so that the harness can be audited without reprinting every instruction verbatim.
+The experiments in this paper were controlled by a small number of versioned text artifacts rather than by hidden agent memory. The exact prompt files will be released with the SENPAI harness; this appendix summarizes their operational content, and \Cref{app:full-prompts} includes the full text of the source prompts and programme contracts.
 
 \begin{table}[h]
   \caption{Primary instruction artifacts used by the harness and comparator.}
@@ -618,5 +629,35 @@ The experiment ledger supports several supplementary audit views beyond the main
 We organize full failure-mode notes under four infrastructure-facing categories. \textit{Monitoring failures} include unfiltered log monitors, heartbeat events that wake agents for low-information lines, and long-lived streams that inflate cached context. \textit{Tool-interface failures} include brittle shell/GitHub sequences, missing scopes, wrong paths, blocked waits, failed pushes, oversized reads, and edit-guard failures. \textit{Result-capture failures} include missing final metrics, invalid terminal result markers, checkpoint selection mistakes, and scorer/checkpoint races. \textit{State-reconciliation failures} include stale PR labels, incomplete W\&B-to-PR reconciliation, lossy compaction summaries, and conflicts between markdown caches and the authoritative ledger.
 
 These categories explain why SENPAI's mitigations are mostly infrastructural: filtered monitors, narrow helper scripts, terminal result schemas, checkpoint preflights, and treating local summaries as caches over the PR/git/W\&B ledger.
+
+\clearpage
+\section{Full Source Prompts and Contracts}
+\label{app:full-prompts}
+
+This section contains verbatim snapshots of the prompt and contract artifacts summarized in \Cref{app:agent-instructions}. The files are vendored into \texttt{papers/appendix\_sources/}; external artifacts are snapshots of the public GitHub URLs listed in \Cref{tab:instruction-source-map}.
+
+\subsection{Advisor Role Prompt}
+\label{app:full-advisor-prompt}
+\promptfile{appendix_sources/claude_advisor.md}
+
+\subsection{Student Role Prompt}
+\label{app:full-student-prompt}
+\promptfile{appendix_sources/claude_student.md}
+
+\subsection{Researcher Sub-Agent Prompt}
+\label{app:full-researcher-prompt}
+\promptfile{appendix_sources/researcher_agent.md}
+
+\subsection{DrivAerML Program Contract}
+\label{app:full-drivaerml-program}
+\promptfile{appendix_sources/drivaerml_program.md}
+
+\subsection{Local TandemFoil2 Program Contract}
+\label{app:full-tandemfoil2-program}
+\promptfile{appendix_sources/tandemfoil2_program.md}
+
+\subsection{\texttt{kagent} Comparator Prompt}
+\label{app:full-kagent-prompt}
+\promptfile{appendix_sources/kaggler_agent.md}
 
 \end{document}
