@@ -74,7 +74,7 @@ Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,topsep=2pt,itemsep=2pt,parsep=0pt]
   \item \textbf{Observable research state.} We introduce SENPAI, a semi-autonomous ML research harness that grounds experiment state in PRs, commits, and experiment-tracker runs, producing a ledger that is queryable by agents and inspectable by researchers.
-  \item \textbf{CFD recipe search.} Starting from Transolver-style baselines, SENPAI discovers improved recipes across AirfRANS, DrivAerML, and TandemFoilSet, with strongest gains on surface quantities.
+  \item \textbf{CFD recipe search.} Starting from Transolver-style baselines, SENPAI discovers improved recipes across AirfRANS, DrivAerML, and TandemFoilSet, with strongest gains on surface and wall-shear quantities.
   \item \textbf{Failure modes at scale.} We analyze a 24-hour fleet trace with 53,022 Claude requests and 5.24B tokens, showing that the dominant failures were monitor-driven context bloat, brittle tool interfaces, checkpoint/result-capture gaps, and state reconciliation issues rather than failures of scientific reasoning.
 \end{itemize}
 
@@ -120,6 +120,8 @@ The outer harness loop is programmatic rather than agentic. A shell wrapper poll
 
 Researchers primarily steer SENPAI's Advisor or Students through GitHub issues, while PR comments can also provide experiment-level intervention. This channel is intentionally low bandwidth: SENPAI is designed for sparse steering rather than continuous supervision, and each intervention remains attached to the public experiment record it affected.
 
+In our longest observed SENPAI deployment on DrivAerML, the system ran continuously for 9 days under a 4.5-hour per-experiment budget, opening 289 PRs across an 8-student active fleet with 10 issue-based interventions from researchers.
+
 \section{Experiments and Results}
 
 \begin{figure*}[t]
@@ -141,6 +143,13 @@ Over the course of the research programme, SENPAI created over 3,000 PRs and rec
 
 To demonstrate SENPAI's CFD performance across multiple benchmarks, we train and evaluate on three CFD surrogate datasets spanning 2D tandem-airfoil flow, 2D airfoil RANS, and 3D automotive aerodynamics: TandemFoilSet \citep{lim2026tandemfoilset}, AirfRANS \citep{bonnet2022airfrans}, and DrivAerML \citep{ashton2024drivaerml}.
 
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.98\textwidth]{icml2026/figures/cfd_problem_gallery/cfd_problem_gallery.pdf}
+  \caption{CFD surrogate problems used by SENPAI, shown as geometry-and-field examples rather than benchmark results. (a) DrivAerML is a 3D automotive aerodynamics task with millions of surface and volume sample points; the panel shows pressure-colored surface samples together with downstream wake nodes. (b) AirfRANS contains families of 2D airfoil cross-sections. (c) TandemFoilSet contains paired-foil fields, here shown for race-car and cruise configurations with surface nodes overlaid on field samples.}
+  \label{fig:cfd-problem-gallery}
+\end{figure*}
+
 \paragraph{TandemFoilSet.}
 We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
 
@@ -148,12 +157,12 @@ We use the paper's original Experiment 4 partition, Cruise Random and Race Car t
 We use the official full task with the last 10\% of the official training list held out for validation, giving a 720/80/200 train/validation/test split while keeping the official test set unchanged. We test on normalized targets on the official test split.
 
 \paragraph{DrivAerML.}
-We use the public surface split on the available processed cases, 400/34/50 train/validation/test, and measure surface-pressure relative-$L_2$ in percent, computed per case on unnormalized predictions and targets and then averaged over test cases.
+We use the public processed-case split, 400/34/50 train/validation/test, and report surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$, computed per case on unnormalized predictions and then averaged over test cases.
 
 \subsection{DrivAerML}
 
 \paragraph{Result.}
-On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementation, improves on the original Transolver's test-set metrics of surface-pressure relative-$L_2$ error (3.98\% versus 4.81\%) and vector wall-shear-stress relative-$L_2$ error (7.31\% versus 8.95\%). \Cref{fig:drivaerml-surface-pareto} shows the autonomous experiment trajectory for surface-pressure test error across the main DrivAerML branches.
+On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementation, improves on the original Transolver's test-set metrics of surface-pressure relative-$L_2$ error (3.88\% versus 4.81\%) and vector wall-shear-stress relative-$L_2$ error (7.06\% versus 8.95\%). The selected single model also improves on AB-UPT for wall shear (7.06\% versus 7.29\%), while volume pressure remains behind public references (10.76\% versus 6.08\% for AB-UPT and 5.72\% for Transolver-3). \Cref{fig:drivaerml-surface-pareto} shows the semi-autonomous experiment trajectory for surface-pressure test error across earlier SENPAI campaigns.
 
 \begin{table}[t]
   \caption{DrivAerML test relative-$L_2$ error (\%). Lower is better.}
@@ -168,7 +177,7 @@ On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementat
     SENPAI, ensemble & \best{3.69} & 6.86 & 11.36 \\
     Transolver-3 \citep{zhou2026transolver3} & 3.71 & \best{5.85} & \best{5.72} \\
     AB-UPT \citep{alkin2025abupt} & 3.82 & 7.29 & 6.08 \\
-    SENPAI, single model & 3.98 & 7.31 & 11.33 \\
+    SENPAI, single model & 3.88 & 7.06 & 10.76 \\
     Transolver++ & 4.12 & 6.42 & 6.70 \\
     Transolver \citep{wu2024transolver} & 4.81 & 8.95 & 7.74 \\
     \bottomrule
@@ -176,10 +185,10 @@ On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementat
 \end{table}
 
 \paragraph{Recipe.}
-The final training recipe SENPAI found used the original Transolver backbone but scaled it to 4 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a separable learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic} plus EMA. It also added physics-preserving $y$-plane reflection augmentation, flipping the lateral coordinate, surface-normal $n_y$, volume-coordinate $y$, and wall-shear $\tau_y$ sign, and trained for 50 epochs with 8-GPU DDP for an effective batch size of 16. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling. Full run IDs and hyperparameters for the selected single model and ensemble are listed in \Cref{app:drivaerml-recipe}.
+The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 4 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a separable learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, and GradNorm adaptive loss balancing \citep{chen2018gradnorm}. It trained with 8-GPU DDP for an effective batch size of 16 under a 50-epoch budget, with the best EMA checkpoint selected at epoch 27. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling. Full run IDs and hyperparameters for the selected single model and ensemble are listed in \Cref{app:drivaerml-recipe}.
 
 \paragraph{Caveat.}
-Finally, a separate 50-epoch ensemble trained by SENPAI improved on all reported surface-pressure relative-$L_2$ metrics for DrivAerML (3.69\%) and improved on AB-UPT for wall-shear relative-$L_2$ error (6.86\%). A large gap in test-set volume-pressure relative-$L_2$ error was observed relative to AB-UPT and Transolver-3, potentially in part due to the shorter training time of SENPAI compared to the 500-epoch trainings of AB-UPT and Transolver-3. This training-duration discrepancy highlights an important decision criterion in autonomous research training: whether to scale up to longer, more expensive training runs after observing promising smaller-scale experimental results.
+Finally, a greedy inference-time ensemble found by SENPAI improved on all reported surface-pressure relative-$L_2$ metrics for DrivAerML (3.69\%) and improved on AB-UPT for wall-shear relative-$L_2$ error (6.86\%). A large gap in test-set volume-pressure relative-$L_2$ error remains for the best single model (10.76\%) relative to AB-UPT and Transolver-3, potentially in part due to the shorter training time of SENPAI compared to the 500-epoch trainings of AB-UPT and Transolver-3. This training-duration discrepancy highlights an important decision criterion in autonomous research training: whether to scale up to longer, more expensive training runs after observing promising smaller-scale experimental results.
 
 \subsection{AirfRANS}
 
@@ -229,59 +238,7 @@ Under the TandemFoilSet Experiment-4 task, SENPAI found a Transolver-based impro
 \end{table}
 
 \paragraph{Recipe signal.}
-The PR ledger shows the path: lower learning rates near \texttt{1e-4}, gradient clipping, EMA, warmup, and schedule-length tuning. A separate no-W\&B TandemFoilSet-Balanced audit reached \texttt{test\_avg/mae\_surf\_p = 27.2125} in PR \#1285, beating the \texttt{40.927} target by \texttt{13.7145}, supporting the same schedule-and-throughput conclusion under a separate audit lane.
-
-\subsection{Experiment-Logging Ablation}
-
-\paragraph{Setup.}
-To investigate the role of centralized experiment observability, an ablation compared SENPAI with hosted experiment logging against SENPAI using only locally written experiment results. Both settings used a 12-hour outer-loop budget and a 30-minute per-experiment cutoff. SENPAI's local-only logging trial achieved the strongest average final performance on TandemFoilSet-Balanced across five 12-hour trials, but with substantially higher variance, including one trial that failed to log a valid test-set result.
-
-For the hosted-logging Willow arm, \cref{fig:willow-sankey} summarizes how hypotheses moved from Advisor branches through experiment families to final PR outcomes.
-
-\begin{figure*}[t]
-  \centering
-  \includegraphics[width=0.92\textwidth]{icml2026/figures/willow_sankey/willow_simplified_sankey.pdf}
-  \caption{Experiment-ledger flow for the hosted-logging Willow ablation arm on TandemFoilSet-Balanced. Five Advisor branches (A1--A5) are routed through hypothesis families and into final PR outcomes; ribbon width is proportional to PR count. The figure compresses 167 GitHub-mediated experiments into a researcher-readable audit map, showing where autonomous search effort was allocated and how it resolved into merged, closed, or still-open work.}
-  \label{fig:willow-sankey}
-\end{figure*}
-
-\begin{table}[t]
-  \caption{Experiment-logging ablation on TandemFoilSet-Balanced. Surface-pressure MAE; lower is better.}
-  \label{tab:logging-ablation}
-  \centering
-  \small
-  \begin{tabular}{@{}lrr@{}}
-    \toprule
-    Metric & Hosted log. & Local-only \\
-    \midrule
-    Best test & 44.15 & \best{27.21} \\
-    Mean test & 51.23 & \best{45.10} \\
-    SD & 4.79 & 12.89 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\paragraph{Behavior.}
-Analyzing the Claude Code logs, centralized, queryable logging improved auditability and verification behavior. Agents with hosted logging more often verified run histories, compared split-level metrics, checked seed/control behavior, and reasoned about stale branches before accepting results. This produced a cleaner audit trail and more consistent provenance. The local-only arm was less verification-oriented, referencing keywords related to seeds and experimental variance roughly $3\times$ less. While the local-only arm achieved a strong average result, over longer experiment durations the performance of this setup is likely to drift.
-
-\begin{table}[t]
-  \caption{Behavioral differences in the experiment-logging ablation.}
-  \label{tab:logging-behavior}
-  \centering
-  \small
-  \begin{tabular}{@{}p{0.48\columnwidth}rr@{}}
-    \toprule
-    Behavior & With log. & No log. \\
-    \midrule
-    Tool calls & 60,600 & 78,372 \\
-    Tool errors / 1k calls & 63.10 & 32.23 \\
-    Seed/variance refs. / 1k records & 55.04 & 17.61 \\
-    PRs opened & 187 & 167 \\
-    PR merge rate & 31.0\% & 23.5\% \\
-    Median result-to-merge latency & 0.294 h & 0.162 h \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+The PR ledger shows the path: lower learning rates near \texttt{1e-4}, gradient clipping, EMA, warmup, and schedule-length tuning.
 
 \subsection{Flat-Agent Comparison}
 
@@ -526,17 +483,17 @@ The key property is that ordinary polling remains outside the LLM. The Advisor i
     \toprule
     Setting & Value \\
     \midrule
-    Source & PR \#741 in the experiment ledger \\
-    W\&B runs & train \texttt{lszc4ri7}, eval \texttt{1tal40wr} \\
-    Training budget & 50 epochs; validation-selected checkpoint \\
+    Source & PR \#740 on \texttt{drivaerml-long-20260504}; merge commit \texttt{9130201} \\
+    W\&B run & \texttt{5x8wofzm} \\
+    Training budget & 50-epoch budget; best EMA checkpoint at epoch 27 \\
     Parallelism and batch & 8-GPU DDP; batch size 2 per rank, 16 global \\
     Optimizer & Lion, learning rate \texttt{1e-4}, weight decay \texttt{1e-4} \\
     EMA & 0.999 \\
     Backbone & 4 layers, 512 hidden units, 4 attention heads, 128 slices \\
     Positional encoding & \texttt{string\_multisigma}; sigmas 0.25, 0.5, 1.0, 2.0, 4.0 \\
-    Point sampling & Train: 65,536 surface / 65,000 volume; eval: 40,000 surface / 65,000 volume \\
-    Augmentation & Training-only $y$-plane reflection with lateral coordinate, normal, and $\tau_y$ sign flips \\
-    Loss & Normalized MSE with surface/volume weights 1.0/1.0 \\
+    Point sampling & Train: 40,000 surface / 65,000 volume; eval: 40,000 surface / 65,000 volume \\
+    Augmentation & None in selected run \\
+    Loss & Normalized MSE with GradNorm ($\alpha=0.5$, learning rate \texttt{1e-3}) and base surface/volume weights 1.0/1.0 \\
     \bottomrule
   \end{tabular}
 \end{table}
