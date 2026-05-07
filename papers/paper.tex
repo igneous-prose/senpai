@@ -76,7 +76,7 @@ In practice, however, training a useful CFD surrogate is still a niche capabilit
 
 Recent autonomous-research systems show that LLM agents can search literature, propose hypotheses, edit code, run experiments, and produce reports \citep{lu2024aiscientist,schmidgall2025agentlaboratory,yamada2025aiscientistv2,miyai2026jraiscientist}. SENPAI builds on this direction but focuses on a different systems question: how should long-running, multi-experiment ML research be represented so that both agents and researchers can audit, recover, compare, and steer it?
 
-SENPAI's central design choice is to ground the research loop in external systems of record that ML teams already inspect: pull requests and git history for hypotheses, code changes, review, and provenance \citep{githubdocs_pullrequests,chacon2014progit}; and a hosted experiment tracker for configurations, metrics, checkpoints, system telemetry, and agent traces \citep{biewald2020wandb,wandbdocs_experiments}. Our implementation uses GitHub and Weights \& Biases,\footnote{Weights \& Biases was the hosted experiment tracker used in the reported experiments.} but the harness design is not specific to either service. Each hypothesis, code diff, training result, review decision, failed run, and baseline update becomes both machine-queryable and research-reviewable through these existing tools.
+SENPAI's central design choice is to ground the research loop in external systems of record that ML teams already inspect: pull requests and git history for hypotheses, code changes, review, and provenance \citep{githubdocs_pullrequests,chacon2014progit}; and a hosted experiment tracker for configurations, metrics, checkpoints, system telemetry, and agent traces \citep{biewald2020wandb,wandbdocs_experiments}. Our implementation uses GitHub and Weights \& Biases, but the harness design is not specific to either service. By using these tools as an experiment ledger, each hypothesis, code diff, training result and review decision becomes both machine-queryable and researcher-reviewable.
 
 The harness loop is deliberately thin. An Advisor reads the current experiment ledger, proposes a literature-grounded hypothesis as a draft PR, and assigns it to a GPU-backed Student. The Student checks out the branch, modifies the training code, runs the experiment, logs metrics to the experiment tracker, and reports results in the PR. The Advisor then merges, requests revision, or closes the line of inquiry. Humans can steer the Advisor or Student through GitHub issues and PR comments, while markdown scratchpads remain secondary sources of state rather than the primary system of record.
 
@@ -152,23 +152,23 @@ In our longest observed SENPAI deployment on DrivAerML, the system ran continuou
 \subsection{Experiment Setup}
 
 \paragraph{Harness.}
-Claude Code (v2.1.85 to v2.1.117) was run in headless mode as the agent harness for both the Advisor and Students. Claude Opus 4.6 and Claude Opus 4.7 were used with a compaction trigger at 200k tokens. Student pods were scheduled on NVIDIA RTX 6000 Blackwell nodes with 96 GB VRAM per GPU, from 1 to 8 GPUs per Student node. At maximum, $N=59$ concurrent Students were tested, with peak concurrent training runs of 347. Over the five-week experimentation and harness-development cycle, 30 billion tokens were processed by Claude Code while running physical-AI experiments.
+Claude Code (v2.1.85 to v2.1.117) was run in headless mode as the agent harness for both the Advisor and Students. Claude Opus 4.6 and Claude Opus 4.7 were used with a compaction trigger at 200k tokens. Student pods were scheduled on NVIDIA RTX 6000 Blackwell nodes with 96 GB VRAM per GPU, using from 1 to 8 GPUs per Student node depending on the experiment setting. At maximum, $N=59$ concurrent Students were tested, with peak concurrent training runs of 347. Over the five-week experimentation and harness-development cycle, 30 billion tokens were processed by Claude Code while running physical-AI experiments.
 
 \paragraph{Scale.}
 Over the course of the research programme, SENPAI created over 3,000 PRs and recorded over 11,000 experiment-tracker runs while deploying, at peak, 59 distinct Student agents. Approximately 30 billion Claude Code tokens were processed during experimentation.
 
 \subsection{Datasets and Metrics}
 
-To demonstrate SENPAI's CFD performance across multiple benchmarks, we train and evaluate on three CFD surrogate datasets spanning 2D tandem-airfoil flow, 2D airfoil RANS, and 3D automotive aerodynamics: TandemFoilSet \citep{lim2026tandemfoilset}, AirfRANS \citep{bonnet2022airfrans}, and DrivAerML \citep{ashton2024drivaerml}.
+To demonstrate SENPAI's CFD performance across multiple benchmarks, we train and evaluate on three CFD surrogate datasets spanning 3D automotive aerodynamics, 2D airfoil RANS, and 2D tandem-airfoil flow: DrivAerML \citep{ashton2024drivaerml}, AirfRANS \citep{bonnet2022airfrans}, and TandemFoilSet \citep{lim2026tandemfoilset}. \Cref{fig:cfd-problem-gallery} shows representative geometries from all three datasets.
 
-\paragraph{TandemFoilSet.}
-We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
+\paragraph{DrivAerML.}
+We use the public processed-case split, 400/34/50 train/validation/test, and report surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$, computed per case on unnormalized predictions and then averaged over test cases.
 
 \paragraph{AirfRANS.}
 We use the official full task with the last 10\% of the official training list held out for validation, giving a 720/80/200 train/validation/test split while keeping the official test set unchanged. We test on normalized targets on the official test split.
 
-\paragraph{DrivAerML.}
-We use the public processed-case split, 400/34/50 train/validation/test, and report surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$, computed per case on unnormalized predictions and then averaged over test cases.
+\paragraph{TandemFoilSet.}
+We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
 
 \subsection{DrivAerML}
 
@@ -185,11 +185,11 @@ On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementat
     \toprule
     Method & $p_s$ & $\tau$ & $p_v$ \\
     \midrule
-    SENPAI, ensemble & \best{3.69} & 6.86 & 11.36 \\
+    SENPAI (ours), ensemble & \best{3.69} & 6.86 & 11.36 \\
     Transolver-3 \citep{zhou2026transolver3} & 3.71 & \best{5.85} & \best{5.72} \\
     AB-UPT \citep{alkin2025abupt} & 3.82 & 7.29 & 6.08 \\
-    SENPAI, single model & 3.88 & 7.06 & 10.76 \\
-    Transolver++ & 4.12 & 6.42 & 6.70 \\
+    SENPAI (ours), single model & 3.88 & 7.06 & 10.76 \\
+    Transolver++ \citep{luo2025transolverplusplus} & 4.12 & 6.42 & 6.70 \\
     Transolver \citep{wu2024transolver} & 4.81 & 8.95 & 7.74 \\
     \bottomrule
   \end{tabular}
