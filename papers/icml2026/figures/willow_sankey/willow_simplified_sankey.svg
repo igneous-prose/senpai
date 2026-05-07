@@ -56,20 +56,20 @@
 <path d="M 339.0 350.8 C 433.1 350.8, 425.9 277.0, 520.0 277.0 L 520.0 283.7 C 425.9 283.7, 433.1 357.5, 339.0 357.5 Z" fill="#B0B0B0" opacity="0.38"/>
 <path d="M 339.0 357.5 C 433.1 357.5, 425.9 369.5, 520.0 369.5 L 520.0 374.6 C 425.9 374.6, 433.1 362.6, 339.0 362.6 Z" fill="#6B7280" opacity="0.38"/>
 <rect x="72" y="28.0" width="24" height="43.7" rx="4" fill="#293241"/>
-<text class="label" x="54" text-anchor="end" y="47.8">A1</text>
-<text class="small" x="54" text-anchor="end" y="54.8">(26)</text>
+<text class="label" x="49" text-anchor="middle" y="47.8">A1</text>
+<text class="small" x="49" text-anchor="middle" y="54.8">(26)</text>
 <rect x="72" y="89.7" width="24" height="45.4" rx="4" fill="#293241"/>
-<text class="label" x="54" text-anchor="end" y="110.4">A2</text>
-<text class="small" x="54" text-anchor="end" y="117.4">(27)</text>
+<text class="label" x="49" text-anchor="middle" y="110.4">A2</text>
+<text class="small" x="49" text-anchor="middle" y="117.4">(27)</text>
 <rect x="72" y="153.0" width="24" height="73.9" rx="4" fill="#293241"/>
-<text class="label" x="54" text-anchor="end" y="188.0">A3</text>
-<text class="small" x="54" text-anchor="end" y="195.0">(44)</text>
+<text class="label" x="49" text-anchor="middle" y="188.0">A3</text>
+<text class="small" x="49" text-anchor="middle" y="195.0">(44)</text>
 <rect x="72" y="245.0" width="24" height="72.2" rx="4" fill="#293241"/>
-<text class="label" x="54" text-anchor="end" y="279.1">A4</text>
-<text class="small" x="54" text-anchor="end" y="286.1">(43)</text>
+<text class="label" x="49" text-anchor="middle" y="279.1">A4</text>
+<text class="small" x="49" text-anchor="middle" y="286.1">(43)</text>
 <rect x="72" y="335.2" width="24" height="45.4" rx="4" fill="#293241"/>
-<text class="label" x="54" text-anchor="end" y="355.9">A5</text>
-<text class="small" x="54" text-anchor="end" y="362.9">(27)</text>
+<text class="label" x="49" text-anchor="middle" y="355.9">A5</text>
+<text class="small" x="49" text-anchor="middle" y="362.9">(27)</text>
 <rect x="315" y="22.0" width="24" height="37.0" rx="4" fill="#0072B2"/>
 <text class="label" x="349" y="38.5">LR / schedule</text>
 <text class="small" x="349" y="45.5">(22)</text>

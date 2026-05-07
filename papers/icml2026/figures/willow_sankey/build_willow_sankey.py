@@ -350,8 +350,28 @@ def pdf_y(y: float, height: float) -> float:
     return height - y
 
 
+TIMES_ROMAN_WIDTHS = {
+    " ": 250,
+    "(": 333,
+    ")": 333,
+    "/": 278,
+    "0": 500,
+    "1": 500,
+    "2": 500,
+    "3": 500,
+    "4": 500,
+    "5": 500,
+    "6": 500,
+    "7": 500,
+    "8": 500,
+    "9": 500,
+    "A": 722,
+}
+
+
 def pdf_text_width(text: str, font_size: float) -> float:
-    return len(text) * font_size * 0.47
+    return sum(TIMES_ROMAN_WIDTHS.get(char, 500) for char in text) * font_size / 1000
+
 
 
 def pdf_text(
@@ -365,6 +385,8 @@ def pdf_text(
 ) -> str:
     if anchor == "end":
         x -= pdf_text_width(text, font_size)
+    elif anchor == "middle":
+        x -= pdf_text_width(text, font_size) / 2
     return (
         "BT "
         f"/F1 {font_size:.1f} Tf "
@@ -584,12 +606,13 @@ def draw_svg(prs: list[PullRequest]) -> None:
             parts.append(f'<text class="small" x="{x + node_w + 10}" y="{(y0+y1)/2 + 5 + label_nudge:.1f}">({totals[label]})</text>')
 
     branch_colors = {b: BRANCH_COLOR for b in branches}
+    branch_label_x = x_branch - 23
     for b in branches:
         y0, y1 = branch_pos[b]
         color = branch_colors[b]
         parts.append(f'<rect x="{x_branch}" y="{y0:.1f}" width="{node_w}" height="{y1-y0:.1f}" rx="4" fill="{color}"/>')
-        parts.append(f'<text class="label" x="{x_branch - 18}" text-anchor="end" y="{(y0+y1)/2 - 2:.1f}">{b}</text>')
-        parts.append(f'<text class="small" x="{x_branch - 18}" text-anchor="end" y="{(y0+y1)/2 + 5:.1f}">({branch_totals[b]})</text>')
+        parts.append(f'<text class="label" x="{branch_label_x}" text-anchor="middle" y="{(y0+y1)/2 - 2:.1f}">{b}</text>')
+        parts.append(f'<text class="small" x="{branch_label_x}" text-anchor="middle" y="{(y0+y1)/2 + 5:.1f}">({branch_totals[b]})</text>')
 
     add_nodes(families, family_pos, family_totals, x_family, FAMILY_COLORS)
     add_nodes(outcomes, outcome_pos, outcome_totals, x_outcome, OUTCOME_COLORS)
@@ -674,11 +697,12 @@ def draw_pdf(prs: list[PullRequest]) -> None:
             parts.append(pdf_text(f"({totals[label]})", x + node_w + 10, (y0 + y1) / 2 + 5 + label_nudge, 8.8, MUTED_COLOR, height))
 
     branch_colors = {b: BRANCH_COLOR for b in branches}
+    branch_label_x = x_branch - 23
     for b in branches:
         y0, y1 = branch_pos[b]
         parts.append(pdf_rounded_rect(x_branch, y0, node_w, y1 - y0, 4, branch_colors[b], height))
-        parts.append(pdf_text(b, x_branch - 18, (y0 + y1) / 2 - 2, 10.5, INK_COLOR, height, anchor="end"))
-        parts.append(pdf_text(f"({branch_totals[b]})", x_branch - 18, (y0 + y1) / 2 + 5, 8.8, MUTED_COLOR, height, anchor="end"))
+        parts.append(pdf_text(b, branch_label_x, (y0 + y1) / 2 - 2, 10.5, INK_COLOR, height, anchor="middle"))
+        parts.append(pdf_text(f"({branch_totals[b]})", branch_label_x, (y0 + y1) / 2 + 5, 8.8, MUTED_COLOR, height, anchor="middle"))
 
     add_nodes(families, family_pos, family_totals, x_family, FAMILY_COLORS)
     add_nodes(outcomes, outcome_pos, outcome_totals, x_outcome, OUTCOME_COLORS)
