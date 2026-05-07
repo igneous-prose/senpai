@@ -69,10 +69,14 @@ NUDGE_RE = re.compile(
 )
 
 COLORS = {
-    "yi": "#2F80ED",
-    "tay": "#D55E00",
-    "drivaerml-long-20260504": "#009E73",
+    "yi": os.environ.get("DRIVAERML_PARETO_YI_COLOR", "#0072B2"),
+    "tay": os.environ.get("DRIVAERML_PARETO_TAY_COLOR", "#CC79A7"),
+    "drivaerml-long-20260504": os.environ.get("DRIVAERML_PARETO_LONG_COLOR", "#6B7280"),
 }
+INK_COLOR = "#1F2933"
+MUTED_COLOR = "#4B5563"
+GRID_COLOR = "#D9DEE6"
+MINOR_GRID_COLOR = "#ECEFF4"
 DISPLAY = {
     "yi": "yi",
     "tay": "tay",
@@ -670,26 +674,31 @@ def render_chart(
     plt.rcParams.update(
         {
             "font.family": [
+                "Times New Roman",
+                "Times",
                 "Latin Modern Roman",
                 "CMU Serif",
                 "Computer Modern Serif",
-                "Times New Roman",
-                "Times",
                 "serif",
             ],
             "font.serif": [
+                "Times New Roman",
+                "Times",
                 "Latin Modern Roman",
                 "CMU Serif",
                 "Computer Modern Serif",
-                "Times New Roman",
-                "Times",
             ],
             "axes.spines.top": False,
             "axes.spines.right": False,
-            "axes.titleweight": "bold",
+            "axes.edgecolor": MUTED_COLOR,
+            "axes.labelcolor": INK_COLOR,
+            "xtick.color": INK_COLOR,
+            "ytick.color": INK_COLOR,
         }
     )
-    fig, ax = plt.subplots(figsize=(15, 8.5), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(9.0, 5.2))
+    fig.patch.set_facecolor("#FFFFFF")
+    ax.set_facecolor("#FFFFFF")
 
     for label in PLOT_LABELS:
         label_points = [row for row in points if row["label"] == label]
@@ -697,9 +706,9 @@ def render_chart(
         ax.scatter(
             [row["experiment_index"] for row in label_points],
             [row["surface_pressure_rel_l2_pct"] for row in label_points],
-            s=28 if label != "drivaerml-long-20260504" else 38,
+            s=14 if label != "drivaerml-long-20260504" else 20,
             color=color,
-            alpha=0.23,
+            alpha=0.22,
             edgecolors="none",
             label=f"{DISPLAY[label]} experiment",
             zorder=2,
@@ -710,7 +719,7 @@ def render_chart(
                 [x for x, _ in series],
                 [y for _, y in series],
                 color=color,
-                linewidth=2.8,
+                linewidth=1.8,
                 drawstyle="steps-post",
                 label=f"{DISPLAY[label]} frontier",
                 zorder=4,
@@ -722,14 +731,14 @@ def render_chart(
             continue
         color = COLORS[label]
         x = int(row["experiment_index"])
-        ax.axvline(x, color=color, linewidth=0.9, linestyle="--", alpha=0.15, zorder=1)
+        ax.axvline(x, color=color, linewidth=0.65, linestyle="--", alpha=0.14, zorder=1)
     ax.set_yscale("log")
-    ax.set_xlabel("Experiment count", fontsize=14)
-    ax.set_ylabel("Surface pressure relative L2 error on TEST split (%)", fontsize=14)
-    ax.set_title("DrivAerML surface-pressure test Pareto frontier", fontsize=19, pad=12)
-    ax.tick_params(axis="both", which="major", labelsize=11)
-    ax.grid(True, which="major", axis="both", color="#d7dce2", linewidth=0.8, alpha=0.8)
-    ax.grid(True, which="minor", axis="y", color="#e6e9ef", linewidth=0.5, alpha=0.7)
+    ax.set_xlabel("Experiment count", fontsize=11.5)
+    ax.set_ylabel("Surface pressure rel. L2 (%)", fontsize=11.5, labelpad=8)
+    ax.set_title("DrivAerML surface-pressure Pareto frontier", fontsize=14, pad=10)
+    ax.tick_params(axis="both", which="major", labelsize=9.5, length=3)
+    ax.grid(True, which="major", axis="both", color=GRID_COLOR, linewidth=0.6, alpha=0.85)
+    ax.grid(True, which="minor", axis="y", color=MINOR_GRID_COLOR, linewidth=0.45, alpha=0.75)
     ax.yaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 3, 4, 5, 6, 8)))
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
 
@@ -741,9 +750,19 @@ def render_chart(
         if row["label"] in PLOT_LABELS
     ]
     ax.set_ylim(max(min(all_y) * 0.8, 0.1), max(all_y) * 1.35)
-    ax.legend(loc="upper right", ncol=2, frameon=False, fontsize=11)
+    ax.legend(
+        loc="upper right",
+        bbox_to_anchor=(0.985, 0.985),
+        ncol=2,
+        frameon=False,
+        fontsize=9.5,
+        borderaxespad=0,
+        columnspacing=1.4,
+        handlelength=2.8,
+    )
+    fig.subplots_adjust(left=0.105, right=0.985, top=0.875, bottom=0.13)
 
-    fig.savefig(PNG_OUT, dpi=220)
+    fig.savefig(PNG_OUT, dpi=600, facecolor="#FFFFFF")
     fig.savefig(PDF_OUT)
     plt.close(fig)
 

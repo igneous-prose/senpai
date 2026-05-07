@@ -1217,8 +1217,8 @@
       ]
     },
     "tay": {
-      "pr_count": 270,
-      "test_point_count": 220,
+      "pr_count": 293,
+      "test_point_count": 234,
       "intervention_count": 24,
       "best_surface_pressure_rel_l2_pct": 3.6934711715666735,
       "best_pr": 602,
@@ -2304,11 +2304,103 @@
         {
           "experiment_index": 270,
           "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 271,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 272,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 273,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 274,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 275,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 276,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 277,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 278,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 279,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 280,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 281,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 282,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 283,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 284,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 285,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 286,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 287,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 288,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 289,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 290,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 291,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 292,
+          "value": 3.6934711715666735
+        },
+        {
+          "experiment_index": 293,
+          "value": 3.6934711715666735
         }
       ]
     },
     "drivaerml-long-20260504": {
-      "pr_count": 25,
+      "pr_count": 29,
       "test_point_count": 24,
       "intervention_count": 0,
       "best_surface_pressure_rel_l2_pct": 3.881152122847719,
@@ -2410,6 +2502,22 @@
         },
         {
           "experiment_index": 25,
+          "value": 3.881152122847719
+        },
+        {
+          "experiment_index": 26,
+          "value": 3.881152122847719
+        },
+        {
+          "experiment_index": 27,
+          "value": 3.881152122847719
+        },
+        {
+          "experiment_index": 28,
+          "value": 3.881152122847719
+        },
+        {
+          "experiment_index": 29,
           "value": 3.881152122847719
         }
       ]

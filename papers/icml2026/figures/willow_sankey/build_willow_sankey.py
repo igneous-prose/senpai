@@ -30,9 +30,26 @@ def find_repo_root() -> Path:
 REPO_ROOT = find_repo_root()
 RESULTS_MD = REPO_ROOT / "experiment_log/tandemfoil_balanced_pr_results_2026-05-06_07-27-38.md"
 OUT_DIR = SCRIPT_DIR
-BACKGROUND_COLOR = os.environ.get("WILLOW_SANKEY_BG", "#F8F6FB")
+BACKGROUND_COLOR = os.environ.get("WILLOW_SANKEY_BG", "#FFFFFF")
 OUTPUT_SUFFIX = os.environ.get("WILLOW_SANKEY_SUFFIX", "")
-PHYSICS_COLOR = os.environ.get("WILLOW_SANKEY_PHYSICS_COLOR", "#355C7D")
+PHYSICS_COLOR = os.environ.get("WILLOW_SANKEY_PHYSICS_COLOR", "#56B4E9")
+INK_COLOR = "#1F2933"
+MUTED_COLOR = "#4B5563"
+BRANCH_COLOR = "#293241"
+FAMILY_COLORS = {
+    "LR / schedule": "#0072B2",
+    "Training Efficiency": "#785EF0",
+    "EMA / stability": "#CC79A7",
+    "Loss / weighting": "#E69F00",
+    "Physics / features": PHYSICS_COLOR,
+    "Model capacity": "#D55E00",
+    "Tooling / audit": "#666666",
+}
+OUTCOME_COLORS = {
+    "Merged": "#009E73",
+    "Closed": "#B0B0B0",
+    "Open at cutoff": "#6B7280",
+}
 
 
 @dataclass(frozen=True)
@@ -333,8 +350,28 @@ def pdf_y(y: float, height: float) -> float:
     return height - y
 
 
+TIMES_ROMAN_WIDTHS = {
+    " ": 250,
+    "(": 333,
+    ")": 333,
+    "/": 278,
+    "0": 500,
+    "1": 500,
+    "2": 500,
+    "3": 500,
+    "4": 500,
+    "5": 500,
+    "6": 500,
+    "7": 500,
+    "8": 500,
+    "9": 500,
+    "A": 722,
+}
+
+
 def pdf_text_width(text: str, font_size: float) -> float:
-    return len(text) * font_size * 0.47
+    return sum(TIMES_ROMAN_WIDTHS.get(char, 500) for char in text) * font_size / 1000
+
 
 
 def pdf_text(
@@ -348,6 +385,8 @@ def pdf_text(
 ) -> str:
     if anchor == "end":
         x -= pdf_text_width(text, font_size)
+    elif anchor == "middle":
+        x -= pdf_text_width(text, font_size) / 2
     return (
         "BT "
         f"/F1 {font_size:.1f} Tf "
@@ -517,25 +556,10 @@ def draw_svg(prs: list[PullRequest]) -> None:
     family_pos = stack_positions(families, family_totals, scale, y_top - 6, 10)
     outcome_pos = stack_positions(outcomes, outcome_totals, scale, y_top + 22, 22)
 
-    family_colors = {
-        "LR / schedule": "#2A5CAA",
-        "Training Efficiency": "#00A6A6",
-        "EMA / stability": "#7B5EA7",
-        "Loss / weighting": "#D95F02",
-        "Physics / features": PHYSICS_COLOR,
-        "Model capacity": "#C04C8A",
-        "Tooling / audit": "#6B7280",
-    }
-    outcome_colors = {
-        "Merged": "#2ca25f",
-        "Closed": "#9ca3af",
-        "Open at cutoff": "#f2b447",
-    }
-
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="{BACKGROUND_COLOR}"/>',
-        '<style>text{font-family:"Times New Roman",Times,"Latin Modern Roman","CMU Serif","Computer Modern Serif",serif;fill:#242424}.label{font-size:10.5px;font-weight:400}.small{font-size:8.8px;fill:#404040;font-weight:400}</style>',
+        f'<style>text{{font-family:"Times New Roman",Times,"Latin Modern Roman","CMU Serif","Computer Modern Serif",serif;fill:{INK_COLOR}}}.label{{font-size:10.5px;font-weight:400}}.small{{font-size:8.8px;fill:{MUTED_COLOR};font-weight:400}}</style>',
     ]
 
     # Branch to family ribbons.
@@ -553,7 +577,7 @@ def draw_svg(prs: list[PullRequest]) -> None:
             y1b = y1a + h
             branch_offsets[b] = y0b
             family_in_offsets[f] = y1b
-            parts.append(draw_ribbon(x_branch + node_w, y0a, y0b, x_family, y1a, y1b, family_colors[f], 0.32))
+            parts.append(draw_ribbon(x_branch + node_w, y0a, y0b, x_family, y1a, y1b, FAMILY_COLORS[f], 0.32))
 
     # Family to outcome ribbons.
     family_out_offsets = {f: family_pos[f][0] for f in families}
@@ -570,27 +594,28 @@ def draw_svg(prs: list[PullRequest]) -> None:
             y1b = y1a + h
             family_out_offsets[f] = y0b
             outcome_offsets[o] = y1b
-            parts.append(draw_ribbon(x_family + node_w, y0a, y0b, x_outcome, y1a, y1b, outcome_colors[o], 0.38))
+            parts.append(draw_ribbon(x_family + node_w, y0a, y0b, x_outcome, y1a, y1b, OUTCOME_COLORS[o], 0.38))
 
     def add_nodes(labels: list[str], positions: dict[str, tuple[float, float]], totals: dict[str, int], x: float, colors: dict[str, str] | None = None) -> None:
         for label in labels:
             y0, y1 = positions[label]
             label_nudge = 6 if label == "Tooling / audit" else 0
-            color = colors.get(label, "#334155") if colors else "#334155"
+            color = colors.get(label, BRANCH_COLOR) if colors else BRANCH_COLOR
             parts.append(f'<rect x="{x}" y="{y0:.1f}" width="{node_w}" height="{y1-y0:.1f}" rx="4" fill="{color}"/>')
             parts.append(f'<text class="label" x="{x + node_w + 10}" y="{(y0+y1)/2 - 2 + label_nudge:.1f}">{svg_escape(label)}</text>')
             parts.append(f'<text class="small" x="{x + node_w + 10}" y="{(y0+y1)/2 + 5 + label_nudge:.1f}">({totals[label]})</text>')
 
-    branch_colors = {b: "#263238" for b in branches}
+    branch_colors = {b: BRANCH_COLOR for b in branches}
+    branch_label_x = x_branch - 23
     for b in branches:
         y0, y1 = branch_pos[b]
         color = branch_colors[b]
         parts.append(f'<rect x="{x_branch}" y="{y0:.1f}" width="{node_w}" height="{y1-y0:.1f}" rx="4" fill="{color}"/>')
-        parts.append(f'<text class="label" x="{x_branch - 18}" text-anchor="end" y="{(y0+y1)/2 - 2:.1f}">{b}</text>')
-        parts.append(f'<text class="small" x="{x_branch - 18}" text-anchor="end" y="{(y0+y1)/2 + 5:.1f}">({branch_totals[b]})</text>')
+        parts.append(f'<text class="label" x="{branch_label_x}" text-anchor="middle" y="{(y0+y1)/2 - 2:.1f}">{b}</text>')
+        parts.append(f'<text class="small" x="{branch_label_x}" text-anchor="middle" y="{(y0+y1)/2 + 5:.1f}">({branch_totals[b]})</text>')
 
-    add_nodes(families, family_pos, family_totals, x_family, family_colors)
-    add_nodes(outcomes, outcome_pos, outcome_totals, x_outcome, outcome_colors)
+    add_nodes(families, family_pos, family_totals, x_family, FAMILY_COLORS)
+    add_nodes(outcomes, outcome_pos, outcome_totals, x_outcome, OUTCOME_COLORS)
 
     parts.append("</svg>")
     (OUT_DIR / f"willow_simplified_sankey{OUTPUT_SUFFIX}.svg").write_text("\n".join(parts))
@@ -625,21 +650,6 @@ def draw_pdf(prs: list[PullRequest]) -> None:
     family_pos = stack_positions(families, family_totals, scale, y_top - 6, 10)
     outcome_pos = stack_positions(outcomes, outcome_totals, scale, y_top + 22, 22)
 
-    family_colors = {
-        "LR / schedule": "#2A5CAA",
-        "Training Efficiency": "#00A6A6",
-        "EMA / stability": "#7B5EA7",
-        "Loss / weighting": "#D95F02",
-        "Physics / features": PHYSICS_COLOR,
-        "Model capacity": "#C04C8A",
-        "Tooling / audit": "#6B7280",
-    }
-    outcome_colors = {
-        "Merged": "#2ca25f",
-        "Closed": "#9ca3af",
-        "Open at cutoff": "#f2b447",
-    }
-
     parts: list[str] = [
         pdf_color(BACKGROUND_COLOR),
         f"0 0 {width} {height} re f",
@@ -659,7 +669,7 @@ def draw_pdf(prs: list[PullRequest]) -> None:
             y1b = y1a + h
             branch_offsets[b] = y0b
             family_in_offsets[f] = y1b
-            parts.append(pdf_ribbon(x_branch + node_w, y0a, y0b, x_family, y1a, y1b, family_colors[f], "GS32", height))
+            parts.append(pdf_ribbon(x_branch + node_w, y0a, y0b, x_family, y1a, y1b, FAMILY_COLORS[f], "GS32", height))
 
     family_out_offsets = {f: family_pos[f][0] for f in families}
     outcome_offsets = {o: outcome_pos[o][0] for o in outcomes}
@@ -675,26 +685,27 @@ def draw_pdf(prs: list[PullRequest]) -> None:
             y1b = y1a + h
             family_out_offsets[f] = y0b
             outcome_offsets[o] = y1b
-            parts.append(pdf_ribbon(x_family + node_w, y0a, y0b, x_outcome, y1a, y1b, outcome_colors[o], "GS38", height))
+            parts.append(pdf_ribbon(x_family + node_w, y0a, y0b, x_outcome, y1a, y1b, OUTCOME_COLORS[o], "GS38", height))
 
     def add_nodes(labels: list[str], positions: dict[str, tuple[float, float]], totals: dict[str, int], x: float, colors: dict[str, str] | None = None) -> None:
         for label in labels:
             y0, y1 = positions[label]
             label_nudge = 6 if label == "Tooling / audit" else 0
-            color = colors.get(label, "#334155") if colors else "#334155"
+            color = colors.get(label, BRANCH_COLOR) if colors else BRANCH_COLOR
             parts.append(pdf_rounded_rect(x, y0, node_w, y1 - y0, 4, color, height))
-            parts.append(pdf_text(label, x + node_w + 10, (y0 + y1) / 2 - 2 + label_nudge, 10.5, "#242424", height))
-            parts.append(pdf_text(f"({totals[label]})", x + node_w + 10, (y0 + y1) / 2 + 5 + label_nudge, 8.8, "#404040", height))
+            parts.append(pdf_text(label, x + node_w + 10, (y0 + y1) / 2 - 2 + label_nudge, 10.5, INK_COLOR, height))
+            parts.append(pdf_text(f"({totals[label]})", x + node_w + 10, (y0 + y1) / 2 + 5 + label_nudge, 8.8, MUTED_COLOR, height))
 
-    branch_colors = {b: "#263238" for b in branches}
+    branch_colors = {b: BRANCH_COLOR for b in branches}
+    branch_label_x = x_branch - 23
     for b in branches:
         y0, y1 = branch_pos[b]
         parts.append(pdf_rounded_rect(x_branch, y0, node_w, y1 - y0, 4, branch_colors[b], height))
-        parts.append(pdf_text(b, x_branch - 18, (y0 + y1) / 2 - 2, 10.5, "#242424", height, anchor="end"))
-        parts.append(pdf_text(f"({branch_totals[b]})", x_branch - 18, (y0 + y1) / 2 + 5, 8.8, "#404040", height, anchor="end"))
+        parts.append(pdf_text(b, branch_label_x, (y0 + y1) / 2 - 2, 10.5, INK_COLOR, height, anchor="middle"))
+        parts.append(pdf_text(f"({branch_totals[b]})", branch_label_x, (y0 + y1) / 2 + 5, 8.8, MUTED_COLOR, height, anchor="middle"))
 
-    add_nodes(families, family_pos, family_totals, x_family, family_colors)
-    add_nodes(outcomes, outcome_pos, outcome_totals, x_outcome, outcome_colors)
+    add_nodes(families, family_pos, family_totals, x_family, FAMILY_COLORS)
+    add_nodes(outcomes, outcome_pos, outcome_totals, x_outcome, OUTCOME_COLORS)
 
     write_pdf(OUT_DIR / f"willow_simplified_sankey{OUTPUT_SUFFIX}.pdf", "\n".join(parts), width, height)
 
