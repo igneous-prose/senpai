@@ -718,6 +718,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/11mx5vc1"
   },
+  "11xnkzyq": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T07:00:14Z",
+    "group": "abupt-geom-branch-warmup-fix",
+    "name": "frieren/geom-branch-v2-warmup-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "11xnkzyq",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "frieren",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/11xnkzyq"
+  },
   "120fiq6s": {
     "abupt_axis_mean_rel_l2_pct": 26.83124467367512,
     "created_at": "2026-05-02T13:56:53Z",
@@ -1077,6 +1093,22 @@
       "emma"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/1iilxfvs"
+  },
+  "1jycth2o": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T08:10:00Z",
+    "group": "triple-compose-smoke",
+    "name": "dl24-frieren/5l-string-gradnorm-alpha025-ysym-smoke-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "1jycth2o",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-frieren",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/1jycth2o"
   },
   "1kh87g8s": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -2166,6 +2198,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/3bsl2guf"
   },
+  "3by0gfei": {
+    "abupt_axis_mean_rel_l2_pct": 8.443693378933437,
+    "created_at": "2026-05-07T06:10:52Z",
+    "group": "fern-sota-4ep-aligned",
+    "name": "fern/sota-4ep-aligned-control-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "3by0gfei",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.2065074657121695,
+    "tags": [
+      "ddp",
+      "fern",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/3by0gfei"
+  },
   "3c514gml": {
     "abupt_axis_mean_rel_l2_pct": 10.98610128684209,
     "created_at": "2026-04-30T21:23:49Z",
@@ -2256,6 +2304,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/3dowrdsi"
   },
+  "3efn3v5u": {
+    "abupt_axis_mean_rel_l2_pct": 8.844207852874735,
+    "created_at": "2026-05-07T13:48:40Z",
+    "group": "alphonse-string-6octave",
+    "name": "alphonse/string-6octave-extended-spectrum-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "3efn3v5u",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.597444484878321,
+    "tags": [
+      "alphonse",
+      "ddp",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/3efn3v5u"
+  },
   "3evzgru1": {
     "abupt_axis_mean_rel_l2_pct": 9.270224288787396,
     "created_at": "2026-05-01T10:58:02Z",
@@ -2316,6 +2380,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/3hqds1oa"
   },
+  "3hsu3tq0": {
+    "abupt_axis_mean_rel_l2_pct": 8.010970333270064,
+    "created_at": "2026-05-07T10:05:42Z",
+    "group": "nezuko-surface-curvature-4ep-orig-sched",
+    "name": "nezuko/surface-curvature-4ep-original-schedule-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "3hsu3tq0",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.095701134484818,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/3hsu3tq0"
+  },
   "3hwj4n3y": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-05-03T06:04:11Z",
@@ -2345,6 +2425,22 @@
       "senku"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/3hxdbk9p"
+  },
+  "3i104cb8": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:22:11Z",
+    "group": "5l-gradnorm-alpha05-compose",
+    "name": "dl24-nezuko/5l-string-gradnorm-alpha05-compose-rank1",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "3i104cb8",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-nezuko",
+      "rank:1"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/3i104cb8"
   },
   "3i35bfpa": {
     "abupt_axis_mean_rel_l2_pct": 13.706747694349444,
@@ -2796,6 +2892,7 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/41xowt6c"
   },
+  "422da712": null,
   "425gcyt7": {
     "abupt_axis_mean_rel_l2_pct": 13.624276184043026,
     "created_at": "2026-05-04T07:29:10Z",
@@ -3107,6 +3204,22 @@
       "rank:0"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/4nlu8sjy"
+  },
+  "4o9wamsr": {
+    "abupt_axis_mean_rel_l2_pct": 8.248083673802595,
+    "created_at": "2026-05-07T12:50:47Z",
+    "group": "tanjiro-vol-w2-13ep",
+    "name": "tanjiro/vol-w2.0-13ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "4o9wamsr",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.295244406905662,
+    "tags": [
+      "ddp",
+      "rank:0",
+      "tanjiro"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/4o9wamsr"
   },
   "4qjhfd11": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -4020,6 +4133,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/6gqshdr4"
   },
+  "6kv9hzuh": {
+    "abupt_axis_mean_rel_l2_pct": 8.847999296833455,
+    "created_at": "2026-05-07T12:33:29Z",
+    "group": "edward-gradnorm-alpha-sweep",
+    "name": "edward/gradnorm-alpha-2.0-4ep-relaunch-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "6kv9hzuh",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.95723954015642,
+    "tags": [
+      "ddp",
+      "edward",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/6kv9hzuh"
+  },
   "6kxnit9b": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-05-05T11:13:50Z",
@@ -4049,6 +4178,22 @@
       "fern"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/6ly77wvq"
+  },
+  "6m7vw0tw": {
+    "abupt_axis_mean_rel_l2_pct": 8.198335380503572,
+    "created_at": "2026-05-07T12:38:43Z",
+    "group": "vol-head-lora",
+    "name": "askeladd/vol-lora-r4-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "6m7vw0tw",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.247940696759443,
+    "tags": [
+      "askeladd",
+      "ddp",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/6m7vw0tw"
   },
   "6nek99bx": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -4555,6 +4700,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/7ciplyuc"
   },
+  "7euw91pi": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T03:19:05Z",
+    "group": "gradnorm-alpha025-ysym",
+    "name": "dl24-fern/gradnorm-a025-ysym-rank7",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "7euw91pi",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-fern",
+      "rank:7"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/7euw91pi"
+  },
   "7gsx695y": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-05-06T21:27:54Z",
@@ -4684,6 +4845,22 @@
       "senku"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/7nr34657"
+  },
+  "7o1uxn7l": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:22:11Z",
+    "group": "5l-gradnorm-alpha05-compose",
+    "name": "dl24-nezuko/5l-string-gradnorm-alpha05-compose-rank2",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "7o1uxn7l",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-nezuko",
+      "rank:2"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/7o1uxn7l"
   },
   "7p6aibqy": {
     "abupt_axis_mean_rel_l2_pct": 13.08690269783564,
@@ -5061,6 +5238,7 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/86lxu1w0"
   },
+  "872b0df6": null,
   "87hyv4tq": {
     "abupt_axis_mean_rel_l2_pct": 8.701485539651813,
     "created_at": "2026-05-05T21:55:31Z",
@@ -5295,6 +5473,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/8hi5brwb"
   },
+  "8j9kt5w1": {
+    "abupt_axis_mean_rel_l2_pct": 8.144504725781747,
+    "created_at": "2026-05-07T09:06:24Z",
+    "group": "thorfinn-tau-z-sweep",
+    "name": "thorfinn/tau-z-3p0-sched4-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "8j9kt5w1",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.1786814533837555,
+    "tags": [
+      "ddp",
+      "rank:0",
+      "thorfinn"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/8j9kt5w1"
+  },
   "8lucnqwn": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-05-04T08:47:19Z",
@@ -5324,6 +5518,22 @@
       "thorfinn"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/8m9buonr"
+  },
+  "8n5rsn99": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T16:18:45Z",
+    "group": "fern-vol-pressure-ood-gap",
+    "name": "fern/L6-gradnorm-a0.5-13ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "8n5rsn99",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "fern",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/8n5rsn99"
   },
   "8ngq0b99": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -5422,6 +5632,23 @@
       "haku"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/8tp2cb8s"
+  },
+  "8u4zhzpx": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:26:54Z",
+    "group": "edward-sdf-coverage",
+    "name": "edward/sdf-coverage-diagnostic",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "8u4zhzpx",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "diagnostic",
+      "edward",
+      "no-train",
+      "sdf-coverage"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/8u4zhzpx"
   },
   "8u7jc8kt": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -5725,6 +5952,22 @@
       "fern"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/95n2udhs"
+  },
+  "9776t8g6": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T16:25:53Z",
+    "group": "cross-case-contrastive-vol-p",
+    "name": "nezuko/contra-smokeA-anchor-injection-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "9776t8g6",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/9776t8g6"
   },
   "97fzxsf3": {
     "abupt_axis_mean_rel_l2_pct": 73.85095838029716,
@@ -6113,6 +6356,22 @@
       "askeladd"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/9yrfcfhc"
+  },
+  "9yrr5j8f": {
+    "abupt_axis_mean_rel_l2_pct": 8.490112789214473,
+    "created_at": "2026-05-07T11:52:07Z",
+    "group": "fern-vol-pressure-ood-gap",
+    "name": "fern/L6-depth-4ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "9yrr5j8f",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.380251578063353,
+    "tags": [
+      "ddp",
+      "fern",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/9yrr5j8f"
   },
   "9yzramki": {
     "abupt_axis_mean_rel_l2_pct": 8.702457881801271,
@@ -6659,6 +6918,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/aq78giz1"
   },
+  "aqnv0eko": {
+    "abupt_axis_mean_rel_l2_pct": 8.625693169473442,
+    "created_at": "2026-05-07T06:56:58Z",
+    "group": "edward-gradnorm-alpha-0.5-4ep",
+    "name": "edward/gradnorm-alpha0.5-4ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "aqnv0eko",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.485508339195168,
+    "tags": [
+      "ddp",
+      "edward",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/aqnv0eko"
+  },
   "aqulpevt": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-04-30T21:45:37Z",
@@ -6823,6 +7098,22 @@
       "askeladd"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/b2hxnbyr"
+  },
+  "b3u59d3d": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T15:38:55Z",
+    "group": "nezuko/contra-smoke",
+    "name": "nezuko/contra-smoke-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "b3u59d3d",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/b3u59d3d"
   },
   "b5pvhjhu": {
     "abupt_axis_mean_rel_l2_pct": 9.114897598892105,
@@ -7728,6 +8019,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/cbozsgmj"
   },
+  "ccnssij7": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:05:53Z",
+    "group": "vol-geom-cond",
+    "name": "askeladd/vol-decoder-sdf-gate-v4-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "ccnssij7",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "askeladd",
+      "ddp",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/ccnssij7"
+  },
   "cdzzkr4p": {
     "abupt_axis_mean_rel_l2_pct": 11.106439691851874,
     "created_at": "2026-05-04T13:54:42Z",
@@ -8516,6 +8823,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/dn9cenux"
   },
+  "doplecwt": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T16:54:22Z",
+    "group": "cross-case-contrastive-vol-p",
+    "name": "nezuko/contra-smoke-margin05-warmup500-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "doplecwt",
+    "state": "killed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/doplecwt"
+  },
   "dqhpc9v0": {
     "abupt_axis_mean_rel_l2_pct": 27.590828222917825,
     "created_at": "2026-05-02T00:26:23Z",
@@ -8676,6 +8999,22 @@
       "rank:5"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/dxbx3aos"
+  },
+  "dy2z6o4a": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T17:32:53Z",
+    "group": "6oct-string-gradnorm-ysym",
+    "name": "dl24-tanjiro/6-octave-string-pe-sota-compose-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "dy2z6o4a",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-tanjiro",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/dy2z6o4a"
   },
   "dy3viqmk": {
     "abupt_axis_mean_rel_l2_pct": 9.896067579962883,
@@ -9041,6 +9380,22 @@
       "chihiro"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/elra20qm"
+  },
+  "em7eupj5": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T03:19:05Z",
+    "group": "gradnorm-alpha025-ysym",
+    "name": "dl24-fern/gradnorm-a025-ysym-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "em7eupj5",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-fern",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/em7eupj5"
   },
   "em8bnk1a": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -9468,6 +9823,20 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/fdq6fqjq"
   },
+  "fgzqoej2": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:02:44Z",
+    "group": "vol-geom-cond",
+    "name": "askeladd/vol-decoder-sdf-gate-v4-sanity",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "fgzqoej2",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "askeladd"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/fgzqoej2"
+  },
   "fh66ab5i": {
     "abupt_axis_mean_rel_l2_pct": 8.60090707018695,
     "created_at": "2026-05-06T03:49:03Z",
@@ -9685,6 +10054,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/fp6qgz1d"
   },
+  "fphcg7b6": {
+    "abupt_axis_mean_rel_l2_pct": 8.645849983572502,
+    "created_at": "2026-05-07T06:18:59Z",
+    "group": "nezuko-surface-curvature-4ep",
+    "name": "nezuko/surface-curvature-4ep-aligned-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "fphcg7b6",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.490764814841564,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/fphcg7b6"
+  },
   "fpnl4akt": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-04-28T20:02:03Z",
@@ -9859,6 +10244,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/fvfzfmqt"
   },
+  "fw94hg2u": {
+    "abupt_axis_mean_rel_l2_pct": 8.359283585731244,
+    "created_at": "2026-05-07T07:43:28Z",
+    "group": "tanjiro-vol-w-4ep-aligned",
+    "name": "tanjiro/vol-w2.0-4ep-aligned-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "fw94hg2u",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.314720960694866,
+    "tags": [
+      "ddp",
+      "rank:0",
+      "tanjiro"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/fw94hg2u"
+  },
   "fwunwfkg": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-04-30T05:15:37Z",
@@ -9900,6 +10301,22 @@
       "askeladd"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/fylfozc9"
+  },
+  "fynaeii5": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T15:38:56Z",
+    "group": "nezuko/contra-smoke",
+    "name": "nezuko/contra-smoke-rank1",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "fynaeii5",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:1"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/fynaeii5"
   },
   "g0um26ek": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -10429,6 +10846,22 @@
       "alphonse"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/gu8jc5wq"
+  },
+  "gui4ceed": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T08:11:44Z",
+    "group": "triple-compose",
+    "name": "dl24-frieren/5l-string-gradnorm-alpha025-ysym-ep50-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "gui4ceed",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-frieren",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/gui4ceed"
   },
   "gv9bscfn": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -11157,6 +11590,22 @@
       "fern"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/hm7p3lag"
+  },
+  "hmhfnedy": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:22:11Z",
+    "group": "5l-gradnorm-alpha05-compose",
+    "name": "dl24-nezuko/5l-string-gradnorm-alpha05-compose-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "hmhfnedy",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/hmhfnedy"
   },
   "hn1bmaty": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -11967,6 +12416,22 @@
       "rank:0"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/io3rt633"
+  },
+  "io6f0pzd": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T16:31:59Z",
+    "group": "cross-case-contrastive-vol-p",
+    "name": "nezuko/contra-smokeB-cached-rank1",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "io6f0pzd",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:1"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/io6f0pzd"
   },
   "iocqp761": {
     "abupt_axis_mean_rel_l2_pct": 11.74098248240178,
@@ -13099,6 +13564,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/klw97qgk"
   },
+  "kmh2etht": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T17:30:08Z",
+    "group": "vol-head-lora",
+    "name": "askeladd/vol-lora-r8-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "kmh2etht",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "askeladd",
+      "ddp",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/kmh2etht"
+  },
   "kmmh7pca": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-04-30T14:56:56Z",
@@ -13931,6 +14412,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/lue3k8sv"
   },
+  "luo67e4r": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:22:11Z",
+    "group": "5l-gradnorm-alpha05-compose",
+    "name": "dl24-nezuko/5l-string-gradnorm-alpha05-compose-rank3",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "luo67e4r",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "dl24-nezuko",
+      "rank:3"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/luo67e4r"
+  },
   "lwl56jmz": null,
   "lwxkoxja": {
     "abupt_axis_mean_rel_l2_pct": 29.01123482669566,
@@ -14597,6 +15094,22 @@
       "senku"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/mubbwjce"
+  },
+  "murzmdxl": {
+    "abupt_axis_mean_rel_l2_pct": 17.775158779291786,
+    "created_at": "2026-05-07T11:32:52Z",
+    "group": "abupt-geom-branch-warmup-fix",
+    "name": "frieren/geom-branch-v2-warmup-relaunch-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "murzmdxl",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 11.285291910180403,
+    "tags": [
+      "ddp",
+      "frieren",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/murzmdxl"
   },
   "muthl81j": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -15604,6 +16117,22 @@
       "chihiro"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/ocjb958s"
+  },
+  "ocqx559p": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T17:35:12Z",
+    "group": "string-pe-sigma-shift",
+    "name": "alphonse/string-pe-sigma-shift-v1-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "ocqx559p",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "alphonse",
+      "ddp",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/ocqx559p"
   },
   "ocubvc23": {
     "abupt_axis_mean_rel_l2_pct": 30.203408640817475,
@@ -16653,6 +17182,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/plhsyczz"
   },
+  "pm29t6pj": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T17:09:09Z",
+    "group": "abupt-geom-branch-warmup-fix",
+    "name": "frieren/geom-branch-v3-4ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "pm29t6pj",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "frieren",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/pm29t6pj"
+  },
   "pm4ct4ml": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-05-03T07:01:37Z",
@@ -16902,6 +17447,22 @@
       "nezuko"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/q0t3oyfw"
+  },
+  "q2cvuc5g": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T14:15:29Z",
+    "group": "thorfinn-tau-z-sweep",
+    "name": "thorfinn/tau-z-3p0-13ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "q2cvuc5g",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "rank:0",
+      "thorfinn"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/q2cvuc5g"
   },
   "q4y3hyz6": {
     "abupt_axis_mean_rel_l2_pct": null,
@@ -17672,6 +18233,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/rc209j71"
   },
+  "rd51yjfd": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T10:43:42Z",
+    "group": "edward-gradnorm-alpha-sweep",
+    "name": "edward/gradnorm-alpha2.0-4ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "rd51yjfd",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "edward",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/rd51yjfd"
+  },
   "rdpf0y7r": {
     "abupt_axis_mean_rel_l2_pct": 10.604508433769782,
     "created_at": "2026-05-01T01:01:56Z",
@@ -18075,6 +18652,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/rx652yk8"
   },
+  "rychie0d": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T15:55:05Z",
+    "group": "cross-case-contrastive-vol-p",
+    "name": "nezuko/contra-lambda05-margin10-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "rychie0d",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/rychie0d"
+  },
   "rypx2e36": {
     "abupt_axis_mean_rel_l2_pct": 13.376446994194684,
     "created_at": "2026-05-01T11:09:54Z",
@@ -18375,6 +18968,38 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/seaxhbiy"
   },
+  "seuw5fsc": {
+    "abupt_axis_mean_rel_l2_pct": 8.151336654442531,
+    "created_at": "2026-05-07T04:18:12Z",
+    "group": "string-sigma-max-sweep",
+    "name": "thorfinn/sigma-max-16.0-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "seuw5fsc",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.139908928048085,
+    "tags": [
+      "ddp",
+      "rank:0",
+      "thorfinn"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/seuw5fsc"
+  },
+  "sfhljsqv": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T16:33:44Z",
+    "group": "edward-tau-y-sweep",
+    "name": "edward/tau-y-2p0-13ep-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "sfhljsqv",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "edward",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/sfhljsqv"
+  },
   "sfj754kr": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-05-02T13:24:38Z",
@@ -18458,6 +19083,22 @@
       "thorfinn"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/shjjzfhn"
+  },
+  "shsuvho0": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T16:31:58Z",
+    "group": "cross-case-contrastive-vol-p",
+    "name": "nezuko/contra-smokeB-cached-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "shsuvho0",
+    "state": "crashed",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "nezuko",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/shsuvho0"
   },
   "shykzg89": {
     "abupt_axis_mean_rel_l2_pct": 15.165126165941556,
@@ -22611,6 +23252,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/y6lzq0cv"
   },
+  "y862359i": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T14:38:38Z",
+    "group": "thorfinn-tau-z-sweep",
+    "name": "thorfinn/tau-z-3p0-13ep-relaxed-gates-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "y862359i",
+    "state": "running",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "ddp",
+      "rank:0",
+      "thorfinn"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/y862359i"
+  },
   "y8piae49": {
     "abupt_axis_mean_rel_l2_pct": 16.269010176351678,
     "created_at": "2026-04-30T15:00:33Z",
@@ -22965,6 +23622,22 @@
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/yorhbhi9"
   },
+  "yp1g27qv": {
+    "abupt_axis_mean_rel_l2_pct": 8.312332156761167,
+    "created_at": "2026-05-07T08:43:02Z",
+    "group": "anchor-string-rope-stabilized",
+    "name": "alphonse/anchor-rope-stabilized-v3-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "yp1g27qv",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": 4.202080163139345,
+    "tags": [
+      "alphonse",
+      "ddp",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/yp1g27qv"
+  },
   "ypdybwub": {
     "abupt_axis_mean_rel_l2_pct": null,
     "created_at": "2026-05-01T12:50:14Z",
@@ -23278,6 +23951,22 @@
       "haku"
     ],
     "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml/runs/zcb17qa5"
+  },
+  "zcbkv6vx": {
+    "abupt_axis_mean_rel_l2_pct": null,
+    "created_at": "2026-05-07T06:47:50Z",
+    "group": "anchor-string-rope-stabilized",
+    "name": "alphonse/anchor-rope-stabilized-rank0",
+    "project": "senpai-v1-drivaerml-ddp8",
+    "run_id": "zcbkv6vx",
+    "state": "finished",
+    "surface_pressure_rel_l2_pct": null,
+    "tags": [
+      "alphonse",
+      "ddp",
+      "rank:0"
+    ],
+    "url": "https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/zcbkv6vx"
   },
   "zcfeqquk": {
     "abupt_axis_mean_rel_l2_pct": null,

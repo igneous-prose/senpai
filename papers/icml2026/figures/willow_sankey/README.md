@@ -1,12 +1,12 @@
 # Willow Sankey Figure
 
-Use `willow_simplified_sankey.pdf` for LaTeX inclusion. It is the lavender-pearl variant (`#F8F6FB`) with deep-navy physics/features (`#355C7D`) and regular-weight Times-style serif labels. The build script writes this PDF directly as vector artwork; do not regenerate it with `sips`, which rasterizes the SVG.
+Use `willow_simplified_sankey.pdf` for LaTeX inclusion. It uses the shared paper palette: Okabe-print family colors, green reserved for merged outcomes, muted greys for closed/open outcomes, a white background, and regular-weight Times-style serif labels. The build script writes this PDF directly as vector artwork; do not regenerate the PDF with `sips`, which rasterizes the SVG.
 
 Regenerate from the repository root:
 
 ```bash
 python papers/icml2026/figures/willow_sankey/build_willow_sankey.py
-sips -s format png -z 1640 2600 papers/icml2026/figures/willow_sankey/willow_simplified_sankey.svg --out papers/icml2026/figures/willow_sankey/willow_simplified_sankey.png
+sips -s format png -z 3280 5200 papers/icml2026/figures/willow_sankey/willow_simplified_sankey.svg --out papers/icml2026/figures/willow_sankey/willow_simplified_sankey.png
 ```
 
 Background variants can be generated with environment variables:
