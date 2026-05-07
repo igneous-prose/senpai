@@ -162,13 +162,13 @@ Over the course of the research programme, SENPAI created over 3,000 PRs and rec
 To demonstrate SENPAI's CFD performance across multiple benchmarks, we train and evaluate on three CFD surrogate datasets spanning 3D automotive aerodynamics, 2D airfoil RANS, and 2D tandem-airfoil flow: DrivAerML \citep{ashton2024drivaerml}, AirfRANS \citep{bonnet2022airfrans}, and TandemFoilSet \citep{lim2026tandemfoilset}. \Cref{fig:cfd-problem-gallery} shows representative geometries from all three datasets.
 
 \paragraph{DrivAerML.}
-We use the public processed-case split, 400/34/50 train/validation/test, and report surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$, computed per case on unnormalized predictions and then averaged over test cases.
+We use the public processed-case split, 400/34/50 train/validation/test, and report surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$, computed per case on unnormalized predictions and then averaged over test cases. Each raw DrivAerML case contains approximately 8.8M surface points and 160M volume points.
 
 \paragraph{AirfRANS.}
-We use the official full task with the last 10\% of the official training list held out for validation, giving a 720/80/200 train/validation/test split while keeping the official test set unchanged. We test on normalized targets on the official test split.
+We use the official full task with the last 10\% of the official training list held out for validation, giving a 720/80/200 train/validation/test split while keeping the official test set unchanged. Each simulation has roughly 150K points. We test on normalized targets on the official test split.
 
 \paragraph{TandemFoilSet.}
-We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
+We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. TandemFoilSet cases average approximately 187K points; the active TandemFoilSet-Balanced subset averages approximately 141K points. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
 
 \subsection{DrivAerML}
 
