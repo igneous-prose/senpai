@@ -204,7 +204,7 @@ Finally, a greedy inference-time ensemble found by SENPAI improved on all report
 \subsection{AirfRANS}
 
 \paragraph{Result.}
-On the AirfRANS full benchmark, SENPAI, starting from a Transolver-based implementation, improves substantially on the original Transolver surface-MSE result (5-seed mean 0.0013 versus 0.0142) and on the strongest published surface reference, SpiderSolver (0.0043). The same model obtains mean volume-MSE of 0.00451, improving on GeoANF but remaining above SpiderSolver and slightly above the original Transolver volume result. SENPAI therefore achieves the strongest reported surface-MSE among these references, while the full benchmark remains limited by volume accuracy.
+On the AirfRANS full benchmark, SENPAI, starting from a Transolver-based implementation, improves substantially on the original Transolver surface-MSE result (5-seed mean 0.0013 versus 0.0142) and on the strongest published surface reference, SpiderSolver (0.0043). The same model obtains mean volume-MSE of 0.00451, improving on GeoANF \citep{li2024geoanf} but remaining above SpiderSolver and slightly above the original Transolver volume result. SENPAI therefore achieves the strongest reported surface-MSE among these references, while the full benchmark remains limited by volume accuracy.
 
 \begin{table}[t]
   \caption{AirfRANS full-task test MSE. Targets are train-statistic normalized, per-case means on the official test split; lower is better. Spider denotes SpiderSolver \citep{qi2025spidersolver}.}
