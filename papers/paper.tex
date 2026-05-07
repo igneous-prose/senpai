@@ -80,7 +80,7 @@ SENPAI's central design choice is to ground the research loop in external system
 
 The harness loop is deliberately thin. An Advisor reads the current experiment ledger, proposes a literature-grounded hypothesis as a draft PR, and assigns it to a GPU-backed Student. The Student checks out the branch, modifies the training code, runs the experiment, logs metrics to the experiment tracker, and reports results in the PR. The Advisor then merges, requests revision, or closes the line of inquiry. Humans can steer the Advisor or Student through GitHub issues and PR comments, while markdown scratchpads remain secondary sources of state rather than the primary system of record.
 
-Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment-tracker runs, and operated with up to 59 concurrent Student agents, turning a multi-week semi-autonomous research programme into a durable experiment ledger.
+Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment-tracker runs, and operated with up to 59 concurrent Student agents, turning a multi-day semi-autonomous research programme into a durable experiment ledger.
 
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,topsep=2pt,itemsep=2pt,parsep=0pt]
@@ -324,7 +324,7 @@ Finally, SENPAI depends on mature external systems of record and substantial com
 
 \section{Conclusion}
 
-SENPAI shows that a lightweight, observability-first harness can sustain semi-autonomous ML research when multi-agent state is grounded in the artifacts researchers already inspect: pull requests, git history, and experiment-tracker runs. Across a multi-week CFD-surrogate research programme, this design supported thousands of autonomous experiments over three benchmarks while allowing researchers to steer the system through ordinary PR review and a GitHub Issues channel.
+SENPAI shows that a lightweight, observability-first harness can sustain semi-autonomous ML research when multi-agent state is grounded in the artifacts researchers already inspect: pull requests, git history, and experiment-tracker runs. Across a multi-day CFD-surrogate research programme, this design supported thousands of autonomous experiments over three benchmarks while allowing researchers to steer the system through ordinary PR review and a GitHub Issues channel.
 
 The main lesson is that reliability comes from the harness, not the agent instructions alone. Long-running research agents did not primarily fail because they lacked clear instructions; they failed at system boundaries: brittle tool interfaces, unbounded monitoring, missing checkpoint capture, and drift between derived summaries and the authoritative ledger. Prompt hardening alone did not remove these failure modes. Durable external state, clear scripts for passing work between agents, filtered monitoring, and mandatory result capture were more important for keeping the research programme recoverable and auditable.
 
