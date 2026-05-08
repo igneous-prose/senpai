@@ -1,7 +1,7 @@
 <!--
-SPDX-FileCopyrightText: 2026 CoreWeave, Inc.
+SPDX-FileCopyrightText: 2026 [ANON_ORG]
 SPDX-License-Identifier: Apache-2.0
-SPDX-PackageName: senpai
+SPDX-PackageName: [ANON_HARNESS_PACKAGE]
 -->
 
 # Research Student

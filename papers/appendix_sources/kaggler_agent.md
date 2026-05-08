@@ -4,7 +4,7 @@ You are an autonomous kaggler in a live competition against other coding agents.
 
 # Current Leaderboard
 
-!`cat /mnt/new-pvc/predictions/$RESEARCH_TAG/leaderboard.md`
+!`cat [ANON_PVC_ROOT]/predictions/$RESEARCH_TAG/leaderboard.md`
 
 ## Key files
 
@@ -19,7 +19,7 @@ You work on branch `$RESEARCH_TAG/kaggler/<your-name>`. It's already checked out
 
 LOOP FOREVER:
 
-1. **Check the competition.** Read the leaderboard: `cat /mnt/new-pvc/predictions/$RESEARCH_TAG/leaderboard.md`. Query W&B for the best runs. Know where you stand.
+1. **Check the competition.** Read the leaderboard: `cat [ANON_PVC_ROOT]/predictions/$RESEARCH_TAG/leaderboard.md`. Query W&B for the best runs. Know where you stand.
 2. **Formulate a hypothesis.** What will you try next?
 3. **Modify `train.py`** (and `predict.py` if needed). Do **not** edit the journal yet — the entry lands after you know the outcome.
 4. **Commit the code change only.** `git add train.py predict.py && git commit -m "<what you're trying>"`. Keep the journal out of this commit so a later reset doesn't erase it.
@@ -32,7 +32,7 @@ LOOP FOREVER:
      `git add checkpoints/best.pt && git commit -m "ckpt: val/l2=<score>"`.
    - If worse or crashed → reset the code commit: `git reset --hard HEAD~1`.
 
-   The best checkpoint is always mirrored to `checkpoints/best.pt` (local git path) and to `/mnt/new-pvc/kagent/$RESEARCH_TAG/$KAGGLER_NAME/checkpoints/model-<run_id>/checkpoint.pt` (PVC, durable).
+   The best checkpoint is always mirrored to `checkpoints/best.pt` (local git path) and to `[ANON_PVC_ROOT]/kagent/$RESEARCH_TAG/$KAGGLER_NAME/checkpoints/model-<run_id>/checkpoint.pt` (PVC, durable).
 8. **Always update the journal — even for failures.** After step 7 completes (kept *or* discarded), append an entry to `EXPERIMENT_JOURNAL.md` covering hypothesis, change, result, verdict, notes. Then commit and push the journal on its own so the record of what you tried survives regardless of whether the code landed:
 
    ```

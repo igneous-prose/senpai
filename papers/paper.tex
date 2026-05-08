@@ -65,7 +65,7 @@
 \printAffiliationsAndNotice{}
 
 \begin{abstract}
-SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and human-steerable. We evaluate Transolver-based SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet cruise-random-uniform normalized full-field MSE than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We will release the harness and experiment ledger, including hosted experiment logs, so the research programme can be audited end to end.
+SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We will release the harness and full experiment ledger of all experiments undertaken.
 \end{abstract}
 
 \section{Introduction}
@@ -196,7 +196,7 @@ On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementat
 \end{table}
 
 \paragraph{Recipe.}
-The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 4 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a separable learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, and GradNorm adaptive loss balancing \citep{chen2018gradnorm}. It trained with 8-GPU DDP for an effective batch size of 16 under a 50-epoch budget, with the best EMA checkpoint selected at epoch 27. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling. Full run IDs and hyperparameters for the selected single model and ensemble are listed in \Cref{app:drivaerml-recipe}.
+The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 4 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, and GradNorm adaptive loss balancing \citep{chen2018gradnorm}. It trained with 8-GPU DDP for an effective batch size of 16 under a 50-epoch budget, with the best EMA checkpoint selected at epoch 27. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling. Full run IDs and hyperparameters for the selected single model and ensemble are listed in \Cref{app:drivaerml-recipe}.
 
 \paragraph{Caveat.}
 Finally, a greedy inference-time ensemble found by SENPAI improved on all reported surface-pressure relative-$L_2$ metrics for DrivAerML (3.69\%) and improved on AB-UPT for wall-shear relative-$L_2$ error (6.86\%). A large gap in test-set volume-pressure relative-$L_2$ error remains for the best single model (10.76\%) relative to AB-UPT and Transolver-3, potentially in part due to the shorter training time of SENPAI compared to the 500-epoch trainings of AB-UPT and Transolver-3. This training-duration discrepancy highlights an important decision criterion in autonomous research training: whether to scale up to longer, more expensive training runs after observing promising smaller-scale experimental results.
@@ -249,12 +249,12 @@ Under the TandemFoilSet Experiment-4 task, SENPAI found a Transolver-based impro
 \end{table}
 
 \paragraph{Recipe signal.}
-The PR ledger shows the path: lower learning rates near \texttt{1e-4}, gradient clipping, EMA, warmup, and schedule-length tuning.
+For this benchmark, SENPAI used learning rates of \texttt{\textasciitilde1e-4}, gradient clipping, EMA, warmup, and schedule-length tuning.
 
 \subsection{Flat-Agent Comparison}
 
 \paragraph{Setup.}
-To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \texttt{kagent} harness \citep{anonymous2026kagent} against the SENPAI harness using the TandemFoilSet-Balanced dataset and the same compute budget. \texttt{kagent} is a lighter-weight harness that drops the Advisor/Student split in favor of a flat Kaggle-like competition with a shared leaderboard; each agent keeps its own experiment journal and is prompted to compete aggressively to climb the leaderboard. In contrast to a Kaggle competition, the agents also have access to the same hosted experiment-logging project and commit history, so they can learn from other agents' work. The \texttt{kagent} prompt and the full comparator run summary are provided in \Cref{app:kagent-details}.
+To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \texttt{kagent} harness \citep{anonymous2026kagent} against the SENPAI harness using the TandemFoilSet-Balanced dataset and the same compute budget. \texttt{kagent} is a lighter-weight harness that drops the Advisor/Student split in favor of a flat Kaggle-like competition with a shared leaderboard; each agent keeps its own experiment journal and is prompted to compete aggressively to climb the leaderboard. In contrast to a Kaggle competition, the agents also have access to the same hosted experiment-logging project and commit history, so they can learn from other agents' work. The \texttt{kagent} prompt and the full run summary are provided in \Cref{app:kagent-details}.
 
 \begin{table}[t]
   \caption{TandemFoilSet-Balanced 12-hour harness comparison. Lower average surface-pressure MAE is better.}
@@ -271,7 +271,7 @@ To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \te
 \end{table}
 
 \paragraph{Interpretation.}
-In a direct 12-hour head-to-head, \texttt{kagent} behaved like a public Kaggle sprint: agents trained short variants, watched the leaderboard and shared hosted-logger configs, and quickly reused recipes that worked for peers. This fast peer diffusion, including copied hyperparameters and occasional prediction ensembles, likely gave it an exploitation-speed edge over SENPAI's slower PR-mediated review loop. While this was successful in a 12-hour experiment setting, the inability to steer these agents and the less rigorous polling and monitoring infrastructure are likely to lead to drift and context rot as each Claude Code agent's context window fills. A later external validation strengthened this interpretation: a 30-hour autonomous \texttt{kagent} run, with a 30 minute per-experiment budget, was submitted to the GRaM ICLR 2026 submission subsequently ranking 4th of 22 valid entries on the official held-out leaderboard, with relative-$L_2$ error $0.0553 \pm 0.0168$.
+In a direct 12-hour head-to-head, \texttt{kagent} behaved like a public Kaggle sprint: agents trained short variants, watched the leaderboard and shared hosted-logger configs, and quickly reused recipes that worked for peers. This fast peer diffusion, including copied hyperparameters and occasional prediction ensembles, likely gave it an exploitation-speed edge over SENPAI's slower PR-mediated review loop. While this was successful in a 12-hour experiment setting, the inability to steer these agents and the less rigorous polling and monitoring infrastructure are likely to lead to drift and context rot as each Claude Code agent's context window fills. However a later external validation potentially contradicts this. A model checkpoint from a 30-hour autonomous \texttt{kagent} run, with a 30 minute per-experiment budget, was submitted to the GRaM ICLR 2026 competition and subsequently ranked 4th of 22 entries on the official held-out leaderboard, with relative-$L_2$ error $0.0553 \pm 0.0168$.
 
 \section{Discussion}
 
@@ -359,12 +359,12 @@ The experiments in this paper were controlled by a small number of versioned tex
     \toprule
     Artifact & Location & Role in the system \\
     \midrule
-    Advisor prompt & \url{system_instructions/CLAUDE-ADVISOR.md} & Defines the no-GPU research lead: survey PRs, review result comments and W\&B runs, merge validated winners, close dead ends, and assign one-hypothesis PRs to idle Students. \\
-    Student prompt & \url{system_instructions/CLAUDE-STUDENT.md} & Defines the GPU worker: claim only assigned PRs, edit the task training file, run bounded experiments, report exact commands, metrics, W\&B IDs, and structured terminal results. \\
-    Researcher sub-agent & \url{.claude/agents/researcher-agent.md} & Defines a literature and experiment-history specialist used to produce mechanism-grounded experiment proposals and research-state updates. \\
-    Problem contract & \texttt{DrivAerML/program.md} & Example task contract specifying mission, data, editable files, metric keys, checkpoint selection, telemetry, and paper-facing target values. \\
-    TandemFoil2 contract & \url{target/tandemfoil2/program.md} & Active local problem contract for the \texttt{kagent}-seeded TandemFoil2 package, including split names, edit boundaries, and the \texttt{val/l2\_error} leaderboard metric. \\
-    Flat comparator prompt & \texttt{KAGGLER\_AGENT.md} & Defines the \texttt{kagent} loop: watch leaderboard and W\&B, edit local training/prediction code, keep only useful code changes, always journal outcomes, and continue until interrupted. \\
+    Advisor prompt & \url{papers/appendix_sources/claude_advisor.md} & Defines the no-GPU research lead: survey PRs, review result comments and W\&B runs, merge validated winners, close dead ends, and assign one-hypothesis PRs to idle Students. \\
+    Student prompt & \url{papers/appendix_sources/claude_student.md} & Defines the GPU worker: claim only assigned PRs, edit the task training file, run bounded experiments, report exact commands, metrics, W\&B IDs, and structured terminal results. \\
+    Researcher sub-agent & \url{papers/appendix_sources/researcher_agent.md} & Defines a literature and experiment-history specialist used to produce mechanism-grounded experiment proposals and research-state updates. \\
+    Problem contract & \url{papers/appendix_sources/drivaerml_program.md} & Example task contract specifying mission, data, editable files, metric keys, checkpoint selection, telemetry, and paper-facing target values. \\
+    TandemFoil2 contract & \url{papers/appendix_sources/tandemfoil2_program.md} & Active local problem contract for the \texttt{kagent}-seeded TandemFoil2 package, including split names, edit boundaries, and the \texttt{val/l2\_error} leaderboard metric. \\
+    Flat comparator prompt & \url{papers/appendix_sources/kaggler_agent.md} & Defines the \texttt{kagent} loop: watch leaderboard and W\&B, edit local training/prediction code, keep only useful code changes, always journal outcomes, and continue until interrupted. \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -634,7 +634,7 @@ These categories explain why SENPAI's mitigations are mostly infrastructural: fi
 \section{Full Source Prompts and Contracts}
 \label{app:full-prompts}
 
-This section contains verbatim snapshots of the prompt and contract artifacts summarized in \Cref{app:agent-instructions}. The files are vendored into \texttt{papers/appendix\_sources/}; external artifacts are snapshots of the public GitHub URLs listed in \Cref{tab:instruction-source-map}.
+This section contains review-anonymized verbatim snapshots of the prompt and contract artifacts summarized in \Cref{app:agent-instructions}. The files are vendored into \texttt{papers/appendix\_sources/}; repository owners, repository names, and private infrastructure paths that would identify the authors are replaced with bracketed placeholders for double-blind review.
 
 \subsection{Advisor Role Prompt}
 \label{app:full-advisor-prompt}

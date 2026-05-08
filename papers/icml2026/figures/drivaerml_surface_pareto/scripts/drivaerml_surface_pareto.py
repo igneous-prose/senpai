@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerTuple
+from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, LogLocator
 
 
@@ -710,7 +712,6 @@ def render_chart(
             color=color,
             alpha=0.22,
             edgecolors="none",
-            label=f"{DISPLAY[label]} experiment",
             zorder=2,
         )
         series = pareto[label]
@@ -721,7 +722,6 @@ def render_chart(
                 color=color,
                 linewidth=1.8,
                 drawstyle="steps-post",
-                label=f"{DISPLAY[label]} frontier",
                 zorder=4,
             )
 
@@ -750,15 +750,42 @@ def render_chart(
         if row["label"] in PLOT_LABELS
     ]
     ax.set_ylim(max(min(all_y) * 0.8, 0.1), max(all_y) * 1.35)
+    legend_handles = []
+    legend_labels = []
+    for label in PLOT_LABELS:
+        color = COLORS[label]
+        legend_handles.append(
+            (
+                Line2D([], [], color=color, linewidth=1.8),
+                Line2D(
+                    [],
+                    [],
+                    marker="o",
+                    linestyle="None",
+                    markersize=5.2,
+                    markerfacecolor=color,
+                    markeredgecolor="none",
+                    alpha=0.28,
+                ),
+            )
+        )
+        legend_labels.append(DISPLAY[label])
     ax.legend(
+        legend_handles,
+        legend_labels,
+        title="Best so far + runs",
         loc="upper right",
         bbox_to_anchor=(0.985, 0.985),
         ncol=2,
         frameon=False,
         fontsize=9.5,
+        title_fontsize=9.5,
         borderaxespad=0,
-        columnspacing=1.4,
-        handlelength=2.8,
+        columnspacing=1.8,
+        handlelength=3.2,
+        handletextpad=0.7,
+        markerfirst=False,
+        handler_map={tuple: HandlerTuple(ndivide=None, pad=0.35)},
     )
     fig.subplots_adjust(left=0.105, right=0.985, top=0.875, bottom=0.13)
 
