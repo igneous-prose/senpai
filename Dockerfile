@@ -1,4 +1,4 @@
-FROM ghcr.io/coreweave/ml-containers/torch-extras:es-cuda-13-dev-99be449-base-cuda13.2.0-ubuntu22.04-torch2.10.0-vision0.25.0-audio2.10.0-abi1
+FROM ghcr.io/coreweave/ml-containers/torch-extras:c0f5966-base-cuda13.2.0-ubuntu22.04-torch2.11.0-vision0.26.0-audio2.11.0-abi1
 
 # Install Node.js 22 + yq
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
@@ -11,13 +11,13 @@ RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release
       -o /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl
 
 # Install uv
-RUN pip install uv
+RUN pip install --no-cache-dir --upgrade uv
 
 # Install project Python dependencies into the image from the lockfile.
 COPY pyproject.toml uv.lock /tmp/senpai/
 RUN cd /tmp/senpai && \
     uv export --frozen --no-dev --no-emit-project --format requirements.txt > requirements.txt && \
-    uv pip install --system -r requirements.txt
+    uv pip install --system --upgrade -r requirements.txt
 
 # Install Claude Code + gh
 RUN curl -fsSL https://claude.ai/install.sh | bash || true && \
@@ -29,7 +29,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash || true && \
 # Install weave-claude-plugin and patch inactivity timeout (10 min → 12 h).
 # `weave-claude-plugin install` must run at runtime (needs GitHub access to
 # clone the marketplace repo), so entrypoint scripts handle that step.
-RUN npm install -g weave-claude-plugin && \
+RUN npm install -g weave-claude-plugin@latest && \
     (sed -i "s/const INACTIVITY_TIMEOUT_MS = 10 \* 60 \* 1_000;/const INACTIVITY_TIMEOUT_MS = 12 * 60 * 60 * 1_000;/" \
       "$(npm root -g)/weave-claude-plugin/dist/daemon.js" || true)
 
