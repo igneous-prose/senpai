@@ -9,13 +9,15 @@ set -o pipefail
 
 WORKDIR="/workspace/senpai"
 GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
+TARGET_REPO_BRANCH="${TARGET_REPO_BRANCH:-}"
+export SENPAI_ROLE="advisor"
 export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
 GIT_CREDENTIAL_FILE="$WORKDIR/.git-credentials"
 SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
 
 echo "=== Senpai Advisor ==="
 echo "Runner repo:  $REPO_URL (branch: $REPO_BRANCH)"
-echo "Target repo:  $TARGET_REPO_URL (branch: $ADVISOR_BRANCH)"
+echo "Target repo:  $TARGET_REPO_URL (base branch: ${TARGET_REPO_BRANCH:-<default>}; advisor branch: $ADVISOR_BRANCH)"
 echo "Problem dir:  $PROBLEM_DIR"
 echo "Tag:          $RESEARCH_TAG"
 echo "Students:     $STUDENT_NAMES"
@@ -26,11 +28,31 @@ cd "$WORKDIR"
 source "$SENPAI_PLUGIN/scripts/senpai-gh.sh"
 install_senpai_git_guard "$WORKDIR" "$TARGET_WORKDIR" "$GIT_CREDENTIAL_FILE"
 
-clone_target_repo() {
+clone_single_target_branch() {
+    local branch="$1"
     local depth=()
     [ "$GH_HISTORY_SCOPE" = "fresh" ] && depth=(--depth 1)
+    git clone --branch "$branch" --single-branch "${depth[@]}" --no-tags "$TARGET_REPO_URL" "$PROBLEM_DIR"
+}
+
+clone_target_repo() {
     case "$GH_HISTORY_SCOPE" in
-        branch|fresh) git clone --branch "$ADVISOR_BRANCH" --single-branch "${depth[@]}" --no-tags "$TARGET_REPO_URL" "$PROBLEM_DIR" ;;
+        branch|fresh)
+            if clone_single_target_branch "$ADVISOR_BRANCH"; then
+                return 0
+            fi
+            if [ -z "$TARGET_REPO_BRANCH" ]; then
+                return 1
+            fi
+            rm -rf "$PROBLEM_DIR"
+            if ! clone_single_target_branch "$TARGET_REPO_BRANCH"; then
+                return 1
+            fi
+            cd "$WORKDIR/$PROBLEM_DIR"
+            git checkout -b "$ADVISOR_BRANCH"
+            git push -u origin "$ADVISOR_BRANCH"
+            cd "$WORKDIR"
+            ;;
         repo) git clone "$TARGET_REPO_URL" "$PROBLEM_DIR" ;;
         *) echo "ERROR: GH_HISTORY_SCOPE must be one of: branch, repo, fresh" >&2; exit 2 ;;
     esac
@@ -39,6 +61,10 @@ clone_target_repo() {
 # Clone the problem-package repo into $PROBLEM_DIR (bring-your-own-repo —
 # agent commits/PRs live in $TARGET_REPO_URL, not wandb/senpai).
 if [ ! -d "$PROBLEM_DIR/.git" ] && ! clone_target_repo; then
+    if [ -n "$TARGET_REPO_BRANCH" ]; then
+        echo "ERROR: could not clone advisor branch '$ADVISOR_BRANCH' or target base branch '$TARGET_REPO_BRANCH'" >&2
+        exit 1
+    fi
     [ "$GH_HISTORY_SCOPE" = "repo" ] && exit 1
     depth=()
     [ "$GH_HISTORY_SCOPE" = "fresh" ] && depth=(--depth 1)
@@ -58,6 +84,7 @@ git config user.name "senpai-advisor"
 git config user.email "senpai-advisor@senpai"
 gh repo set-default "$GH_REPO"
 git config credential.helper "store --file=$GIT_CREDENTIAL_FILE"
+install_senpai_target_git_guard "$TARGET_WORKDIR"
 
 # --- Create or checkout advisor branch ---
 if [ "$GH_HISTORY_SCOPE" != "repo" ]; then
@@ -68,7 +95,12 @@ if git rev-parse --verify "origin/$ADVISOR_BRANCH" >/dev/null 2>&1; then
     git checkout "$ADVISOR_BRANCH"
     git pull --ff-only origin "$ADVISOR_BRANCH"
 else
-    git checkout -b "$ADVISOR_BRANCH"
+    if [ -n "$TARGET_REPO_BRANCH" ]; then
+        git fetch origin "$TARGET_REPO_BRANCH"
+        git checkout -B "$ADVISOR_BRANCH" "origin/$TARGET_REPO_BRANCH"
+    else
+        git checkout -b "$ADVISOR_BRANCH"
+    fi
     git push -u origin "$ADVISOR_BRANCH"
 fi
 
@@ -84,22 +116,15 @@ echo "=== Claude config installed ==="
 ls "$HOME/.claude/skills/wandb-primary/SKILL.md" "$HOME/.claude/agents/researcher-agent.md"
 
 # --- Start Hivemind logging service (streams CC session logs to hivemind.wandb.tools) ---
-if [ "${SENPAI_ENABLE_AGENT_TRACING:-true}" = "true" ]; then
-    mkdir -p "$HOME/.claude/projects"
-    uvx --from wandb-hivemind hivemind run &
-    echo "=== Hivemind started (PID=$!) ==="
-else
-    echo "=== Hivemind disabled ==="
-fi
+source "$WORKDIR/k8s/start-hivemind.sh"
+start_hivemind
 
 # --- Load CC run command helper function ---
 source "$WORKDIR/k8s/run-senpai-claude.sh"
 
 # --- Register Weave CC plugin (tools already baked into Docker image) ---
 export PATH="$HOME/.claude/bin:$PATH"
-if [ "${SENPAI_ENABLE_AGENT_TRACING:-true}" = "true" ]; then
-    source "$WORKDIR/k8s/install-weave-cc-plugin.sh"
-fi
+source "$WORKDIR/k8s/install-weave-cc-plugin.sh"
 
 # $GH_REPO comes from the ConfigMap (set by launch.py = owner/repo of the
 # problem-package repo). The gh CLI honours it natively, so every `gh`
@@ -109,25 +134,22 @@ fi
 # --- Build prompts (CC auto-discovers CLAUDE.md for role instructions) ---
 TASK_INSTRUCTIONS="$(envsubst < "$WORKDIR/$PROBLEM_DIR/instructions/prompt-advisor.md" | sed '/^<!--$/,/^-->$/d')"
 PROMPT="${TASK_INSTRUCTIONS}"
+EXTRA_LAUNCH_INSTRUCTIONS=""
 
 # Append extra instructions from launch.py if provided
 if [ -n "${EXTRA_INSTRUCTIONS_B64:-}" ]; then
-    PROMPT="${PROMPT}"$'\n\n# Finally, some additional instructions\n\n'"$(printf '%s' "$EXTRA_INSTRUCTIONS_B64" | base64 -d)"
+    EXTRA_LAUNCH_INSTRUCTIONS="$(printf '%s' "$EXTRA_INSTRUCTIONS_B64" | base64 -d)"
+    PROMPT="${PROMPT}"$'\n\n# Finally, some additional instructions\n\n'"${EXTRA_LAUNCH_INSTRUCTIONS}"
 fi
 
 # Add "$KEY_INFO" (reminder of student names etc) to PROMPT
-if [ "${WANDB_MODE:-online}" = "disabled" ]; then
-    LOGGING_INFO="Experiment logging: local JSONL metrics only"
-else
-    LOGGING_INFO="W&B entity/project: ${WANDB_ENTITY}/${WANDB_PROJECT}"
-fi
-KEY_INFO=$'\n\n Key information:\n\n Students: '"$STUDENT_NAMES"' | GPUs per Student: '"$GPUS_PER_STUDENT"' | Tag: '"$RESEARCH_TAG"' | Target repo: '"$GH_REPO"' | Advisor Branch: '"$ADVISOR_BRANCH"' | '"$LOGGING_INFO"$'\n'
+KEY_INFO=$'\n\n Key information:\n\n Students: '"$STUDENT_NAMES"' | GPUs per Student: '"$GPUS_PER_STUDENT"' | Tag: '"$RESEARCH_TAG"' | Target repo: '"$GH_REPO"' | Target base branch: '"${TARGET_REPO_BRANCH:-<default>}"' | Advisor Branch: '"$ADVISOR_BRANCH"' | W&B entity/project: '"$WANDB_ENTITY"'/'"$WANDB_PROJECT"$'\n'
 FULL_PROMPT="${PROMPT}"$'\n\n'"${KEY_INFO}"
 
 # Heartbeat prompt for polling
 HEARTBEAT_PROMPT="Continue your advisor loop. Attached is the current research state. Review any completed experiment PRs, assign work to all idle students, and check for human gh issues and comments."
 
-# --- Last-check timestamp state for filtering PRs and issues ---
+# --- Last-check timestamp state for filtering GitHub issues ---
 LAST_CHECK_FILE="$LOGDIR/.last_check_ts"
 
 # --- Launch Claude Code Loop ---
@@ -159,19 +181,22 @@ while true; do
 
     # --- Check research state before invoking CC ---
     POLL_OK=1
-    REVIEW_JSON=$(poll_or_empty "review-ready PR poll" list_ready_for_review_prs "$ADVISOR_BRANCH" "$SINCE") || POLL_OK=0
+    REVIEW_JSON=$(poll_or_empty "review-ready PR poll" list_ready_for_review_prs "$ADVISOR_BRANCH") || POLL_OK=0
     REVIEW_COUNT=$(printf '%s' "$REVIEW_JSON" | json_len)
+    ADVISOR_ACTION_JSON=$(poll_or_empty "advisor-action PR poll" list_prs_requiring_advisor_action "$ADVISOR_BRANCH") || POLL_OK=0
+    ADVISOR_ACTION_COUNT=$(printf '%s' "$ADVISOR_ACTION_JSON" | json_len)
     ISSUE_JSON=$(poll_or_empty "GitHub issue poll" check_gh_issues "$ADVISOR_BRANCH" "$SINCE") || POLL_OK=0
     ISSUE_COUNT=$(printf '%s' "$ISSUE_JSON" | json_len)
     IDLE_JSON=$(poll_or_empty "idle-student poll" list_idle_students "$STUDENT_NAMES" "$ADVISOR_BRANCH") || POLL_OK=0
     IDLE_COUNT=$(printf '%s' "$IDLE_JSON" | json_len)
 
     # --- Derive watermark from the data we actually fetched (no gap, no overlap) ---
-    WATERMARK=$(max_updated_at "$REVIEW_JSON" "$ISSUE_JSON")
+    WATERMARK=$(max_updated_at "$ISSUE_JSON")
 
     # --- Build triage info (used in logs, CC prompt, and skip check) ---
     TRIAGE_INFO="## Research state (since ${SINCE:-boot})"
     [ "$REVIEW_COUNT" -gt 0 ] && TRIAGE_INFO+=$'\n'"- **GitHub PRs to review ($REVIEW_COUNT):** $(printf '%s' "$REVIEW_JSON" | json_numbers)"
+    [ "$ADVISOR_ACTION_COUNT" -gt 0 ] && TRIAGE_INFO+=$'\n'"- **GitHub PRs requiring advisor action ($ADVISOR_ACTION_COUNT):** $(printf '%s' "$ADVISOR_ACTION_JSON" | json_advisor_action_summary)"
     [ "$ISSUE_COUNT" -gt 0 ]  && TRIAGE_INFO+=$'\n'"- **GitHub issues ($ISSUE_COUNT):** $(printf '%s' "$ISSUE_JSON" | json_numbers)"
     [ "$IDLE_COUNT" -gt 0 ]   && TRIAGE_INFO+=$'\n'"- **Idle students ($IDLE_COUNT):** $(printf '%s' "$IDLE_JSON" | json_join)"
     echo "$TRIAGE_INFO"
@@ -189,7 +214,7 @@ while true; do
         run_senpai_claude $MAX_TURNS "${FULL_PROMPT}"$'\n\n'"${TRIAGE_INFO}" || EXIT_CODE=$?
     else
         # --- Programmatic skip: skip rest of CC loop if nothing actionable ---
-        if [ "$REVIEW_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ] && [ "$IDLE_COUNT" -eq 0 ]; then
+        if [ "$REVIEW_COUNT" -eq 0 ] && [ "$ADVISOR_ACTION_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ] && [ "$IDLE_COUNT" -eq 0 ]; then
             echo "=== Iteration $ITERATION: Nothing actionable, sleeping $SLEEP_TIME_S seconds ==="
             sleep "$SLEEP_TIME_S"
             continue
@@ -199,7 +224,11 @@ while true; do
         echo "$HEARTBEAT_PROMPT"
         echo "$TRIAGE_INFO"
 
-        CONTINUE_PROMPT="${HEARTBEAT_PROMPT}"$'\n\n'"${TRIAGE_INFO}"
+        CONTINUE_PROMPT="${HEARTBEAT_PROMPT}"
+        if [ -n "$EXTRA_LAUNCH_INSTRUCTIONS" ]; then
+            CONTINUE_PROMPT="${CONTINUE_PROMPT}"$'\n\n# Launch isolation and cutoff reminder\n\n'"${EXTRA_LAUNCH_INSTRUCTIONS}"
+        fi
+        CONTINUE_PROMPT="${CONTINUE_PROMPT}"$'\n\n'"${TRIAGE_INFO}"
         run_senpai_claude 1000 "$CONTINUE_PROMPT" -c || EXIT_CODE=$?
     fi
     DURATION=$(( $(date +%s) - START_TS ))
