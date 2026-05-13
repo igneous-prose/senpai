@@ -658,7 +658,11 @@ print(json.dumps(prs_requiring_advisor_action))
 }
 
 # List WIP PRs assigned to a specific student on the current advisor branch.
-# Returns a JSON array.
+# Returns a JSON array with fields: number, title, headRefName, updatedAt, body
+# Uses REST /issues endpoint with label filtering (not GraphQL) to avoid
+# rate-limit exhaustion when many pods share a single GitHub token.
+# The Issues REST endpoint supports comma-separated label filtering and returns
+# PRs as well as issues; pull_request.url presence distinguishes them.
 #   student_poll_for_work <student_name> [advisor_branch]
 student_poll_for_work() {
     local name="$1" branch="${2:-${ADVISOR_BRANCH:-}}"
@@ -666,9 +670,39 @@ student_poll_for_work() {
         echo "student_poll_for_work: missing advisor branch" >&2
         return 2
     fi
-    gh_retry gh pr list --repo "$GH_REPO" --label "$branch" --label "student:${name}" --label "status:wip" \
-        --limit "$GH_LIST_LIMIT" \
-        --json number,title,headRefName,updatedAt,body
+    local limit="${GH_LIST_LIMIT:-30}"
+    # Issues REST endpoint supports multi-label AND filtering via comma-separated labels param
+    local raw
+    raw=$(gh_retry gh api \
+        "repos/${GH_REPO}/issues?state=open&labels=${branch},student:${name},status:wip&per_page=${limit}" \
+        2>/dev/null) || return 1
+    # Each matching item is a PR (has pull_request.url). Fetch headRefName for each
+    # via /pulls/<number> — typically a single result so N+1 is negligible.
+    printf '%s' "$raw" | python3 -c "
+import json, sys, subprocess
+gh_repo = sys.argv[1]
+items = json.load(sys.stdin)
+out = []
+for item in items:
+    if 'pull_request' not in item:
+        continue
+    num = item['number']
+    res = subprocess.run(
+        ['gh', 'api', f'repos/{gh_repo}/pulls/{num}'],
+        capture_output=True, text=True
+    )
+    if res.returncode != 0:
+        continue
+    pr = json.loads(res.stdout)
+    out.append({
+        'number': pr['number'],
+        'title': pr['title'],
+        'headRefName': pr['head']['ref'],
+        'updatedAt': pr['updated_at'],
+        'body': pr.get('body') or '',
+    })
+print(json.dumps(out))
+" "$GH_REPO"
 }
 
 # Compute which students are idle (have no status:wip PR).
