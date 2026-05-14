@@ -382,6 +382,93 @@ gh_api_paginated_array() {
     printf '%s\n' "$raw" | json_merge_arrays_from_stream
 }
 
+github_urlencode() {
+    python3 - "$1" <<'PY'
+from urllib.parse import quote
+import sys
+
+print(quote(sys.argv[1], safe=""))
+PY
+}
+
+rest_pull_details_from_numbers() {
+    python3 -c '
+import json
+import subprocess
+import sys
+
+repo = sys.argv[1]
+items = json.load(sys.stdin)
+out = []
+
+
+def gh_label(label):
+    return {
+        "id": label.get("node_id") or str(label.get("id", "")),
+        "name": label.get("name", ""),
+        "description": label.get("description"),
+        "color": label.get("color", ""),
+    }
+
+
+def mergeable_value(pr):
+    value = pr.get("mergeable")
+    if value is True:
+        return "MERGEABLE"
+    if value is False:
+        return "CONFLICTING"
+    return "UNKNOWN"
+
+
+def merge_state_status(pr):
+    return (pr.get("mergeable_state") or "unknown").upper()
+
+
+for item in items:
+    num = item["number"]
+    res = subprocess.run(
+        ["gh", "api", f"repos/{repo}/pulls/{num}"],
+        capture_output=True,
+        text=True,
+    )
+    if res.returncode != 0:
+        sys.stderr.write(res.stderr)
+        sys.exit(res.returncode)
+    pr = json.loads(res.stdout)
+    out.append({
+        "number": pr["number"],
+        "title": pr["title"],
+        "state": pr["state"].upper(),
+        "labels": [gh_label(label) for label in pr.get("labels", [])],
+        "headRefName": pr["head"]["ref"],
+        "baseRefName": pr["base"]["ref"],
+        "updatedAt": pr["updated_at"],
+        "isDraft": pr.get("draft", False),
+        "body": pr.get("body") or "",
+        "mergeStateStatus": merge_state_status(pr),
+        "mergeable": mergeable_value(pr),
+    })
+
+print(json.dumps(out))
+' "$GH_REPO"
+}
+
+rest_labeled_pull_details() {
+    local labels="$1" labels_q issues
+    labels_q=$(github_urlencode "$labels")
+    issues=$(gh_api_paginated_array "repos/${GH_REPO}/issues?state=open&labels=${labels_q}&per_page=100" \
+        '[.[] | select(has("pull_request")) | {number}]') || return
+    printf '%s' "$issues" | rest_pull_details_from_numbers
+}
+
+rest_base_pull_details() {
+    local branch="$1" branch_q pulls
+    branch_q=$(github_urlencode "$branch")
+    pulls=$(gh_api_paginated_array "repos/${GH_REPO}/pulls?state=open&base=${branch_q}&per_page=100" \
+        '[.[] | {number}]') || return
+    printf '%s' "$pulls" | rest_pull_details_from_numbers
+}
+
 # ---------------------------------------------------------------------------
 # PR reads
 # ---------------------------------------------------------------------------
@@ -497,11 +584,6 @@ PY
 # Queries
 # ---------------------------------------------------------------------------
 
-# GitHub CLI list commands default to 30 items, which silently truncates busy
-# research branches. Use an explicit high cap so advisor triage sees the full
-# queue when dozens of PRs are in flight.
-GH_LIST_LIMIT="${GH_LIST_LIMIT:-999}"
-
 # List human-created GitHub Issues addressed to a role (+ team issues).
 # Returns a JSON array, deduplicated by issue number.
 # Optional second arg: ISO timestamp — only return issues updated after it.
@@ -514,12 +596,12 @@ check_gh_issues() {
         printf '[]\n'
         return
     fi
-    role_issues=$(gh_retry gh issue list --repo "$GH_REPO" --label "human" --label "$role" --state open \
-        --limit "$GH_LIST_LIMIT" \
-        --json number,title,updatedAt)
-    team_issues=$(gh_retry gh issue list --repo "$GH_REPO" --label "human" --label "team" --state open \
-        --limit "$GH_LIST_LIMIT" \
-        --json number,title,updatedAt)
+    role_issues=$(gh_api_paginated_array \
+        "repos/${GH_REPO}/issues?state=open&labels=$(github_urlencode "human,${role}")&per_page=100" \
+        '[.[] | select(has("pull_request") | not) | {number,title,updatedAt:.updated_at}]')
+    team_issues=$(gh_api_paginated_array \
+        "repos/${GH_REPO}/issues?state=open&labels=$(github_urlencode "human,team")&per_page=100" \
+        '[.[] | select(has("pull_request") | not) | {number,title,updatedAt:.updated_at}]')
     printf '[%s,%s]' "$role_issues" "$team_issues" | python3 -c "
 import json, sys
 a, b = json.loads(sys.stdin.read())
@@ -542,9 +624,21 @@ print(json.dumps(merged))
 #   list_ready_for_review_prs <branch> [since]
 list_ready_for_review_prs() {
     local branch="$1"
-    gh_retry gh pr list --repo "$GH_REPO" --label "$branch" --label "status:review" \
-        --limit "$GH_LIST_LIMIT" \
-        --json number,title,headRefName,labels,updatedAt
+    rest_labeled_pull_details "${branch},status:review" | python3 -c '
+import json
+import sys
+
+print(json.dumps([
+    {
+        "number": pr["number"],
+        "title": pr["title"],
+        "headRefName": pr["headRefName"],
+        "labels": pr["labels"],
+        "updatedAt": pr["updatedAt"],
+    }
+    for pr in json.load(sys.stdin)
+]))
+'
 }
 
 # List all open PRs on a branch (any status).
@@ -552,9 +646,23 @@ list_ready_for_review_prs() {
 #   list_all_prs <branch>
 list_all_prs() {
     local branch="$1"
-    gh_retry gh pr list --repo "$GH_REPO" --label "$branch" \
-        --limit "$GH_LIST_LIMIT" \
-        --json number,title,state,labels,headRefName,updatedAt,isDraft
+    rest_labeled_pull_details "$branch" | python3 -c '
+import json
+import sys
+
+print(json.dumps([
+    {
+        "number": pr["number"],
+        "title": pr["title"],
+        "state": pr["state"],
+        "labels": pr["labels"],
+        "headRefName": pr["headRefName"],
+        "updatedAt": pr["updatedAt"],
+        "isDraft": pr["isDraft"],
+    }
+    for pr in json.load(sys.stdin)
+]))
+'
 }
 
 # List open PRs requiring advisor action, even when they have not been updated
@@ -564,9 +672,7 @@ list_all_prs() {
 list_prs_requiring_advisor_action() {
     local branch="$1" stale_seconds="${2:-${SENPAI_STALE_WIP_SECONDS:-7200}}"
     local prs comments_by_pr num comments row
-    prs=$(gh_retry gh pr list --repo "$GH_REPO" --base "$branch" --state open \
-        --limit "$GH_LIST_LIMIT" \
-        --json number,title,baseRefName,headRefName,labels,updatedAt,isDraft,mergeStateStatus,mergeable)
+    prs=$(rest_base_pull_details "$branch")
     comments_by_pr=""
     while IFS= read -r num; do
         [ -z "$num" ] && continue
@@ -658,11 +764,7 @@ print(json.dumps(prs_requiring_advisor_action))
 }
 
 # List WIP PRs assigned to a specific student on the current advisor branch.
-# Returns a JSON array with fields: number, title, headRefName, updatedAt, body
-# Uses REST /issues endpoint with label filtering (not GraphQL) to avoid
-# rate-limit exhaustion when many pods share a single GitHub token.
-# The Issues REST endpoint supports comma-separated label filtering and returns
-# PRs as well as issues; pull_request.url presence distinguishes them.
+# Returns a JSON array.
 #   student_poll_for_work <student_name> [advisor_branch]
 student_poll_for_work() {
     local name="$1" branch="${2:-${ADVISOR_BRANCH:-}}"
@@ -670,39 +772,21 @@ student_poll_for_work() {
         echo "student_poll_for_work: missing advisor branch" >&2
         return 2
     fi
-    local limit="${GH_LIST_LIMIT:-30}"
-    # Issues REST endpoint supports multi-label AND filtering via comma-separated labels param
-    local raw
-    raw=$(gh_retry gh api \
-        "repos/${GH_REPO}/issues?state=open&labels=${branch},student:${name},status:wip&per_page=${limit}" \
-        2>/dev/null) || return 1
-    # Each matching item is a PR (has pull_request.url). Fetch headRefName for each
-    # via /pulls/<number> — typically a single result so N+1 is negligible.
-    printf '%s' "$raw" | python3 -c "
-import json, sys, subprocess
-gh_repo = sys.argv[1]
-items = json.load(sys.stdin)
-out = []
-for item in items:
-    if 'pull_request' not in item:
-        continue
-    num = item['number']
-    res = subprocess.run(
-        ['gh', 'api', f'repos/{gh_repo}/pulls/{num}'],
-        capture_output=True, text=True
-    )
-    if res.returncode != 0:
-        continue
-    pr = json.loads(res.stdout)
-    out.append({
-        'number': pr['number'],
-        'title': pr['title'],
-        'headRefName': pr['head']['ref'],
-        'updatedAt': pr['updated_at'],
-        'body': pr.get('body') or '',
-    })
-print(json.dumps(out))
-" "$GH_REPO"
+    rest_labeled_pull_details "${branch},student:${name},status:wip" | python3 -c '
+import json
+import sys
+
+print(json.dumps([
+    {
+        "number": pr["number"],
+        "title": pr["title"],
+        "headRefName": pr["headRefName"],
+        "updatedAt": pr["updatedAt"],
+        "body": pr["body"],
+    }
+    for pr in json.load(sys.stdin)
+]))
+'
 }
 
 # Compute which students are idle (have no status:wip PR).
@@ -712,9 +796,7 @@ print(json.dumps(out))
 list_idle_students() {
     local students_csv="$1" branch="$2"
     local all_prs
-    all_prs=$(gh_retry gh pr list --repo "$GH_REPO" --label "$branch" --label "status:wip" \
-        --limit "$GH_LIST_LIMIT" \
-        --json labels)
+    all_prs=$(rest_labeled_pull_details "${branch},status:wip")
     printf '%s' "$all_prs" | python3 -c "
 import json, sys
 students = [s.strip() for s in sys.argv[1].split(',') if s.strip()]
