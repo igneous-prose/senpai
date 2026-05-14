@@ -187,6 +187,8 @@ while true; do
     ISSUE_COUNT=$(printf '%s' "$ISSUE_JSON" | json_len)
     IDLE_JSON=$(poll_or_empty "idle-student poll" list_idle_students "$STUDENT_NAMES" "$ADVISOR_BRANCH") || POLL_OK=0
     IDLE_COUNT=$(printf '%s' "$IDLE_JSON" | json_len)
+    POD_ANOMALY_JSON=$(poll_or_empty "student-pod anomaly poll" list_student_pod_anomalies "$STUDENT_NAMES" "$ADVISOR_BRANCH") || POLL_OK=0
+    POD_ANOMALY_COUNT=$(printf '%s' "$POD_ANOMALY_JSON" | json_len)
 
     # --- Derive watermark from the data we actually fetched (no gap, no overlap) ---
     WATERMARK=$(max_updated_at "$ISSUE_JSON")
@@ -197,6 +199,7 @@ while true; do
     [ "$ADVISOR_ACTION_COUNT" -gt 0 ] && TRIAGE_INFO+=$'\n'"- **GitHub PRs requiring advisor action ($ADVISOR_ACTION_COUNT):** $(printf '%s' "$ADVISOR_ACTION_JSON" | json_advisor_action_summary)"
     [ "$ISSUE_COUNT" -gt 0 ]  && TRIAGE_INFO+=$'\n'"- **GitHub issues ($ISSUE_COUNT):** $(printf '%s' "$ISSUE_JSON" | json_numbers)"
     [ "$IDLE_COUNT" -gt 0 ]   && TRIAGE_INFO+=$'\n'"- **Idle students ($IDLE_COUNT):** $(printf '%s' "$IDLE_JSON" | json_join)"
+    [ "$POD_ANOMALY_COUNT" -gt 0 ] && TRIAGE_INFO+=$'\n'"- **Student pod anomalies ($POD_ANOMALY_COUNT):** investigate these before assigning new work: $(printf '%s' "$POD_ANOMALY_JSON" | json_join)"
     echo "$TRIAGE_INFO"
 
     # --- Log triage state and select prompt ---
@@ -212,7 +215,7 @@ while true; do
         run_senpai_claude $MAX_TURNS "${FULL_PROMPT}"$'\n\n'"${TRIAGE_INFO}" || EXIT_CODE=$?
     else
         # --- Programmatic skip: skip rest of CC loop if nothing actionable ---
-        if [ "$REVIEW_COUNT" -eq 0 ] && [ "$ADVISOR_ACTION_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ] && [ "$IDLE_COUNT" -eq 0 ]; then
+        if [ "$REVIEW_COUNT" -eq 0 ] && [ "$ADVISOR_ACTION_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ] && [ "$IDLE_COUNT" -eq 0 ] && [ "$POD_ANOMALY_COUNT" -eq 0 ]; then
             echo "=== Iteration $ITERATION: Nothing actionable, sleeping $SLEEP_TIME_S seconds ==="
             sleep "$SLEEP_TIME_S"
             continue
