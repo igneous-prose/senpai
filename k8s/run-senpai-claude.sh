@@ -19,7 +19,8 @@ run_senpai_claude() {
         --plugin-dir "$SENPAI_PLUGIN"
         --dangerously-skip-permissions)
     if [ -n "${SENPAI_CLAUDE_TIMEOUT_SECONDS:-}" ] && command -v timeout >/dev/null 2>&1; then
-        claude_cmd=(timeout "$SENPAI_CLAUDE_TIMEOUT_SECONDS" "${claude_cmd[@]}")
+        local kill_after="${SENPAI_CLAUDE_TIMEOUT_KILL_AFTER_SECONDS:-30}"
+        claude_cmd=(timeout -k "$kill_after" "$SENPAI_CLAUDE_TIMEOUT_SECONDS" "${claude_cmd[@]}")
     fi
 
     # Pipe prompt via stdin instead of -p to keep prompt text out of the process

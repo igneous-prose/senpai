@@ -28,7 +28,8 @@ SENPAI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 senpai_run_with_timeout() {
     local timeout_seconds="${SENPAI_GH_TIMEOUT_SECONDS:-120}"
     if command -v timeout >/dev/null 2>&1; then
-        timeout "$timeout_seconds" "$@"
+        local kill_after="${SENPAI_GH_TIMEOUT_KILL_AFTER_SECONDS:-30}"
+        timeout -k "$kill_after" "$timeout_seconds" "$@"
     else
         "$@"
     fi
