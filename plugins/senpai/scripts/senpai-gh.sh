@@ -469,6 +469,148 @@ rest_base_pull_details() {
     printf '%s' "$pulls" | rest_pull_details_from_numbers
 }
 
+student_pr_looks_live() {
+    local student="$1" head_ref="$2" tag="${RESEARCH_TAG:-}"
+    local pod
+    [ -n "$student" ] && [ -n "$head_ref" ] && [ -n "$tag" ] || return 1
+    command -v kubectl >/dev/null 2>&1 || return 1
+
+    pod=$(
+        kubectl get pods -l "app=senpai,research-tag=${tag},student=${student}" \
+            -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null |
+            head -1
+    ) || return 1
+    [ -n "$pod" ] || return 1
+
+    kubectl exec "$pod" -- sh -lc '
+        branch=$(git -C /workspace/senpai/target branch --show-current 2>/dev/null || true)
+        [ "$branch" = "$1" ] || exit 1
+
+        # A stale GitHub timestamp is not actionable if the pod is still doing
+        # useful work on this exact PR branch. Count either active training,
+        # active GPU use, or Claude Code editing an uncommitted checkout.
+        pytrain=$(ps -eo comm=,args= | awk '\''$1 ~ /^python/ && /train[.]py/ {n++} END{print n+0}'\'')
+        gpu=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | awk '\''NF{n++} END{print n+0}'\'')
+        claude=$(ps -eo comm=,args= | awk '\''$1 ~ /^claude$/ || /[ /]claude( |$)/ {n++} END{print n+0}'\'')
+        dirty=$(git -C /workspace/senpai/target status --porcelain 2>/dev/null | wc -l | tr -d " ")
+
+        [ "$pytrain" -gt 0 ] || [ "$gpu" -gt 0 ] || { [ "$claude" -gt 0 ] && [ "${dirty:-0}" -gt 0 ]; }
+    ' sh "$head_ref" >/dev/null 2>&1
+}
+
+suppress_live_stale_wips() {
+    local actions="$1" live_numbers="" num student head_ref
+    while IFS=$'\t' read -r num student head_ref; do
+        [ -n "$num" ] || continue
+        if student_pr_looks_live "$student" "$head_ref"; then
+            live_numbers+="${num}"$'\n'
+        fi
+    done < <(printf '%s' "$actions" | python3 -c '
+import json
+import sys
+
+for pr in json.load(sys.stdin):
+    if "stale_wip" not in pr.get("reasons", []):
+        continue
+    students = [
+        label.get("name", "").removeprefix("student:")
+        for label in pr.get("labels", [])
+        if label.get("name", "").startswith("student:")
+    ]
+    if len(students) == 1:
+        print("{}\t{}\t{}".format(pr["number"], students[0], pr.get("headRefName", "")))
+')
+
+    printf '%s\0%s' "$actions" "$live_numbers" | python3 -c '
+import json
+import sys
+
+raw_actions, raw_live = sys.stdin.buffer.read().split(b"\0", 1)
+live = {int(line) for line in raw_live.decode().splitlines() if line.strip()}
+filtered = []
+for pr in json.loads(raw_actions):
+    if pr["number"] in live:
+        # Only remove the stale timestamp reason. Other advisor-action reasons
+        # such as blocked, duplicate assignment, or rebase trouble remain live.
+        pr["reasons"] = [reason for reason in pr.get("reasons", []) if reason != "stale_wip"]
+    if pr.get("reasons"):
+        filtered.append(pr)
+print(json.dumps(filtered))
+'
+}
+
+# List active student pods whose training process does not match an open WIP PR.
+# Returns a JSON array of human-readable warnings for the advisor prompt.
+#   list_student_pod_anomalies <student_names_csv> <branch>
+list_student_pod_anomalies() {
+    local students_csv="$1" branch="$2" tag="${RESEARCH_TAG:-}"
+    local all_prs open_heads anomalies="" student pod snapshot current_branch pytrain gpu expected_heads
+    # This helper runs inside advisor pods. Local/dev shells without Kubernetes
+    # context should stay quiet rather than making every advisor poll noisy.
+    [ -n "$tag" ] && command -v kubectl >/dev/null 2>&1 || { echo "[]"; return 0; }
+
+    all_prs=$(rest_labeled_pull_details "${branch},status:wip") || return
+    # Map each open WIP assignment to the branch the student's pod should be on.
+    open_heads=$(printf '%s' "$all_prs" | python3 -c '
+import json
+import sys
+
+for pr in json.load(sys.stdin):
+    head = pr.get("headRefName", "")
+    for label in pr.get("labels", []):
+        name = label.get("name", "")
+        if name.startswith("student:"):
+            student = name.split(":", 1)[1]
+            print(f"{student}\t{head}")
+')
+
+    IFS=',' read -r -a students <<< "$students_csv"
+    for student in "${students[@]}"; do
+        student="${student//[[:space:]]/}"
+        [ -n "$student" ] || continue
+
+        pod=$(
+            kubectl get pods -l "app=senpai,research-tag=${tag},student=${student}" \
+                -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null |
+                head -1
+        ) || continue
+        [ -n "$pod" ] || continue
+
+        snapshot=$(kubectl exec "$pod" -- sh -lc '
+            branch=$(git -C /workspace/senpai/target branch --show-current 2>/dev/null || true)
+            # Only active training/GPU use is a zombie risk. Claude editing a
+            # checkout is handled by stale-WIP suppression above, not here.
+            pytrain=$(ps -eo comm=,args= | awk '\''$1 ~ /^python/ && /train[.]py/ {n++} END{print n+0}'\'')
+            gpu=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | awk '\''NF{n++} END{print n+0}'\'')
+            printf "%s\t%s\t%s\n" "$branch" "$pytrain" "$gpu"
+        ' 2>/dev/null) || continue
+
+        current_branch=${snapshot%%$'\t'*}
+        snapshot=${snapshot#*$'\t'}
+        pytrain=${snapshot%%$'\t'*}
+        gpu=${snapshot#*$'\t'}
+        if [ "${pytrain:-0}" -eq 0 ] && [ "${gpu:-0}" -eq 0 ]; then
+            continue
+        fi
+
+        expected_heads=$(printf '%s' "$open_heads" | awk -F '\t' -v wanted="$student" '$1 == wanted {heads = heads sep $2; sep = " or "} END {print heads}')
+        if [ -z "$expected_heads" ]; then
+            anomalies+="${student}: active training on branch ${current_branch:-unknown} but this student has no open status:wip PR on ${branch}; possible zombie run after PR closure; inspect or stop the pod before assigning new work; pytrain=${pytrain:-0}; gpu=${gpu:-0}"$'\n'
+            continue
+        fi
+        if ! printf '%s' "$open_heads" | awk -F '\t' -v wanted="$student" -v current="$current_branch" '$1 == wanted && $2 == current {found=1} END {exit !found}'; then
+            anomalies+="${student}: active training on branch ${current_branch:-unknown} but open status:wip assignment expects ${expected_heads}; possible stale checkout or wrong pod assignment; reconcile or stop the pod before assigning new work; pytrain=${pytrain:-0}; gpu=${gpu:-0}"$'\n'
+        fi
+    done
+
+    printf '%s' "$anomalies" | python3 -c '
+import json
+import sys
+
+print(json.dumps([line for line in sys.stdin.read().splitlines() if line]))
+'
+}
+
 # ---------------------------------------------------------------------------
 # PR reads
 # ---------------------------------------------------------------------------
@@ -671,7 +813,7 @@ print(json.dumps([
 #   list_prs_requiring_advisor_action <branch> [stale_wip_seconds]
 list_prs_requiring_advisor_action() {
     local branch="$1" stale_seconds="${2:-${SENPAI_STALE_WIP_SECONDS:-7200}}"
-    local prs comments_by_pr num comments row
+    local prs comments_by_pr num comments row actions
     prs=$(rest_base_pull_details "$branch")
     comments_by_pr=""
     while IFS= read -r num; do
@@ -687,7 +829,7 @@ print(json.dumps({"number": int(num), "comments": json.loads(comments)}))
         comments_by_pr+="${row}"$'\n'
     done < <(printf '%s' "$prs" | python3 -c 'import json,sys; print("\n".join(str(pr["number"]) for pr in json.loads(sys.stdin.read())))')
 
-    printf '%s\0%s' "$prs" "$comments_by_pr" | python3 -c '
+    actions=$(printf '%s\0%s' "$prs" "$comments_by_pr" | python3 -c '
 import json
 import re
 import sys
@@ -760,7 +902,8 @@ for pr in prs:
         prs_requiring_advisor_action.append(item)
 
 print(json.dumps(prs_requiring_advisor_action))
-' "$branch" "$stale_seconds"
+' "$branch" "$stale_seconds")
+    suppress_live_stale_wips "$actions"
 }
 
 # List WIP PRs assigned to a specific student on the current advisor branch.

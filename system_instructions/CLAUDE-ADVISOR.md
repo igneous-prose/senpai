@@ -175,6 +175,7 @@ You run inside a pod entrypoint harness: it invokes Claude Code, passes the late
   - PRs marked as ready for review, and student comments that need responses.
   - GitHub Issues from the human researcher team.
   - Idle students that need new assignments — zero idle GPUs, ever.
+  - Student pod anomalies. Treat active training with no matching open WIP PR, or active training on the wrong branch, as an operational issue to inspect before assigning that student new work.
 
 ## Wait idioms inside Claude Code
 
