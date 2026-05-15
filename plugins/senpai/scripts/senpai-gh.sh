@@ -25,14 +25,44 @@ SENPAI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------------------------------------------------------------------------
 # Retry helper: up to 6 attempts with 15s backoff, then fail loudly.
 # ---------------------------------------------------------------------------
+senpai_run_with_timeout() {
+    local timeout_seconds="${SENPAI_GH_TIMEOUT_SECONDS:-120}"
+    if command -v timeout >/dev/null 2>&1; then
+        local kill_after="${SENPAI_GH_TIMEOUT_KILL_AFTER_SECONDS:-30}"
+        timeout -k "$kill_after" "$timeout_seconds" "$@"
+    else
+        "$@"
+    fi
+}
+
 gh_retry() {
-    local attempt
+    local attempt status
     for attempt in 1 2 3 4 5 6; do
-        "$@" && return 0
-        echo "gh_retry: attempt $attempt failed, retrying in 15s..." >&2
+        senpai_run_with_timeout "$@" && return 0
+        status=$?
+        if [ "$attempt" -eq 6 ]; then
+            echo "gh_retry: attempt $attempt failed with status $status; giving up" >&2
+            return "$status"
+        fi
+        echo "gh_retry: attempt $attempt failed with status $status, retrying in 15s..." >&2
         sleep 15
     done
     return 1
+}
+
+comment_on_pr() {
+    local num="$1" body="$2" tmp status
+    if [ -z "$num" ]; then
+        echo "comment_on_pr: usage: <pr-number> <body>" >&2
+        return 2
+    fi
+
+    tmp=$(mktemp "${TMPDIR:-/tmp}/senpai-gh-comment.XXXXXX") || return
+    printf '%s' "$body" > "$tmp"
+    gh_retry gh pr comment "$num" --repo "$GH_REPO" --body-file "$tmp"
+    status=$?
+    rm -f "$tmp"
+    return "$status"
 }
 
 poll_or_empty() {
@@ -135,7 +165,7 @@ swap_gh_pr_label() {
     # DELETE the old label — retry transient failures, tolerate 404 (already gone).
     local attempt err
     for attempt in 1 2 3 4 5 6; do
-        err=$(gh api "repos/${GH_REPO}/issues/${num}/labels/${remove}" \
+        err=$(senpai_run_with_timeout gh api "repos/${GH_REPO}/issues/${num}/labels/${remove}" \
             --method DELETE --silent 2>&1) && break
         echo "$err" | grep -q "404" && break
         echo "swap_gh_pr_label: DELETE attempt $attempt failed, retrying in 15s..." >&2
@@ -156,7 +186,7 @@ swap_gh_pr_label() {
 #   send_pr_back_to_student_with_comment <number> <comment_body>
 send_pr_back_to_student_with_comment() {
     local num="$1" body="$2"
-    gh_retry gh pr comment "$num" --repo "$GH_REPO" --body "$body"
+    comment_on_pr "$num" "$body"
     gh_retry gh pr ready "$num" --repo "$GH_REPO" --undo
     swap_gh_pr_label "$num" "status:review" "status:wip"
 }
@@ -197,7 +227,7 @@ senpai_merge_winner_preflight() {
 close_pr_with_comment() {
     local num="$1" reason="$2"
 
-    gh_retry gh pr comment "$num" --repo "$GH_REPO" --body "ADVISOR: Closing PR #${num} because ${reason}."
+    comment_on_pr "$num" "ADVISOR: Closing PR #${num} because ${reason}."
     gh_retry gh pr close "$num" --repo "$GH_REPO"
 }
 
@@ -328,7 +358,10 @@ items = json.loads(sys.stdin.read())
 parts = []
 for item in items:
     reasons = ",".join(item.get("reasons", []))
-    parts.append("#{}[{}]".format(item["number"], reasons))
+    detail = ""
+    if item.get("unknownStudentLabels"):
+        detail = " unknown={}".format("|".join(item["unknownStudentLabels"]))
+    parts.append("#{}[{}{}]".format(item["number"], reasons, detail))
 print(",".join(parts))
 '
 }
@@ -810,9 +843,9 @@ print(json.dumps([
 # List open PRs requiring advisor action, even when they have not been updated
 # since the last heartbeat.
 # Returns a JSON array with a `reasons` list on each PR.
-#   list_prs_requiring_advisor_action <branch> [stale_wip_seconds]
+#   list_prs_requiring_advisor_action <branch> [stale_wip_seconds] [student_names_csv]
 list_prs_requiring_advisor_action() {
-    local branch="$1" stale_seconds="${2:-${SENPAI_STALE_WIP_SECONDS:-7200}}"
+    local branch="$1" stale_seconds="${2:-${SENPAI_STALE_WIP_SECONDS:-7200}}" students_csv="${3:-${STUDENT_NAMES:-}}"
     local prs comments_by_pr num comments row actions
     prs=$(rest_base_pull_details "$branch")
     comments_by_pr=""
@@ -838,6 +871,7 @@ from datetime import datetime, timezone
 
 branch = sys.argv[1]
 stale_seconds = int(sys.argv[2])
+known_students = {s.strip() for s in sys.argv[3].split(",") if s.strip()}
 now = datetime.now(timezone.utc)
 raw_prs, raw_comments = sys.stdin.buffer.read().split(b"\0", 1)
 prs = json.loads(raw_prs)
@@ -858,9 +892,11 @@ metadata = {}
 for pr in prs:
     labels = label_names(pr)
     students = sorted(label.removeprefix("student:") for label in labels if label.startswith("student:"))
-    metadata[pr["number"]] = (labels, students)
+    unknown_students = [student for student in students if known_students and student not in known_students]
+    routed_students = [student for student in students if not known_students or student in known_students]
+    metadata[pr["number"]] = (labels, students, routed_students, unknown_students)
     if "status:wip" in labels:
-        for student in students:
+        for student in routed_students:
             student_wips[student].append(pr["number"])
 
 duplicate_wips = {
@@ -873,12 +909,16 @@ duplicate_wips = {
 conflict_re = re.compile(r"merge conflict|rebase conflict|cannot automatically merge|can.t automatically merge|conflicts? with", re.I)
 prs_requiring_advisor_action = []
 for pr in prs:
-    labels, students = metadata[pr["number"]]
+    labels, students, routed_students, unknown_students = metadata[pr["number"]]
     reasons = []
     if branch not in labels:
         reasons.append("missing_branch_label")
     if not students:
         reasons.append("missing_student_label")
+    if unknown_students:
+        reasons.append("unknown_student_label")
+    if students and not routed_students:
+        reasons.append("unroutable_student_label")
     if pr["number"] in duplicate_wips:
         reasons.append("duplicate_student_wip")
     if "status:wip" in labels:
@@ -899,10 +939,12 @@ for pr in prs:
     if reasons:
         item = dict(pr)
         item["reasons"] = sorted(set(reasons), key=reasons.index)
+        if unknown_students:
+            item["unknownStudentLabels"] = [f"student:{student}" for student in unknown_students]
         prs_requiring_advisor_action.append(item)
 
 print(json.dumps(prs_requiring_advisor_action))
-' "$branch" "$stale_seconds")
+' "$branch" "$stale_seconds" "$students_csv")
     suppress_live_stale_wips "$actions"
 }
 

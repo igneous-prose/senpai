@@ -155,6 +155,7 @@ export IS_SANDBOX=1
 
 SLEEP_TIME_S=300
 MAX_TURNS=100000
+export SENPAI_CLAUDE_TIMEOUT_SECONDS="${SENPAI_CLAUDE_TIMEOUT_SECONDS:-3600}"
 
 ITERATION=0
 while true; do
@@ -181,7 +182,7 @@ while true; do
     POLL_OK=1
     REVIEW_JSON=$(poll_or_empty "review-ready PR poll" list_ready_for_review_prs "$ADVISOR_BRANCH") || POLL_OK=0
     REVIEW_COUNT=$(printf '%s' "$REVIEW_JSON" | json_len)
-    ADVISOR_ACTION_JSON=$(poll_or_empty "advisor-action PR poll" list_prs_requiring_advisor_action "$ADVISOR_BRANCH") || POLL_OK=0
+    ADVISOR_ACTION_JSON=$(poll_or_empty "advisor-action PR poll" list_prs_requiring_advisor_action "$ADVISOR_BRANCH" "${SENPAI_STALE_WIP_SECONDS:-7200}" "$STUDENT_NAMES") || POLL_OK=0
     ADVISOR_ACTION_COUNT=$(printf '%s' "$ADVISOR_ACTION_JSON" | json_len)
     ISSUE_JSON=$(poll_or_empty "GitHub issue poll" check_gh_issues "$ADVISOR_BRANCH" "$SINCE") || POLL_OK=0
     ISSUE_COUNT=$(printf '%s' "$ISSUE_JSON" | json_len)
