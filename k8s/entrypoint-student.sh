@@ -101,7 +101,8 @@ export IS_SANDBOX=1
 
 LOGDIR="$WORKDIR/student_logs"
 mkdir -p "$LOGDIR"
-SLEEP_TIME_S=300
+SLEEP_TIME_S="${SENPAI_STUDENT_POLL_INTERVAL_S:-${SENPAI_POLL_INTERVAL_S:-600}}"
+POLL_JITTER_S="${SENPAI_STUDENT_POLL_JITTER_S:-${SENPAI_POLL_JITTER_S:-120}}"
 MAX_TURNS=100000
 
 ITERATION=0
@@ -164,7 +165,7 @@ while true; do
                 comment_on_pr "$num" "$DUPLICATE_BODY"
             fi
         done
-        sleep "$SLEEP_TIME_S"
+        senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
         continue
     fi
 
@@ -172,8 +173,8 @@ while true; do
     # is no work, do not enter Claude Code; idle model sessions tend to invent
     # their own polling loops and can miss the label-based assignment contract.
     if [ "$ASSIGNED_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ]; then
-        echo "=== No work assigned, sleeping $SLEEP_TIME_S seconds without invoking Claude ==="
-        sleep "$SLEEP_TIME_S"
+        echo "=== No work assigned, sleeping $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter without invoking Claude ==="
+        senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
         continue
     fi
 
@@ -195,10 +196,10 @@ while true; do
     fi
     DURATION=$(( $(date +%s) - START_TS ))
 
-    echo "=== Claude exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds ==="
+    echo "=== Claude exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter ==="
     if [ "$EXIT_CODE" -eq 124 ]; then
         echo "=== Claude watchdog fired; re-polling immediately ==="
         continue
     fi
-    sleep "$SLEEP_TIME_S"
+    senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
 done

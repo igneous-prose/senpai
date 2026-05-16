@@ -158,7 +158,8 @@ LAST_CHECK_FILE="$LOGDIR/.last_check_ts"
 # --- Launch Claude Code Loop ---
 export IS_SANDBOX=1
 
-SLEEP_TIME_S=300
+SLEEP_TIME_S="${SENPAI_ADVISOR_POLL_INTERVAL_S:-${SENPAI_POLL_INTERVAL_S:-600}}"
+POLL_JITTER_S="${SENPAI_ADVISOR_POLL_JITTER_S:-${SENPAI_POLL_JITTER_S:-120}}"
 MAX_TURNS=100000
 export SENPAI_CLAUDE_TIMEOUT_SECONDS="${SENPAI_CLAUDE_TIMEOUT_SECONDS:-3600}"
 
@@ -222,8 +223,8 @@ while true; do
     else
         # --- Programmatic skip: skip rest of CC loop if nothing actionable ---
         if [ "$REVIEW_COUNT" -eq 0 ] && [ "$ADVISOR_ACTION_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ] && [ "$IDLE_COUNT" -eq 0 ] && [ "$POD_ANOMALY_COUNT" -eq 0 ]; then
-            echo "=== Iteration $ITERATION: Nothing actionable, sleeping $SLEEP_TIME_S seconds ==="
-            sleep "$SLEEP_TIME_S"
+            echo "=== Iteration $ITERATION: Nothing actionable, sleeping $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter ==="
+            senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
             continue
         fi
 
@@ -247,6 +248,6 @@ while true; do
         echo "=== Poll incomplete; not advancing last-check timestamp ==="
     fi
 
-    echo "=== Advisor exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds ==="
-    sleep "$SLEEP_TIME_S"
+    echo "=== Advisor exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter ==="
+    senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
 done

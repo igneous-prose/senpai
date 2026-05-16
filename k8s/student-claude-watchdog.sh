@@ -10,7 +10,8 @@
 # forever inside a child shell, the outer loop never polls again and can miss a
 # closed/reassigned PR. This wrapper keeps the polling loop in charge.
 
-STUDENT_CLAUDE_WATCHDOG_INTERVAL_S="${STUDENT_CLAUDE_WATCHDOG_INTERVAL_S:-60}"
+STUDENT_CLAUDE_WATCHDOG_INTERVAL_S="${STUDENT_CLAUDE_WATCHDOG_INTERVAL_S:-300}"
+STUDENT_CLAUDE_WATCHDOG_JITTER_S="${STUDENT_CLAUDE_WATCHDOG_JITTER_S:-60}"
 STUDENT_CLAUDE_MIN_RUNTIME_S="${STUDENT_CLAUDE_MIN_RUNTIME_S:-600}"
 STUDENT_CLAUDE_STALE_LOG_S="${STUDENT_CLAUDE_STALE_LOG_S:-1200}"
 STUDENT_CLAUDE_KILL_GRACE_S="${STUDENT_CLAUDE_KILL_GRACE_S:-15}"
@@ -136,7 +137,7 @@ run_student_claude_with_watchdog() {
     start_ts=$(date +%s)
 
     while kill -0 "$claude_pid" 2>/dev/null; do
-        sleep "$STUDENT_CLAUDE_WATCHDOG_INTERVAL_S"
+        senpai_sleep_with_jitter "$STUDENT_CLAUDE_WATCHDOG_INTERVAL_S" "$STUDENT_CLAUDE_WATCHDOG_JITTER_S"
         kill -0 "$claude_pid" 2>/dev/null || break
 
         now_ts=$(date +%s)
