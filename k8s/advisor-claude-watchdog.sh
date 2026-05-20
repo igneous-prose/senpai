@@ -18,16 +18,19 @@ ADVISOR_CLAUDE_KILL_GRACE_S="${ADVISOR_CLAUDE_KILL_GRACE_S:-15}"
 ADVISOR_CLAUDE_SELF_PGREP_STALE_S="${ADVISOR_CLAUDE_SELF_PGREP_STALE_S:-300}"
 ADVISOR_CLAUDE_SELF_PGREP_PATTERNS="${ADVISOR_CLAUDE_SELF_PGREP_PATTERNS:-wandb_sparse_val.py}"
 
+# Read log mtimes portably so stale-output checks work on Linux and macOS.
 advisor_file_mtime_s() {
     stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
 }
 
+# Emit intervention messages to both pod logs and the current Claude log.
 advisor_log_watchdog_trigger() {
     local message="$1"
     echo "$message"
     [ -n "${LOGFILE:-}" ] && printf '%s\n' "$message" >> "$LOGFILE"
 }
 
+# Walk child processes so the watchdog can see shells below timeout wrappers.
 advisor_descendant_pids() {
     local pid="$1" child
 
@@ -37,6 +40,7 @@ advisor_descendant_pids() {
     done
 }
 
+# Include the root process because the stuck waiter can be the watched shell.
 advisor_tree_pids() {
     local pid="$1"
     [ -n "$pid" ] || return 0
@@ -45,6 +49,7 @@ advisor_tree_pids() {
     advisor_descendant_pids "$pid"
 }
 
+# Signal a whole process tree so child wait shells cannot survive their parent.
 advisor_kill_process_tree() {
     local signal="$1" pid="$2" child
     [ -n "$pid" ] || return 0
@@ -56,6 +61,7 @@ advisor_kill_process_tree() {
     kill "-$signal" "$pid" 2>/dev/null || true
 }
 
+# Stop selected process trees gently, then force-kill anything still alive.
 advisor_stop_process_trees() {
     local pids="$1" pid
     [ -n "$pids" ] || return 0
@@ -73,6 +79,7 @@ advisor_stop_process_trees() {
     done
 }
 
+# Check whether a pattern still belongs to real work, not just waiter commands.
 advisor_real_pattern_process_exists() {
     local pattern="$1"
 
@@ -86,6 +93,7 @@ advisor_real_pattern_process_exists() {
         '
 }
 
+# Find waiters whose broad pgrep pattern only matches the waiter itself.
 advisor_self_pgrep_wait_pids() {
     local root_pid="$1" pattern pid line
 
@@ -105,6 +113,7 @@ advisor_self_pgrep_wait_pids() {
     done | sort -nu
 }
 
+# Run Claude under supervision and return 124 when the outer loop should re-poll.
 run_advisor_claude_with_watchdog() {
     run_senpai_claude "$@" &
     local claude_pid=$!
