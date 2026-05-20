@@ -187,6 +187,7 @@ You run inside a pod entrypoint harness: it invokes Claude Code, passes the late
 - Use `ScheduleWakeup` for loop re-entry.
 - Use `Monitor` for condition waits over PR state, pod state, logs, or GPU status.
 - Use a background `until ...; do sleep N; done` loop only for a bounded local check.
+- Do not wait for your own background commands with broad `pgrep -f "<wandb name or args>"` patterns. The waiting shell command line contains that pattern too, so `pgrep -f` can match the waiter itself forever. Capture the PID when you launch a background command and use `wait "$pid"`, a task id, or a pidfile instead.
 
 ### Give new experiments the best possible chance of success
 
