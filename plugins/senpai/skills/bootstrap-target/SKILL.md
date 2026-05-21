@@ -80,7 +80,11 @@ Load these only when they help the current task:
    - What baseline, SOTA, public reference, or statistical rule defines a
      meaningful win?
 
-   Do not ask the user to restate facts the repository already makes obvious.
+   If the target is still ambiguous after the initial repo inspection, read
+   `references/interview-question-bank.md` and choose the smallest set of
+   questions that resolves the missing metric, benchmark, data, operations, or
+   file-boundary decisions. Do not ask the user to restate facts the repository
+   already makes obvious.
 
 4. **Write `program.md` as the research contract.**
    `program.md` is the document every advisor and student will use to decide
