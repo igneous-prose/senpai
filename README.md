@@ -212,6 +212,10 @@ kubectl delete deployments,configmaps,secrets -l research-tag=<research-tag>
 
 ## Adding a new problem
 
+Use the `senpai:bootstrap-target <target-repo-path-or-url>` skill to onboard any ML or research target repository.
+It inspects the repo, interviews for missing metric/benchmark/guardrail decisions, and drafts the `program.md`
+plus `instructions/` files that make the target work well with Senpai.
+
 1. Create a new public repo (e.g. `myorg/my_problem`) with the minimum problem-package layout:
    - `train.py` — training script + model (entry point for students)
    - `data.py` or `data/` — data pipeline
