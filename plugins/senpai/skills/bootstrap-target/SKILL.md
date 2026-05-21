@@ -7,7 +7,7 @@ name: bootstrap-target
 description: >
   Create or improve Senpai target-repository onboarding files: program.md plus
   instructions/prompt-advisor.md and instructions/prompt-student.md. Use this
-  skill whenever the user wants to point Senpai at a fresh ML or research
+  skill whenever the user wants to point Senpai at a fresh ML or research target
   repository, define the research objective, primary metric, benchmark contract,
   allowed edit boundaries, W&B reporting contract, advisor/student prompts, or
   prepare a repo for autonomous advisor/student experiment loops.
