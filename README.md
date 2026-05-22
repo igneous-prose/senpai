@@ -104,6 +104,17 @@ wandb_entity: wandb-applied-ai-team
 wandb_project: senpai-v1
 timeout_minutes: 30.0
 max_epochs: 50
+poll_interval_s: 600
+poll_jitter_s: 120
+stale_wip_seconds: 7200
+advisor_claude_watchdog_interval_s: 60
+advisor_claude_min_runtime_s: 600
+advisor_claude_stale_log_s: 1200
+student_claude_watchdog_interval_s: 300
+student_claude_watchdog_jitter_s: 60
+student_claude_min_runtime_s: 600
+student_claude_stale_log_s: 1200
+student_assignment_drift_grace_s: 1800
 n_students: 4
 student_prefix: ""
 gpus_per_student: 8
@@ -113,6 +124,37 @@ preflight_only: false
 ```
 
 `launch.py` reads this via `simple_parsing` — every field can be overridden on the CLI.
+
+### Responsiveness knobs
+
+Advisor and student entrypoints poll GitHub before invoking Claude Code. By
+default they sleep for 10 minutes plus jitter between idle checks, which is
+appropriate for long training loops but too slow for short-budget targets. Use
+the polling and watchdog launch fields to make the loop more responsive without
+editing manifests by hand.
+
+`poll_interval_s` and `poll_jitter_s` are shared by both advisor and student
+outer loops. The watchdog fields tune role-specific checks while Claude is
+already running.
+
+For short, interactive experiments, lower `poll_interval_s` and
+`poll_jitter_s` so idle students and review-ready PRs are picked up quickly.
+For long training runs, keep those defaults or use larger values to reduce
+GitHub/API churn. Lower `*_claude_watchdog_interval_s` and
+`student_assignment_drift_grace_s` only when you want the outer loop to reclaim
+stale or reassigned work aggressively.
+
+```bash
+python k8s/launch.py \
+  --tag inferencebench-a-r1 \
+  --advisor \
+  --poll_interval_s 30 \
+  --poll_jitter_s 5 \
+  --stale_wip_seconds 600 \
+  --student_claude_watchdog_interval_s 30 \
+  --student_claude_watchdog_jitter_s 5 \
+  --student_assignment_drift_grace_s 120
+```
 
 ### Image rebuilds
 
