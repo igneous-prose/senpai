@@ -158,7 +158,7 @@ python k8s/launch.py \
 
 ### Image rebuilds
 
-The published runner image is `ghcr.io/wandb/senpai:latest`. It is built by `.github/workflows/build.yaml` on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, `uv.lock`, or the workflow changes. It can also be rebuilt manually from the GitHub Actions `workflow_dispatch` button.
+The published runner image is `ghcr.io/wandb/senpai:latest`. It is built by `.github/workflows/build.yaml` on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, or the workflow changes. It can also be rebuilt manually from the GitHub Actions `workflow_dispatch` button.
 
 ### Launch credentials
 

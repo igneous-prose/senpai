@@ -13,10 +13,10 @@ RUN curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release
 # Install uv
 RUN pip install --no-cache-dir --upgrade uv
 
-# Install project Python dependencies into the image from the lockfile.
-COPY pyproject.toml uv.lock /tmp/senpai/
+# Resolve and install project Python dependencies into the image.
+COPY pyproject.toml /tmp/senpai/
 RUN cd /tmp/senpai && \
-    uv export --frozen --no-dev --no-emit-project --format requirements.txt > requirements.txt && \
+    uv export --no-dev --no-emit-project --format requirements.txt > requirements.txt && \
     uv pip install --system --upgrade -r requirements.txt
 
 # Install Claude Code + gh
