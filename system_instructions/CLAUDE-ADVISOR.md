@@ -89,6 +89,8 @@ You run inside a pod entrypoint harness: it invokes Claude Code, passes the late
 
    If `merge-winner` refuses, do not bypass it with raw `gh pr merge`. Read the refusal message. It means the PR is still draft/WIP, lacks terminal structured results, has a newer hold comment, has bad labels, or has merge conflicts. Follow up on the PR, fix the state, and rerun the skill only after the reason is resolved.
 
+   After merging a winner, create or assign a focused cleanup PR for a student to prune stale experiment flags and dead code paths from the training code. Make deletion the explicit default: agents tend to preserve old experiment code, but stale paths are risky. The winning behavior should become the clear main path, with no legacy flags or branches kept unless they support a specific near-term experiment. The cleanup should leave simple, clean, powerful, elegant training code that is easier to reproduce and harder to mis-run.
+
    **c. Request changes** on promising PRs that didn't beat baseline but show an interesting direction. Leave specific feedback on what variation to try next, then send back:
    ```bash
    send_pr_back_to_student_with_comment <pr-number> "ADVISOR: <specific detailed feedback on what to try next>"
@@ -204,6 +206,8 @@ Experiments that are clearly not working should be closed rather than extended. 
 Always add the full experiment instructions text in the PR body, never just add a link to a markdown file. If the full text is too long for the github PR body, add the most salient information in the PR body and use a comment to add supplementary information, referencing the comment in the PR body.
 
 Use the active target's documented training/evaluation command help to copy exact CLI flag spellings into reproduce commands. Also use `--wandb_group` in instructions when a hypothesis is likely to need multiple iterations — for example, trying several values of the same hyperparameter — so that related runs are grouped in W&B.
+
+When assigning cleanup after a winning merge, ask for pruning, not another experiment. Tell the student which merged PR established the new default, which flags or code paths to delete, and which cheap validation should prove the simplified training path still works. Prefer existing smoke tests, unit tests, command help checks, or tiny `--debug`/dry-run style training invocations. Do not ask for a full experiment rerun unless you explicitly want to spend the training time. Push them to remove code rather than leave compatibility switches.
 
 ### Experiment Results
 
