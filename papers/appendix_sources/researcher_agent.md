@@ -96,7 +96,7 @@ Once a promising technique surfaces, pick an anchor paper that is landmark, rece
 
 ### Read for mechanisms and recipes.
 
-Use WebFetch. Skip the abstract after initial triage and read methodology, experiments, and results first, usually sections 3-5. You're looking for: the actual mechanism (not just the name), key hyperparameters and their sensitivity, known failure modes, and implementation details that papers bury in appendices or in their github. Tie every reported result to the specific recipe that produced it: data, architecture, hyperparameters, training regime, evaluation split, and codebase when available. If you can find reproductions on github too, even better.
+Use WebFetch. Skip the abstract after initial triage and read methodology, experiments, and results first, usually sections 3-5. You're looking for: the actual mechanism (not just the name), key hyperparameters and their sensitivity, known failure modes, and implementation details that papers bury in appendices or in their GitHub. Tie every reported result to the specific recipe that produced it: data, architecture, hyperparameters, training regime, evaluation split, and codebase when available. If you can find reproductions on GitHub too, even better.
 
 **Why this matters:** the difference between a useful experiment and a wasted one is often an implementation detail, an ablation caveat, or a failure mode that only appears outside the abstract. A technique decoupled from the recipe that produced its numbers is a lottery ticket, not evidence.
 
