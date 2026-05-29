@@ -40,22 +40,30 @@
 
 \usepackage[disable,textsize=tiny]{todonotes}
 
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{8pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\dblfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{0pt}
+
 \makeatletter
 \renewcommand{\Notice@String}{Accepted by ICML 2026 AI for Science Workshop}
 \makeatother
 
 \newcommand{\willowsankeyteaser}{%
-  \vskip 0.08in
+  \vskip 0.03in
   \begin{center}
-    \begin{minipage}{0.76\textwidth}
+    \begin{minipage}{0.70\textwidth}
       \centering
       \includegraphics[width=\linewidth]{icml2026/figures/willow_sankey/willow_simplified_sankey.png}
-      \vspace{-0.12in}
+      \vspace{-0.17in}
       \captionof{figure}{Results of 167 experiments from the SENPAI experiment ledger for the five TandemFoilSet-Balanced trials, grouped by count of experiments per trial, the experiment hypothesis family and final PR outcome depending on if it was merged, closed or left unresolved at the 12-hour trial cut-off.}
       \label{fig:willow-sankey}
     \end{minipage}
   \end{center}
-  \vskip 0.12in
+  \vskip 0.04in
 }
 \newcommand{\appendixsourcelink}[1]{\href{https://github.com/wandb/senpai/blob/main/papers/appendix_sources/#1}{\nolinkurl{#1}}}
 
@@ -355,11 +363,11 @@ SENPAI's contribution is therefore not to replace the researcher, but to increas
 
 \section*{Software and Data}
 
-The \href{https://github.com/wandb/senpai}{SENPAI harness} and \href{https://github.com/tcapelle/kagent}{\texttt{kagent} comparator} are released publicly. Public experiment ledgers are available through GitHub PR histories in \href{https://github.com/wandb/senpai}{\texttt{wandb/senpai}} and \href{https://github.com/morganmcg1/TandemFoilSet-Balanced}{\texttt{TandemFoilSet-Balanced}}, with W\&B run records under the projects listed in \Cref{app:wandb-projects}.
+Code, data links, and W\&B logs are listed in the appendices.
 
 \section*{Impact Statement}
 
-This work aims to make autonomous ML research more auditable, recoverable, and steerable by grounding agent activity in systems of record that researchers already inspect. The positive impact is increased researcher bandwidth for expensive scientific ML experimentation, especially in domains where strong baselines require repeated empirical iteration. The main risks are increased compute/API consumption, over-trusting autonomous experiment choices, and propagating errors when agent-written summaries drift from measured evidence. SENPAI mitigates these risks by keeping humans in the review loop, preserving experiment provenance in PRs and tracked runs, and treating summaries as caches rather than authoritative state.
+This work aims to make autonomous ML research auditable and steerable. Benefits are increased researcher bandwidth; risks are compute/API use, over-trusting agent choices, and summary drift, mitigated by human review, provenance in PRs/runs, and treating summaries as caches.
 
 \bibliographystyle{icml2026/icml2026}
 \bibliography{paper}
@@ -434,10 +442,11 @@ The paper-facing experiment tracker records are grouped into the public Weights 
     \toprule
     Project & Paper-facing records \\
     \midrule
-    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1}{\texttt{senpai-v1}} & Primary SENPAI experiment-tracking project for the paper. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1}{\texttt{senpai-v1}} & Primary SENPAI experiment-tracking project for the paper, including AirfRANS experiment results. \\
     \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}{\texttt{senpai-v1-drivaerml}} & DrivAerML SENPAI campaign runs and related surface-pressure trajectory records. \\
     \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}{\texttt{senpai-v1-drivaerml-ddp8}} & Eight-GPU DrivAerML follow-up runs for the selected single-checkpoint recipe and related ablations. \\
     \href{https://wandb.ai/wandb-applied-ai-team/kagent-v2}{\texttt{kagent-v2}} & Flat \texttt{kagent} comparator runs. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/modded-nanogpt-senpai}{\texttt{modded-nanogpt-senpai}} & Modded-NanoGPT Track 3 SENPAI runs. \\
     \bottomrule
   \end{tabular}
 \end{center}
