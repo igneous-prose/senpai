@@ -193,7 +193,7 @@ We use the paper's original Experiment 4 partition, Cruise Random and Race Car t
 \subsection{DrivAerML}
 
 \paragraph{Result.}
-On the DrivAerML benchmark, SENPAI's best single trained checkpoint is H147 from \href{https://github.com/morganmcg1/DrivAerML/pull/1344}{PR~\#1344}, W\&B run \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/k6q4c3on}{\texttt{k6q4c3on}}. Starting from a Transolver-based implementation, this checkpoint improves on the original Transolver for surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$ error. It also gives the best single-model pressure results among the public references in \Cref{tab:drivaerml}: 3.5634\% surface pressure versus 3.71\% for Transolver-3, and 3.4014\% volume pressure versus 5.72\% for Transolver-3. Wall-shear error is 6.5409\%, improving on AB-UPT and Transolver while remaining behind Transolver-3 and Transolver++. The full recipe, run provenance, and per-axis wall-shear diagnostics are in \Cref{app:drivaerml-recipe}. \Cref{fig:drivaerml-surface-pareto} shows the semi-autonomous experiment trajectory for surface-pressure test error across earlier SENPAI campaigns.
+On the DrivAerML benchmark, SENPAI's best single trained checkpoint is \href{https://github.com/morganmcg1/DrivAerML/pull/1344}{H147 from PR~\#1344}, W\&B run \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/k6q4c3on}{\texttt{k6q4c3on}}. Starting from a Transolver-based implementation, this checkpoint improves on the original Transolver for surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$ error. It also gives the best single-model pressure results among the public references in \Cref{tab:drivaerml}: 3.5634\% surface pressure versus 3.71\% for Transolver-3, and 3.4014\% volume pressure versus 5.72\% for Transolver-3. Wall-shear error is 6.5409\%, improving on AB-UPT and Transolver while remaining behind Transolver-3 and Transolver++. The full recipe, run provenance, and per-axis wall-shear diagnostics are in \Cref{app:drivaerml-recipe}. \Cref{fig:drivaerml-surface-pareto} shows the semi-autonomous experiment trajectory for surface-pressure test error across earlier SENPAI campaigns.
 
 \begin{table}[t]
   \caption{DrivAerML test relative-$L_2$ error (\%). Lower is better.}
@@ -205,7 +205,7 @@ On the DrivAerML benchmark, SENPAI's best single trained checkpoint is H147 from
     \toprule
     Method & $p_s$ & $\tau$ & $p_v$ \\
     \midrule
-    SENPAI H147 (ours) & \best{3.5634} & 6.5409 & \best{3.4014} \\
+    SENPAI (ours) & \best{3.5634} & 6.5409 & \best{3.4014} \\
     Transolver-3 \citep{zhou2026transolver3} & 3.71 & \best{5.85} & 5.72 \\
     AB-UPT \citep{alkin2025abupt} & 3.82 & 7.29 & 6.08 \\
     Transolver++ \citep{luo2025transolverplusplus} & 4.12 & 6.42 & 6.70 \\
@@ -215,10 +215,7 @@ On the DrivAerML benchmark, SENPAI's best single trained checkpoint is H147 from
 \end{table}
 
 \paragraph{Recipe.}
-The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 6 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, GradNorm adaptive loss balancing \citep{chen2018gradnorm}, curvature attention bias, and $y$-symmetry augmentation. It trained with 8-GPU DDP for an effective batch size of 8 under a 30-epoch budget, with the best EMA checkpoint selected at epoch 25. The key final ablation was a Lion optimizer setting, $\beta_1=0.95,\beta_2=0.98$, that reproduced the early H138 trajectory while otherwise retaining the preceding best H39 recipe from the campaign. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling.
-
-\paragraph{Scope.}
-We report only the selected single trained checkpoint: no ensembles, checkpoint interpolation, SLSQP or bias-correction postprocessing, cohort postprocessing, or test-time augmentation. This makes the pressure gains directly attributable to the trained H147 checkpoint while preserving the remaining wall-shear gap to the strongest public wall-shear references.
+The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 6 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, GradNorm adaptive loss balancing \citep{chen2018gradnorm}, curvature attention bias, and $y$-symmetry augmentation. It trained with 8-GPU DDP for an effective batch size of 8 under a 30-epoch budget, with the best EMA checkpoint selected at epoch 25. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling.
 
 \subsection{AirfRANS}
 
