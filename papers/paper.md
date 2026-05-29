@@ -211,7 +211,7 @@ Table 3: DrivAerML public-split test relative-L2 (%). Mean per case on unnormali
 
 Method | p_s | tau | p_v
 --- | ---: | ---: | ---:
-SENPAI (ours) | 3.5634 | 6.5409 | 3.4014
+SENPAI (ours) | 3.56 | 6.54 | 3.40
 Transolver-3 [2026] | 3.71 | 5.85 | 5.72
 AB-UPT [2025] | 3.82 | 7.29 | 6.08
 Transolver++ (secondary provenance) | 4.12 | 6.42 | 6.70
