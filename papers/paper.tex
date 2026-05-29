@@ -294,16 +294,7 @@ In a direct 12-hour head-to-head, \texttt{kagent} behaved like a public Kaggle s
 \subsection{Modded-NanoGPT Track 3}
 
 \paragraph{Result.}
-To demonstrate SENPAI's applicability beyond CFD research, we also ran SENPAI on Keller Jordan's modded-NanoGPT Track 3 optimization benchmark \citep{jordan2026moddednanogpttrack3}. Track 3 fixes the dataset, batch size, and architecture, and scores methods by the fewest optimizer steps needed to reach 3.28 validation loss on FineWeb \citep{penedo2024fineweb,karpathy2024llmcgpt2}.
-
-We ran five SENPAI trials to measure result consistency and understand the distribution of autonomous search outcomes.\footnote{Final step results: \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T1}{<T1>/<PR1>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T2}{<T2>/<PR2>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T3}{<T3>/<PR3>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T4}{<T4>/<PR4>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T5}{<T5>/<PR5>}.} The core SENPAI system prompts were unchanged; only the repository-specific prompts were adapted to modded-NanoGPT. We also barred inspection or reuse of Prime Intellect's autonomous nanoGPT speedrun result \citep{primeintellect2026autonanogpt} to avoid biasing SENPAI with another autoresearch artifact.
-
-Across the five trials, SENPAI ran 9,591 tracked experiments total using 9,772 training GPU-hours on NVIDIA RTX PRO 6000 Blackwell 96GB GPUs, or 1,954 GPU-hours per trial on average. For comparison, Prime Intellect reports roughly 14k H200 GPU-hours over 10,428 released runs; 2,204 appear to be Claude Code runs and 8,224 Codex runs \citep{primeintellect2026autonanogpt}. Assuming equal run duration, this corresponds to about 3.0k H200 GPU-hours for Claude Code and 11.0k for Codex, or roughly 10.5 and 39.3 zettaFLOP, versus about 3.5 zettaFLOP for one average SENPAI trial (see \Cref{app:modded-nanogpt-details}).
-
-SENPAI produced a candidate Track 3 result at 2925 steps, state-of-the-art as of publication, and pending official ratification. The result is recorded in PR~\#\texttt{<BEST\_RESULT\_PR>}.
-
-\paragraph{Recipe.}
-\texttt{[WINNING\_RECIPE\_PLACEHOLDER]}
+To demonstrate SENPAI's applicability beyond CFD research, we also ran SENPAI on Keller Jordan's modded-NanoGPT Track 3 optimization benchmark \citep{jordan2026moddednanogpttrack3}. SENPAI produced a candidate Track 3 result at 2925 steps, state-of-the-art as of writing, and pending official ratification. The result is recorded in PR~\#\texttt{<BEST\_RESULT\_PR>}. We estimate that one average SENPAI trial corresponds to roughly 3.5 zettaFLOP of hardware-peak training compute; see \Cref{app:modded-nanogpt-details} for the training recipe and further details.
 
 \section{Discussion}
 
@@ -456,11 +447,16 @@ The paper-facing experiment tracker records are grouped into the public Weights 
 \section{Modded-NanoGPT Track 3 Details}
 \label{app:modded-nanogpt-details}
 
-Track 3 of the modded-NanoGPT benchmark fixes the dataset, batch size, and model architecture so submissions primarily test optimizer and training-recipe changes. Valid submissions must use non-cherry-picked runs, include reproducible logs, avoid validation-loss-based per-run early stopping, and satisfy the benchmark precision rule $(3.28-\mu)\sqrt{n}\ge 0.004$ at a shared stopping point.
+Track 3 of the modded-NanoGPT benchmark fixes the FineWeb dataset, batch size, and model architecture, and scores methods by the fewest optimizer steps required to reach 3.28 validation loss \citep{penedo2024fineweb,karpathy2024llmcgpt2}. With the data and architecture fixed, submissions primarily test optimizer and training-recipe changes. Valid submissions must use non-cherry-picked runs, include reproducible logs, avoid validation-loss-based per-run early stopping, and satisfy the benchmark precision rule $(3.28-\mu)\sqrt{n}\ge 0.004$ at a shared stopping point.
+
+We ran five SENPAI trials to measure result consistency and understand the distribution of autonomous search outcomes.\footnote{Final step results: \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T1}{<T1>/<PR1>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T2}{<T2>/<PR2>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T3}{<T3>/<PR3>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T4}{<T4>/<PR4>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T5}{<T5>/<PR5>}.} The core SENPAI system prompts were unchanged; only the repository-specific prompts were adapted to modded-NanoGPT. To avoid bias from another autoresearch artifact, we also barred inspection or reuse of Prime Intellect's autonomous nanoGPT speedrun result \citep{primeintellect2026autonanogpt}.
+
+Across the five trials, SENPAI ran 9,591 tracked experiments using 9,772 training GPU-hours on NVIDIA RTX PRO 6000 Blackwell 96GB GPUs, or 1,954 GPU-hours per trial on average. Using NVIDIA's published dense BF16/FP16 tensor throughput for RTX PRO 6000 Blackwell and H200 GPUs \citep{nvidia2025rtxpro6000blackwell,nvidia2026h200}, one average SENPAI trial corresponds to a rough hardware-peak upper bound of about 3.5 zettaFLOP. Prime Intellect reports roughly 14k H200 GPU-hours across its autonomous nanoGPT speedrun. Of the 10,428 released runs, 2,204 are labeled Claude Code and 8,224 Codex; the Claude Code rows account for 18.6\% of logged training seconds. For a simple run-count comparison, assuming equal run duration allocates about 3.0k H200 GPU-hours to Claude Code and 11.0k to Codex, or about 10.5 and 39.3 zettaFLOP at dense H200 BF16/FP16 peak. These estimates use hardware peak throughput, not measured realized training FLOPs.
 
 The 2925-step SENPAI claim uses a fixed stopping point. The two non-cherry-picked confirmation runs reached EMA validation losses of 3.27490 and 3.27625 at step 2925, with mean 3.27558 and validation-rule margin $(3.28-3.27558)\sqrt{2}=0.00626$. Both runs later finished with terminal EMA validation losses of 3.26218 and 3.26352. Internally, both runs first crossed the 3.28 target at step 2875, but the 2925-step fixed point is the conservative claim until external validation is complete.
 
-For the compute comparison in \Cref{sec:results}, we use NVIDIA's published dense BF16/FP16 tensor throughput for RTX PRO 6000 Blackwell and H200 GPUs \citep{nvidia2025rtxpro6000blackwell,nvidia2026h200}. This gives a rough hardware-peak upper bound of about 3.5 zettaFLOP for one average SENPAI trial. Prime Intellect reports roughly 14k H200 GPU-hours across its autonomous nanoGPT speedrun. Of the 10,428 released runs, 2,204 are labeled Claude Code and 8,224 Codex; the Claude Code rows account for 18.6\% of logged training seconds. For the simpler comparison in the main text, we allocate GPU-hours by run count, equivalent to assuming equal run duration. This gives about 3.0k H200 GPU-hours for Claude Code and 11.0k for Codex, or about 10.5 and 39.3 zettaFLOP at dense H200 BF16/FP16 peak. These estimates use hardware peak throughput, not measured realized training FLOPs.
+\paragraph{Recipe.}
+\texttt{[WINNING\_RECIPE\_PLACEHOLDER]}
 
 \section{Problem-Program Contract}
 \label{app:program-contracts}
