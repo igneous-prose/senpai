@@ -56,6 +56,7 @@
   \end{center}
   \vskip 0.12in
 }
+\newcommand{\appendixsourcelink}[1]{\href{https://github.com/wandb/senpai/blob/main/papers/appendix_sources/#1}{\nolinkurl{#1}}}
 
 \icmltitlerunning{SENPAI: Observability-Based Research Harness}
 
@@ -351,7 +352,7 @@ SENPAI's contribution is therefore not to replace the researcher, but to increas
 
 \section*{Software and Data}
 
-The SENPAI harness is released at \url{https://github.com/wandb/senpai}. The \texttt{kagent} comparator is released at \url{https://github.com/tcapelle/kagent}. Public experiment ledgers are available through GitHub PR histories in \url{https://github.com/wandb/senpai} and \url{https://github.com/morganmcg1/TandemFoilSet-Balanced}, with W\&B run records under \url{https://wandb.ai/wandb-applied-ai-team/senpai-v1}, \url{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}, \url{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}, and \url{https://wandb.ai/wandb-applied-ai-team/kagent-v2}.
+The \href{https://github.com/wandb/senpai}{SENPAI harness} and \href{https://github.com/tcapelle/kagent}{\texttt{kagent} comparator} are released publicly. Public experiment ledgers are available through GitHub PR histories in \href{https://github.com/wandb/senpai}{\texttt{wandb/senpai}} and \href{https://github.com/morganmcg1/TandemFoilSet-Balanced}{\texttt{TandemFoilSet-Balanced}}, with W\&B run records under \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1}{\texttt{senpai-v1}}, \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}{\texttt{senpai-v1-drivaerml}}, \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}{\texttt{senpai-v1-drivaerml-ddp8}}, and \href{https://wandb.ai/wandb-applied-ai-team/kagent-v2}{\texttt{kagent-v2}}.
 
 \section*{Impact Statement}
 
@@ -378,12 +379,12 @@ The experiments in this paper were controlled by a small number of versioned tex
     \toprule
     Artifact & Location & Role in the system \\
     \midrule
-    Advisor prompt & \url{papers/appendix_sources/claude_advisor.md} & Defines the no-GPU research lead: survey PRs, review result comments and W\&B runs, merge validated winners, close dead ends, and assign one-hypothesis PRs to idle Students. \\
-    Student prompt & \url{papers/appendix_sources/claude_student.md} & Defines the GPU worker: claim only assigned PRs, edit the task training file, run bounded experiments, report exact commands, metrics, W\&B IDs, and structured terminal results. \\
-    Researcher sub-agent & \url{papers/appendix_sources/researcher_agent.md} & Defines a literature and experiment-history specialist used to produce mechanism-grounded experiment proposals and research-state updates. \\
-    Problem contract & \url{papers/appendix_sources/drivaerml_program.md} & Example task contract specifying mission, data, editable files, metric keys, checkpoint selection, telemetry, and paper-facing target values. \\
-    TandemFoil2 contract & \url{papers/appendix_sources/tandemfoil2_program.md} & Active local problem contract for the \texttt{kagent}-seeded TandemFoil2 package, including split names, edit boundaries, and the \texttt{val/l2\_error} leaderboard metric. \\
-    Flat comparator prompt & \url{papers/appendix_sources/kaggler_agent.md} & Defines the \texttt{kagent} loop: watch leaderboard and W\&B, edit local training/prediction code, keep only useful code changes, always journal outcomes, and continue until interrupted. \\
+    Advisor prompt & \appendixsourcelink{claude_advisor.md} & Defines the no-GPU research lead: survey PRs, review result comments and W\&B runs, merge validated winners, close dead ends, and assign one-hypothesis PRs to idle Students. \\
+    Student prompt & \appendixsourcelink{claude_student.md} & Defines the GPU worker: claim only assigned PRs, edit the task training file, run bounded experiments, report exact commands, metrics, W\&B IDs, and structured terminal results. \\
+    Researcher sub-agent & \appendixsourcelink{researcher_agent.md} & Defines a literature and experiment-history specialist used to produce mechanism-grounded experiment proposals and research-state updates. \\
+    Problem contract & \appendixsourcelink{drivaerml_program.md} & Example task contract specifying mission, data, editable files, metric keys, checkpoint selection, telemetry, and paper-facing target values. \\
+    TandemFoil2 contract & \appendixsourcelink{tandemfoil2_program.md} & Active local problem contract for the \texttt{kagent}-seeded TandemFoil2 package, including split names, edit boundaries, and the \texttt{val/l2\_error} leaderboard metric. \\
+    Flat comparator prompt & \appendixsourcelink{kaggler_agent.md} & Defines the \texttt{kagent} loop: watch leaderboard and W\&B, edit local training/prediction code, keep only useful code changes, always journal outcomes, and continue until interrupted. \\
     \bottomrule
   \end{tabular}
 \end{table}
