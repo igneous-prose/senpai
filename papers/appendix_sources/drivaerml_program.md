@@ -1,7 +1,7 @@
 <!--
-SPDX-FileCopyrightText: 2026 [ANON_ORG]
+SPDX-FileCopyrightText: 2026 CoreWeave, Inc.
 SPDX-License-Identifier: Apache-2.0
-SPDX-PackageName: [ANON_HARNESS_PACKAGE]
+SPDX-PackageName: senpai
 -->
 
 # DrivAerML Research Target
@@ -34,7 +34,7 @@ The baseline model given in `model.py` and trained by `train.py` is a plain grou
 
 ## Data
 
-Processed samples live on the PVC at `[ANON_PVC_ROOT]/Processed/drivaerml_processed`.
+Processed samples live on the PVC at `/mnt/new-pvc/Processed/drivaerml_processed`.
 
 Each case directory must contain:
 
@@ -214,7 +214,7 @@ For substantial architecture or training-strategy changes, preserve main context
 Mine the existing DrivAerML history of experiments before assigning a wave of experiments:
 
 - Search this target repo's prior branches and PRs, including `main`, `codex/optimized-lineage`, and any previous DrivAerML experiment branches.
-- Search the PRs from the `[ANON_HARNESS_REPO]` GitHub repo's `[ANON_BRANCH]` branch which also contains a wealth of previous DrivAerML experiments and analysis.
+- Search the PRs from the `wandb/senpai` GitHub repo's `drivaerml-long-20260504` branch which also contains a wealth of previous DrivAerML experiments and analysis.
 - Assign a subset of students to build on the strongest past ideas rather than rediscovering them: useful preprocessing, target transforms, batching choices, normalization, loss weighting, architecture deltas, and optimizer schedules.
 - When reusing a past idea, state the source PR/run/branch in the assignment and explain what is being preserved versus changed.
 

@@ -31,17 +31,31 @@
 }
 \newcommand{\promptfile}[1]{\VerbatimInput{#1}}
 
-% Use blind mode for the initial workshop submission.
+% Use accepted mode for the camera-ready workshop version.
 \usepackage{icml2026/algorithm}
 \usepackage{icml2026/algorithmic}
-\usepackage{icml2026/icml2026}
+\usepackage[accepted]{icml2026/icml2026}
 \usepackage{newtxtext}
 
 \usepackage[disable,textsize=tiny]{todonotes}
 
 \makeatletter
-\renewcommand{\Notice@String}{Submitted to the AI for Science workshop (ICML 2026).}
+\renewcommand{\Notice@String}{Accepted to the AI for Science workshop (ICML 2026).}
 \makeatother
+
+\newcommand{\willowsankeyteaser}{%
+  \vskip 0.08in
+  \begin{center}
+    \begin{minipage}{0.76\textwidth}
+      \centering
+      \includegraphics[width=\linewidth]{icml2026/figures/willow_sankey/willow_simplified_sankey.png}
+      \vspace{-0.12in}
+      \captionof{figure}{A 167-PR slice of the SENPAI experiment ledger from five Willow TandemFoilSet-Balanced rounds, grouped by hypothesis family and final PR outcome.}
+      \label{fig:willow-sankey}
+    \end{minipage}
+  \end{center}
+  \vskip 0.12in
+}
 
 \icmltitlerunning{SENPAI: Observability-Based Research Harness}
 
@@ -51,21 +65,26 @@
   \icmltitle{SENPAI: Self-ExperimentatioN for Physical AI\\
   An Observability-Based Research Harness}
 
+  \icmlsetsymbol{equal}{*}
+
   \begin{icmlauthorlist}
-    \icmlauthor{Anonymous Authors}{anon}
+    \icmlauthor{Thomas Capelle}{equal,wandb,coreweave}
+    \icmlauthor{Morgan McGuire}{equal,wandb,coreweave}
+    \icmlauthor{Justin Hodges}{coreweave}
   \end{icmlauthorlist}
 
-  \icmlaffiliation{anon}{Anonymous Institution, Anonymous City, Anonymous Region, Anonymous Country}
-  \icmlcorrespondingauthor{Anonymous Author}{anon.email@domain.com}
+  \icmlaffiliation{wandb}{Weights \& Biases, San Francisco, CA, USA}
+  \icmlaffiliation{coreweave}{CoreWeave, Roseland, NJ, USA}
+  \icmlcorrespondingauthor{Morgan McGuire}{morg@wandb.com}
   \icmlkeywords{Autonomous research, CFD surrogates, ML systems, agent observability, AI for science}
 
-  \vskip 0.3in
+  \willowsankeyteaser
 ]
 
-\printAffiliationsAndNotice{}
+\printAffiliationsAndNotice{\icmlEqualContribution}
 
 \begin{abstract}
-SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We will release the harness and full experiment ledger of all experiments undertaken.
+SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We release the harness and public GitHub/W\&B experiment ledger.
 \end{abstract}
 
 \section{Introduction}
@@ -80,7 +99,7 @@ SENPAI's central design choice is to ground the research loop in external system
 
 The harness loop is deliberately thin. An Advisor reads the current experiment ledger, proposes a literature-grounded hypothesis as a draft PR, and assigns it to a GPU-backed Student. The Student checks out the branch, modifies the training code, runs the experiment, logs metrics to the experiment tracker, and reports results in the PR. The Advisor then merges, requests revision, or closes the line of inquiry. Humans can steer the Advisor or Student through GitHub issues and PR comments, while markdown scratchpads remain secondary sources of state rather than the primary system of record.
 
-Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment-tracker runs, and operated with up to 59 concurrent Student agents, turning a multi-day semi-autonomous research programme into a durable experiment ledger.
+Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment-tracker runs, and operated with up to 59 concurrent Student agents, turning a multi-day semi-autonomous research programme into a durable experiment ledger. \Cref{fig:willow-sankey} shows one compact slice of this ledger: 167 TandemFoilSet-Balanced PRs grouped by research round, hypothesis family, and final outcome.
 
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,topsep=2pt,itemsep=2pt,parsep=0pt]
@@ -168,7 +187,7 @@ We use the public processed-case split, 400/34/50 train/validation/test, and rep
 We use the official full task with the last 10\% of the official training list held out for validation, giving a 720/80/200 train/validation/test split while keeping the official test set unchanged. Each simulation has roughly 150K points. We test on normalized targets on the official test split.
 
 \paragraph{TandemFoilSet.}
-We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. TandemFoilSet cases average approximately 187K points; the active TandemFoilSet-Balanced subset averages approximately 141K points. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
+We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. TandemFoilSet cases average approximately 187K points; the active TandemFoilSet-Balanced subset averages approximately 141K points. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{mcguire2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
 
 \subsection{DrivAerML}
 
@@ -254,7 +273,7 @@ For this benchmark, SENPAI used learning rates of \texttt{\textasciitilde1e-4}, 
 \subsection{Flat-Agent Comparison}
 
 \paragraph{Setup.}
-To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \texttt{kagent} harness \citep{anonymous2026kagent} against the SENPAI harness using the TandemFoilSet-Balanced dataset and the same compute budget. \texttt{kagent} is a lighter-weight harness that drops the Advisor/Student split in favor of a flat Kaggle-like competition with a shared leaderboard; each agent keeps its own experiment journal and is prompted to compete aggressively to climb the leaderboard. In contrast to a Kaggle competition, the agents also have access to the same hosted experiment-logging project and commit history, so they can learn from other agents' work. The \texttt{kagent} prompt and the full run summary are provided in \Cref{app:kagent-details}.
+To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \texttt{kagent} harness \citep{capelle2026kagent} against the SENPAI harness using the TandemFoilSet-Balanced dataset and the same compute budget. \texttt{kagent} is a lighter-weight harness that drops the Advisor/Student split in favor of a flat Kaggle-like competition with a shared leaderboard; each agent keeps its own experiment journal and is prompted to compete aggressively to climb the leaderboard. In contrast to a Kaggle competition, the agents also have access to the same hosted experiment-logging project and commit history, so they can learn from other agents' work. The \texttt{kagent} prompt and the full run summary are provided in \Cref{app:kagent-details}.
 
 \begin{table}[t]
   \caption{TandemFoilSet-Balanced 12-hour harness comparison. Lower average surface-pressure MAE is better.}
@@ -320,7 +339,7 @@ The strongest empirical results are on surface quantities. This matches many aer
 SENPAI is semi-autonomous rather than fully autonomous. It requires an initial task repository, metric definition, dataset setup, and occasional human steering. The GitHub Issues and PR-comment interface is auditable and low bandwidth, but slower than interactive supervision.
 
 \paragraph{Infrastructure dependence.}
-Finally, SENPAI depends on mature external systems of record and substantial compute/API budget. In our implementation these were GitHub and Weights \& Biases, which improved observability but also introduced dependence on hosted-service reliability, access control, rate limits, and retention policies. We will release the harness and experiment ledger so future work can audit costs, reproduce results, and evaluate more efficient variants.
+Finally, SENPAI depends on mature external systems of record and substantial compute/API budget. In our implementation these were GitHub and Weights \& Biases, which improved observability but also introduced dependence on hosted-service reliability, access control, rate limits, and retention policies. We release the harness and experiment ledger so future work can audit costs, reproduce results, and evaluate more efficient variants.
 
 \section{Conclusion}
 
@@ -328,11 +347,11 @@ SENPAI shows that a lightweight, observability-first harness can sustain semi-au
 
 The main lesson is that reliability comes from the harness, not the agent instructions alone. Long-running research agents did not primarily fail because they lacked clear instructions; they failed at system boundaries: brittle tool interfaces, unbounded monitoring, missing checkpoint capture, and drift between derived summaries and the authoritative ledger. Prompt hardening alone did not remove these failure modes. Durable external state, clear scripts for passing work between agents, filtered monitoring, and mandatory result capture were more important for keeping the research programme recoverable and auditable.
 
-SENPAI's contribution is therefore not to replace the researcher, but to increase the bandwidth at which researchers can understand, guide, and accelerate autonomous experimentation. By making both the inner experiment loop and the outer harness loop observable through mature systems of record, SENPAI turns autonomous research from an opaque agent workflow into a queryable, reviewable research programme. We will release the harness, experiment ledger, and failure-mode analysis to support future work on more reliable and efficient autonomous research systems.
+SENPAI's contribution is therefore not to replace the researcher, but to increase the bandwidth at which researchers can understand, guide, and accelerate autonomous experimentation. By making both the inner experiment loop and the outer harness loop observable through mature systems of record, SENPAI turns autonomous research from an opaque agent workflow into a queryable, reviewable research programme. We release the harness, experiment ledger, and failure-mode analysis to support future work on more reliable and efficient autonomous research systems.
 
 \section*{Software and Data}
 
-Identifying repository and hosted-ledger URLs are omitted for double-blind review and will be included in the camera-ready version. The CFD datasets used in the experiments are DrivAerML, AirfRANS, and TandemFoilSet; access and redistribution follow the licenses and terms provided by the original dataset authors.
+The SENPAI harness is released at \url{https://github.com/wandb/senpai}. Public experiment ledgers are available through GitHub PR histories in \url{https://github.com/wandb/senpai}, \url{https://github.com/morganmcg1/tandemfoil2}, and \url{https://github.com/morganmcg1/TandemFoilSet-Balanced}, with W\&B run records under \url{https://wandb.ai/wandb-applied-ai-team/senpai-v1}, \url{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}, \url{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}, and \url{https://wandb.ai/wandb-applied-ai-team/kagent-v2}. The CFD datasets used in the experiments are DrivAerML, AirfRANS, and TandemFoilSet; access and redistribution follow the licenses and terms provided by the original dataset authors.
 
 \section*{Impact Statement}
 
@@ -634,7 +653,7 @@ These categories explain why SENPAI's mitigations are mostly infrastructural: fi
 \section{Full Source Prompts and Contracts}
 \label{app:full-prompts}
 
-This section contains review-anonymized verbatim snapshots of the prompt and contract artifacts summarized in \Cref{app:agent-instructions}. The files are vendored into \texttt{papers/appendix\_sources/}; repository owners, repository names, and private infrastructure paths that would identify the authors are replaced with bracketed placeholders for double-blind review.
+This section contains verbatim snapshots of the prompt and contract artifacts summarized in \Cref{app:agent-instructions}. The files are vendored into \texttt{papers/appendix\_sources/} so the runtime contracts can be inspected with the paper.
 
 \subsection{Advisor Role Prompt}
 \label{app:full-advisor-prompt}
