@@ -5,6 +5,7 @@
 \usepackage{microtype}
 \usepackage{graphicx}
 \usepackage{subcaption}
+\usepackage{placeins}
 \usepackage{booktabs}
 \usepackage{multirow}
 \usepackage{array}
@@ -154,6 +155,7 @@ Researchers primarily steer SENPAI's Advisor or Students through GitHub issues, 
 In our longest observed SENPAI deployment on DrivAerML, the system ran continuously for 9 days under a 4.5-hour per-experiment budget, opening 289 PRs across an 8-student active fleet with 10 issue-based interventions from researchers.
 
 \section{Experiments and Results}
+\label{sec:results}
 
 \begin{figure*}[t]
   \centering
@@ -292,13 +294,13 @@ In a direct 12-hour head-to-head, \texttt{kagent} behaved like a public Kaggle s
 \subsection{Modded-NanoGPT Track 3}
 
 \paragraph{Result.}
-To demonstrate SENPAI's applicability beyond CFD research, we also ran SENPAI on Keller Jordan's modded-NanoGPT Track 3 optimization benchmark \citep{jordan2026moddednanogpttrack3}. Track 3 fixes the dataset, batch size, and architecture, and scores methods by the fewest optimizer steps needed to reach 3.28 validation loss on FineWeb \citep{penedo2024fineweb,karpathy2024llmcgpt2}. Valid submissions must use non-cherry-picked runs, include reproducible logs, avoid validation-loss-based per-run early stopping, and satisfy the benchmark precision rule $(3.28-\mu)\sqrt{n}\ge 0.004$ at a shared stopping point.
+To demonstrate SENPAI's applicability beyond CFD research, we also ran SENPAI on Keller Jordan's modded-NanoGPT Track 3 optimization benchmark \citep{jordan2026moddednanogpttrack3}. Track 3 fixes the dataset, batch size, and architecture, and scores methods by the fewest optimizer steps needed to reach 3.28 validation loss on FineWeb \citep{penedo2024fineweb,karpathy2024llmcgpt2}.
 
-We ran five SENPAI trials to measure result consistency and understand the distribution of autonomous search outcomes, rather than to select a single lucky run.\footnote{Final steps: \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T1}{<T1>/<PR1>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T2}{<T2>/<PR2>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T3}{<T3>/<PR3>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T4}{<T4>/<PR4>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T5}{<T5>/<PR5>}.} The core SENPAI system prompts were unchanged; only the repository-specific prompts were adapted to modded-NanoGPT. We also barred inspection or reuse of Prime Intellect's autonomous nanoGPT speedrun result \citep{primeintellect2026autonanogpt} to avoid biasing SENPAI with another autoresearch artifact.
+We ran five SENPAI trials to measure result consistency and understand the distribution of autonomous search outcomes.\footnote{Final step results: \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T1}{<T1>/<PR1>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T2}{<T2>/<PR2>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T3}{<T3>/<PR3>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T4}{<T4>/<PR4>}; \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/T5}{<T5>/<PR5>}.} The core SENPAI system prompts were unchanged; only the repository-specific prompts were adapted to modded-NanoGPT. We also barred inspection or reuse of Prime Intellect's autonomous nanoGPT speedrun result \citep{primeintellect2026autonanogpt} to avoid biasing SENPAI with another autoresearch artifact.
 
-Across the five trials, SENPAI ran 9,591 tracked experiments using 9,772 training GPU-hours on NVIDIA RTX PRO 6000 Blackwell 96GB GPUs, or 1,954 GPU-hours per trial on average. For comparison, Prime Intellect's winning Claude Code search reached 2930 steps; its released archive contains 2,204 Claude Code runs, 18.6\% of exported training time, implying about 2.6k of the reported 14k H200 GPU-hours \citep{primeintellect2026autonanogpt}. Using NVIDIA's published dense BF16/FP16 throughput for RTX PRO 6000 Blackwell and H200 GPUs \citep{nvidia2025rtxpro6000blackwell,nvidia2026h200}, one average SENPAI trial is about 3.5 zettaFLOP, versus about 9 zettaFLOP for that Claude Code subset. These are hardware-peak estimates, not measured realized training FLOPs.
+Across the five trials, SENPAI ran 9,591 tracked experiments total using 9,772 training GPU-hours on NVIDIA RTX PRO 6000 Blackwell 96GB GPUs, or 1,954 GPU-hours per trial on average. For comparison, Prime Intellect's winning Claude Code search reached 2930 steps; the accounting in \Cref{app:modded-nanogpt-details} attributes roughly 2.6k of its reported 14k H200 GPU-hours to the Claude Code subset \citep{primeintellect2026autonanogpt}. Using the same peak-throughput estimate, one average SENPAI trial is approximately 3.5 zettaFLOP, versus about 9 zettaFLOP for the Claude Code subset.
 
-SENPAI produced a candidate Track 3 state-of-the-art result at 2925 steps, pending official ratification. The result is recorded in PR~\#\texttt{<BEST\_RESULT\_PR>}. The two non-cherry-picked confirmation runs reached fixed-step EMA validation losses of 3.27490 and 3.27625 at step 2925, for mean 3.27558 and validation-rule margin $(3.28-3.27558)\sqrt{2}=0.00626$. Both runs later finished with terminal EMA validation losses of 3.26218 and 3.26352. Internally, both first crossed the 3.28 target at step 2875, but we report the 2925-step fixed point as the conservative claim until external validation is complete.
+SENPAI produced a candidate Track 3 result at 2925 steps, state-of-the-art as of publication, and pending official ratification. The result is recorded in PR~\#\texttt{<BEST\_RESULT\_PR>}.
 
 \paragraph{Recipe.}
 \texttt{[WINNING\_RECIPE\_PLACEHOLDER]}
@@ -426,6 +428,8 @@ The Advisor prompt additionally contains a plateau protocol: after five or more 
   \end{tabular}
 \end{center}
 
+\FloatBarrier
+
 \section{Weights \& Biases Projects}
 \label{app:wandb-projects}
 
@@ -446,6 +450,17 @@ The paper-facing experiment tracker records are grouped into the public Weights 
     \bottomrule
   \end{tabular}
 \end{center}
+
+\FloatBarrier
+
+\section{Modded-NanoGPT Track 3 Details}
+\label{app:modded-nanogpt-details}
+
+Track 3 of the modded-NanoGPT benchmark fixes the dataset, batch size, and model architecture so submissions primarily test optimizer and training-recipe changes. Valid submissions must use non-cherry-picked runs, include reproducible logs, avoid validation-loss-based per-run early stopping, and satisfy the benchmark precision rule $(3.28-\mu)\sqrt{n}\ge 0.004$ at a shared stopping point.
+
+The 2925-step SENPAI claim uses a fixed stopping point. The two non-cherry-picked confirmation runs reached EMA validation losses of 3.27490 and 3.27625 at step 2925, with mean 3.27558 and validation-rule margin $(3.28-3.27558)\sqrt{2}=0.00626$. Both runs later finished with terminal EMA validation losses of 3.26218 and 3.26352. Internally, both runs first crossed the 3.28 target at step 2875, but the 2925-step fixed point is the conservative claim until external validation is complete.
+
+For the compute comparison in \Cref{sec:results}, we use NVIDIA's published dense BF16/FP16 tensor throughput for RTX PRO 6000 Blackwell and H200 GPUs \citep{nvidia2025rtxpro6000blackwell,nvidia2026h200}. This gives a rough hardware-peak upper bound of about 3.5 zettaFLOP for one average SENPAI trial. Prime Intellect reports roughly 14k H200 GPU-hours across its autonomous nanoGPT speedrun. In its released run archive, Claude Code accounts for 2,204 of 10,428 exported runs and 18.6\% of summed logged training seconds. Allocating the reported GPU-hours in proportion to that logged training-time share gives roughly 2.6k H200 GPU-hours, or about 9 zettaFLOP at dense H200 BF16/FP16 peak. These estimates use hardware peak throughput, not measured realized training FLOPs.
 
 \section{Problem-Program Contract}
 \label{app:program-contracts}
@@ -543,7 +558,6 @@ The key property is that ordinary polling remains outside the LLM. The Advisor i
     \midrule
     Source & \href{https://github.com/morganmcg1/DrivAerML/pull/1344}{PR~\#1344} on \texttt{drivaerml-long-20260504}; merge commit \texttt{4c027677} \\
     W\&B run & \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/k6q4c3on}{\texttt{k6q4c3on}} \\
-    Result scope & Single trained checkpoint; no ensembles, checkpoint interpolation, SLSQP/bias correction, cohort postprocessing, or test-time augmentation \\
     Test metrics & AB-UPT-axis mean 5.6648\%; surface pressure 3.5634\%; volume pressure 3.4014\%; wall shear 6.5409\% \\
     Training budget & 30-epoch budget; best EMA checkpoint at epoch 25 \\
     Parallelism and batch & 8-GPU DDP; batch size 1 per rank, 8 global \\

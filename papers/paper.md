@@ -205,7 +205,7 @@ Test surface-pressure MAE improved from 33.88 (run `v6amjkh7`, PR #2810) to 24.5
 
 3.2.3 DrivAerML: single-checkpoint pressure result
 
-On DrivAerML we report the selected H147 single trained checkpoint from PR #1344, W&B run `k6q4c3on`, with no ensembles, checkpoint interpolation, SLSQP or bias correction, cohort postprocessing, or test-time augmentation. It reaches test surface-pressure relative-L2 3.5634%, volume-pressure relative-L2 3.4014%, vector wall-shear relative-L2 6.5409%, and AB-UPT-axis mean 5.6648%. This improves the original Transolver on all three target families, gives the best single-model pressure results among compared references, and improves wall shear over AB-UPT and Transolver while remaining behind Transolver-3 and Transolver++ for wall shear.
+On DrivAerML we report H147 from PR #1344, W&B run `k6q4c3on`, as SENPAI's best single trained checkpoint. It reaches test surface-pressure relative-L2 3.5634%, volume-pressure relative-L2 3.4014%, vector wall-shear relative-L2 6.5409%, and AB-UPT-axis mean 5.6648%. This improves the original Transolver on all three target families, gives the best single-model pressure results among compared references, and improves wall shear over AB-UPT and Transolver while remaining behind Transolver-3 and Transolver++ for wall shear.
 
 Table 3: DrivAerML public-split test relative-L2 (%). Mean per case on unnormalised predictions; lower is better.
 
