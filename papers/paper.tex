@@ -85,7 +85,7 @@
 \printAffiliationsAndNotice{\icmlEqualContribution}
 
 \begin{abstract}
-SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We release the harness\footnote{\url{https://github.com/wandb/senpai}} and Weights \& Biases experiment ledger.\footnote{See \Cref{app:wandb-projects}.}
+SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI obtains the best single-model DrivAerML surface- and volume-pressure relative-$L_2$ errors among compared references while improving wall-shear-stress error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We release the harness\footnote{\url{https://github.com/wandb/senpai}} and Weights \& Biases experiment ledger.\footnote{See \Cref{app:wandb-projects}.}
 \end{abstract}
 
 \section{Introduction}
@@ -105,7 +105,7 @@ Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,topsep=2pt,itemsep=2pt,parsep=0pt]
   \item \textbf{Observable research state.} We introduce SENPAI, a semi-autonomous ML research harness that grounds experiment state in PRs, commits, and experiment-tracker runs, producing a ledger that is queryable by agents and inspectable by researchers.
-  \item \textbf{CFD recipe search.} Starting from Transolver-style baselines, SENPAI discovers improved recipes across AirfRANS, DrivAerML, and TandemFoilSet, with strongest gains on surface and wall-shear quantities.
+  \item \textbf{CFD recipe search.} Starting from Transolver-style baselines, SENPAI discovers improved recipes across AirfRANS, DrivAerML, and TandemFoilSet, including best single-model DrivAerML pressure results among compared references.
   \item \textbf{Failure modes at scale.} We analyze a 24-hour fleet trace with 53,022 Claude requests and 5.24B tokens, showing that the dominant failures were monitor-driven context bloat, brittle tool interfaces, checkpoint/result-capture gaps, and state reconciliation issues rather than failures of scientific reasoning.
 \end{itemize}
 
@@ -193,7 +193,7 @@ We use the paper's original Experiment 4 partition, Cruise Random and Race Car t
 \subsection{DrivAerML}
 
 \paragraph{Result.}
-On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementation, improves on the original Transolver's test-set metrics of surface-pressure relative-$L_2$ error (3.88\% versus 4.81\%) and vector wall-shear-stress relative-$L_2$ error (7.06\% versus 8.95\%). The selected single model also improves on AB-UPT for wall shear (7.06\% versus 7.29\%), while volume pressure remains behind public references (10.76\% versus 6.08\% for AB-UPT and 5.72\% for Transolver-3). \Cref{fig:drivaerml-surface-pareto} shows the semi-autonomous experiment trajectory for surface-pressure test error across earlier SENPAI campaigns.
+On the DrivAerML benchmark, SENPAI's best single trained checkpoint is H147 from \href{https://github.com/morganmcg1/DrivAerML/pull/1344}{PR~\#1344}, W\&B run \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/k6q4c3on}{\texttt{k6q4c3on}}. Starting from a Transolver-based implementation, this checkpoint improves on the original Transolver for surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$ error. It also gives the best single-model pressure results among the public references in \Cref{tab:drivaerml}: 3.5634\% surface pressure versus 3.71\% for Transolver-3, and 3.4014\% volume pressure versus 5.72\% for Transolver-3. Wall-shear error is 6.5409\%, improving on AB-UPT and Transolver while remaining behind Transolver-3 and Transolver++. The full recipe, run provenance, and per-axis wall-shear diagnostics are in \Cref{app:drivaerml-recipe}. \Cref{fig:drivaerml-surface-pareto} shows the semi-autonomous experiment trajectory for surface-pressure test error across earlier SENPAI campaigns.
 
 \begin{table}[t]
   \caption{DrivAerML test relative-$L_2$ error (\%). Lower is better.}
@@ -205,9 +205,9 @@ On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementat
     \toprule
     Method & $p_s$ & $\tau$ & $p_v$ \\
     \midrule
-    Transolver-3 \citep{zhou2026transolver3} & \best{3.71} & \best{5.85} & \best{5.72} \\
+    SENPAI H147 (ours) & \best{3.5634} & 6.5409 & \best{3.4014} \\
+    Transolver-3 \citep{zhou2026transolver3} & 3.71 & \best{5.85} & 5.72 \\
     AB-UPT \citep{alkin2025abupt} & 3.82 & 7.29 & 6.08 \\
-    SENPAI (ours), single model & 3.88 & 7.06 & 10.76 \\
     Transolver++ \citep{luo2025transolverplusplus} & 4.12 & 6.42 & 6.70 \\
     Transolver \citep{wu2024transolver} & 4.81 & 8.95 & 7.74 \\
     \bottomrule
@@ -215,10 +215,10 @@ On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementat
 \end{table}
 
 \paragraph{Recipe.}
-The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 4 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, and GradNorm adaptive loss balancing \citep{chen2018gradnorm}. It trained with 8-GPU DDP for an effective batch size of 16 under a 50-epoch budget, with the best EMA checkpoint selected at epoch 27. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling. Full run IDs and hyperparameters for the selected single model and ensemble are listed in \Cref{app:drivaerml-recipe}.
+The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 6 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, GradNorm adaptive loss balancing \citep{chen2018gradnorm}, curvature attention bias, and $y$-symmetry augmentation. It trained with 8-GPU DDP for an effective batch size of 8 under a 30-epoch budget, with the best EMA checkpoint selected at epoch 25. The key final ablation was a Lion optimizer setting, $\beta_1=0.95,\beta_2=0.98$, that reproduced the early H138 trajectory while otherwise retaining the preceding best H39 recipe from the campaign. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling.
 
-\paragraph{Caveat.}
-Finally, a greedy inference-time ensemble found by SENPAI improved on all reported surface-pressure relative-$L_2$ metrics for DrivAerML (3.69\%) and improved on AB-UPT for wall-shear relative-$L_2$ error (6.86\%). A large gap in test-set volume-pressure relative-$L_2$ error remains for the best single model (10.76\%) relative to AB-UPT and Transolver-3, potentially in part due to the shorter training time of SENPAI compared to the 500-epoch trainings of AB-UPT and Transolver-3. This training-duration discrepancy highlights an important decision criterion in autonomous research training: whether to scale up to longer, more expensive training runs after observing promising smaller-scale experimental results.
+\paragraph{Scope.}
+We report only the selected single trained checkpoint: no ensembles, checkpoint interpolation, SLSQP or bias-correction postprocessing, cohort postprocessing, or test-time augmentation. This makes the pressure gains directly attributable to the trained H147 checkpoint while preserving the remaining wall-shear gap to the strongest public wall-shear references.
 
 \subsection{AirfRANS}
 
@@ -347,7 +347,7 @@ From observing these failure modes, we conclude that long-running research agent
 SENPAI is task-agnostic as a harness, but our empirical evidence comes from CFD-surrogate recipe search. We have not yet evaluated whether the same design transfers to domains with different data modalities, evaluation loops, or laboratory constraints.
 
 \paragraph{Surface metrics.}
-The strongest empirical results are on surface quantities. This matches many aerodynamic design workflows, where surface pressure and forces are primary signals, but volume-field prediction remains less developed; for example, our AirfRANS and DrivAerML experiments improve surface MSE while remaining behind the strongest published methods on volume MSE.
+The strongest empirical results are on surface quantities. This matches many aerodynamic design workflows, where surface pressure and forces are primary signals. Volume-field prediction remains less developed on AirfRANS, where SENPAI improves surface MSE while remaining behind the strongest published volume-MSE method; on DrivAerML, the selected single checkpoint improves both pressure fields while wall-shear remains behind the strongest public wall-shear reference.
 
 \paragraph{Supervision.}
 SENPAI is semi-autonomous rather than fully autonomous. It requires an initial task repository, metric definition, dataset setup, and occasional human steering. The GitHub Issues and PR-comment interface is auditable and low bandwidth, but slower than interactive supervision.
@@ -447,7 +447,7 @@ The paper-facing experiment tracker records are grouped into the public Weights 
     \midrule
     \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1}{\texttt{senpai-v1}} & Primary SENPAI experiment-tracking project for the paper. \\
     \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}{\texttt{senpai-v1-drivaerml}} & DrivAerML SENPAI campaign runs and related surface-pressure trajectory records. \\
-    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}{\texttt{senpai-v1-drivaerml-ddp8}} & Eight-GPU DrivAerML follow-up runs for the selected recipe and ensemble records. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}{\texttt{senpai-v1-drivaerml-ddp8}} & Eight-GPU DrivAerML follow-up runs for the selected single-checkpoint recipe and related ablations. \\
     \href{https://wandb.ai/wandb-applied-ai-team/kagent-v2}{\texttt{kagent-v2}} & Flat \texttt{kagent} comparator runs. \\
     \bottomrule
   \end{tabular}
@@ -545,28 +545,30 @@ The key property is that ordinary polling remains outside the LLM. The Advisor i
   \label{tab:app-drivaerml-config}
   \centering
   \small
-  \begin{tabular}{@{}ll@{}}
+  \begin{tabular}{@{}p{0.24\textwidth}p{0.66\textwidth}@{}}
     \toprule
     Setting & Value \\
     \midrule
-    Source & PR \#740 on \texttt{drivaerml-long-20260504}; merge commit \texttt{9130201} \\
-    W\&B run & \texttt{5x8wofzm} \\
-    Training budget & 50-epoch budget; best EMA checkpoint at epoch 27 \\
-    Parallelism and batch & 8-GPU DDP; batch size 2 per rank, 16 global \\
-    Optimizer & Lion, learning rate \texttt{1e-4}, weight decay \texttt{1e-4} \\
-    EMA & 0.999 \\
-    Backbone & 4 layers, 512 hidden units, 4 attention heads, 128 slices \\
-    Positional encoding & \texttt{string\_multisigma}; sigmas 0.25, 0.5, 1.0, 2.0, 4.0 \\
-    Point sampling & Train: 40,000 surface / 65,000 volume; eval: 40,000 surface / 65,000 volume \\
-    Augmentation & None in selected run \\
-    Loss & Normalized MSE with GradNorm ($\alpha=0.5$, learning rate \texttt{1e-3}) and base surface/volume weights 1.0/1.0 \\
+    Source & \href{https://github.com/morganmcg1/DrivAerML/pull/1344}{PR~\#1344} on \texttt{drivaerml-long-20260504}; merge commit \texttt{4c027677} \\
+    W\&B run & \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/k6q4c3on}{\texttt{k6q4c3on}} \\
+    Result scope & Single trained checkpoint; no ensembles, checkpoint interpolation, SLSQP/bias correction, cohort postprocessing, or test-time augmentation \\
+    Test metrics & AB-UPT-axis mean 5.6648\%; surface pressure 3.5634\%; volume pressure 3.4014\%; wall shear 6.5409\% \\
+    Training budget & 30-epoch budget; best EMA checkpoint at epoch 25 \\
+    Parallelism and batch & 8-GPU DDP; batch size 1 per rank, 8 global \\
+    Optimizer & Lion, learning rate \texttt{1e-4}, weight decay \texttt{0.005}, $\beta_1=0.95$, $\beta_2=0.98$ \\
+    EMA & Start step 500; selected checkpoint source \texttt{ema} \\
+    Backbone & 6 layers, 512 hidden units, 4 attention heads, 128 slices \\
+    Positional encoding & \texttt{string\_multisigma}; 16 features; sigmas 0.25, 0.5, 1.0, 2.0, 4.0 \\
+    Point sampling & Train: 65,000 surface / 65,000 volume; eval: 65,536 surface / 65,536 volume \\
+    Augmentation and bias & $y$-symmetry augmentation with probability 0.5; curvature attention bias; surface output width factor 2.0 \\
+    Loss & Normalized MSE with GradNorm ($\alpha=0.5$, minimum volume-pressure weight 0.15), volume-pressure Charbonnier weight 0.1, and wall-shear Charbonnier weight 0.1 on the $z$ axis \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 The \texttt{string\_multisigma} encoding is a lightweight adaptation of separable translationally invariant position encodings \citep{schenck2025learningropes}: per-axis learnable sine/cosine bases are initialized across several spatial scales and projected into the Transolver width.
 
-The ensemble result in \Cref{tab:drivaerml} is documented in PR \#602. It was a greedy forward-selection ensemble over test predictions from seven independently trained checkpoints: \texttt{nh96x7m4}, \texttt{5o7jc7wi}, \texttt{wyz68o8r}, \texttt{9mm3sz7x}, \texttt{49aimdiz}, \texttt{19qf6di1}, and \texttt{nh2ke150}. Candidates were added one at a time to minimize validation field error, and the final inference-time prediction averaged the selected members uniformly.
+The selected checkpoint's per-axis wall-shear test metrics were 5.8155\% ($\tau_x$), 7.0556\% ($\tau_y$), and 8.4882\% ($\tau_z$), indicating that the remaining wall-shear gap is concentrated in the transverse components even as aggregate pressure metrics improve.
 
 \section{AirfRANS Recipe Details}
 \label{app:airfrans-recipe}
