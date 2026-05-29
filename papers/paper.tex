@@ -85,7 +85,7 @@
 \printAffiliationsAndNotice{\icmlEqualContribution}
 
 \begin{abstract}
-SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We release the harness and public GitHub/W\&B experiment ledger.\footnote{\url{https://github.com/wandb/senpai}}
+SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We release the harness\footnote{\url{https://github.com/wandb/senpai}} and Weights \& Biases experiment ledger.\footnote{See \Cref{app:wandb-projects}.}
 \end{abstract}
 
 \section{Introduction}
@@ -365,7 +365,7 @@ SENPAI's contribution is therefore not to replace the researcher, but to increas
 
 \section*{Software and Data}
 
-The \href{https://github.com/wandb/senpai}{SENPAI harness} and \href{https://github.com/tcapelle/kagent}{\texttt{kagent} comparator} are released publicly. Public experiment ledgers are available through GitHub PR histories in \href{https://github.com/wandb/senpai}{\texttt{wandb/senpai}} and \href{https://github.com/morganmcg1/TandemFoilSet-Balanced}{\texttt{TandemFoilSet-Balanced}}, with W\&B run records under \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1}{\texttt{senpai-v1}}, \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}{\texttt{senpai-v1-drivaerml}}, \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}{\texttt{senpai-v1-drivaerml-ddp8}}, and \href{https://wandb.ai/wandb-applied-ai-team/kagent-v2}{\texttt{kagent-v2}}.
+The \href{https://github.com/wandb/senpai}{SENPAI harness} and \href{https://github.com/tcapelle/kagent}{\texttt{kagent} comparator} are released publicly. Public experiment ledgers are available through GitHub PR histories in \href{https://github.com/wandb/senpai}{\texttt{wandb/senpai}} and \href{https://github.com/morganmcg1/TandemFoilSet-Balanced}{\texttt{TandemFoilSet-Balanced}}, with W\&B run records under the projects listed in \Cref{app:wandb-projects}.
 
 \section*{Impact Statement}
 
@@ -427,6 +427,28 @@ The Advisor prompt additionally contains a plateau protocol: after five or more 
     Student & Assigned PR, target branch, \texttt{program.md}, training logs, W\&B runs, and Advisor comments. & Modify the task training file, run the assigned experiment, debug crashes/OOMs, and resubmit after requested changes. & A PR comment beginning with a single-line \texttt{SENPAI-RESULT} JSON marker, followed by metrics, run IDs, commands, interpretation, and follow-ups. \\
     Researcher & Prior PRs, W\&B evidence, code lineage, papers, repos, and domain references. & Search literature and experiment history, reconstruct mechanisms, and design discriminating follow-up experiments. & A decision-useful synthesis: mechanism, evidence, implementation notes, proposed experiment tree, stop condition, and confidence. \\
     \texttt{kagent} & Shared leaderboard, own experiment journal, W\&B configs, visible commits, and local logs. & Iterate directly on \texttt{train.py} and \texttt{predict.py}, run training/prediction, retain or discard code, and write the journal after every trial. & Scored submissions plus a persistent experiment journal, with no Advisor review gate. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Weights \& Biases Projects}
+\label{app:wandb-projects}
+
+The paper-facing experiment tracker records are grouped into the public Weights \& Biases projects in \Cref{tab:wandb-projects}.
+
+\begin{table}[h]
+  \caption{Public Weights \& Biases projects used by the paper.}
+  \label{tab:wandb-projects}
+  \centering
+  \small
+  \begin{tabular}{@{}p{0.30\textwidth}p{0.62\textwidth}@{}}
+    \toprule
+    Project & Paper-facing records \\
+    \midrule
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1}{\texttt{senpai-v1}} & Primary SENPAI experiment-tracking project for the paper. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}{\texttt{senpai-v1-drivaerml}} & DrivAerML SENPAI campaign runs and related surface-pressure trajectory records. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}{\texttt{senpai-v1-drivaerml-ddp8}} & Eight-GPU DrivAerML follow-up runs for the selected recipe and ensemble records. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/kagent-v2}{\texttt{kagent-v2}} & Flat \texttt{kagent} comparator runs. \\
     \bottomrule
   \end{tabular}
 \end{table}
