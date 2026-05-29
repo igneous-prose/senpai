@@ -383,10 +383,9 @@ This work aims to make autonomous ML research more auditable, recoverable, and s
 
 The experiments in this paper were controlled by a small number of versioned text artifacts rather than by hidden agent memory. The exact prompt files will be released with the SENPAI harness; this appendix summarizes their operational content, and \Cref{app:full-prompts} includes the full text of the source prompts and programme contracts.
 
-\begin{table}[h]
-  \caption{Primary instruction artifacts used by the harness and comparator.}
+\begin{center}
+  \captionof{table}{Primary instruction artifacts used by the harness and comparator.}
   \label{tab:instruction-source-map}
-  \centering
   \small
   \begin{tabular}{@{}p{0.22\textwidth}p{0.31\textwidth}p{0.39\textwidth}@{}}
     \toprule
@@ -400,7 +399,7 @@ The experiments in this paper were controlled by a small number of versioned tex
     Flat comparator prompt & \appendixsourcelink{kaggler_agent.md} & Defines the \texttt{kagent} loop: watch leaderboard and W\&B, edit local training/prediction code, keep only useful code changes, always journal outcomes, and continue until interrupted. \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 The most important verbatim prompt element is the terminal result marker, which makes a Student's PR comment machine-checkable:
 
@@ -414,10 +413,9 @@ SENPAI-RESULT: {"terminal":true,"status":"complete","pending_arms":false,
 
 The Advisor prompt additionally contains a plateau protocol: after five or more non-improving experiments, the Advisor must escalate from local tuning toward a different strategy tier, revisit first principles, use the researcher sub-agent, and propose larger mechanism changes rather than treating the plateau as a stopping signal.
 
-\begin{table}[h]
-  \caption{Role contracts induced by the prompts.}
+\begin{center}
+  \captionof{table}{Role contracts induced by the prompts.}
   \label{tab:role-contracts}
-  \centering
   \small
   \begin{tabular}{@{}p{0.15\textwidth}p{0.26\textwidth}p{0.27\textwidth}p{0.24\textwidth}@{}}
     \toprule
@@ -429,17 +427,16 @@ The Advisor prompt additionally contains a plateau protocol: after five or more 
     \texttt{kagent} & Shared leaderboard, own experiment journal, W\&B configs, visible commits, and local logs. & Iterate directly on \texttt{train.py} and \texttt{predict.py}, run training/prediction, retain or discard code, and write the journal after every trial. & Scored submissions plus a persistent experiment journal, with no Advisor review gate. \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 \section{Weights \& Biases Projects}
 \label{app:wandb-projects}
 
 The paper-facing experiment tracker records are grouped into the public Weights \& Biases projects in \Cref{tab:wandb-projects}.
 
-\begin{table}[h]
-  \caption{Public Weights \& Biases projects used by the paper.}
+\begin{center}
+  \captionof{table}{Public Weights \& Biases projects used by the paper.}
   \label{tab:wandb-projects}
-  \centering
   \small
   \begin{tabular}{@{}p{0.30\textwidth}p{0.62\textwidth}@{}}
     \toprule
@@ -451,17 +448,16 @@ The paper-facing experiment tracker records are grouped into the public Weights 
     \href{https://wandb.ai/wandb-applied-ai-team/kagent-v2}{\texttt{kagent-v2}} & Flat \texttt{kagent} comparator runs. \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 \section{Problem-Program Contract}
 \label{app:program-contracts}
 
 Each SENPAI target repository carries a \texttt{program.md} file that makes task assumptions explicit. The DrivAerML contract used as a reference artifact defines the elements in \Cref{tab:program-contract}; the local TandemFoil2 contract follows the same pattern, with \texttt{val/l2\_error} averaged over four validation splits as its leaderboard metric. These files are intentionally more specific than generic prompts: they are the task-local source of truth for what a valid experiment may edit, how data are structured, and which metrics count as paper-facing evidence.
 
-\begin{table}[h]
-  \caption{Information supplied by a task \texttt{program.md}.}
+\begin{center}
+  \captionof{table}{Information supplied by a task \texttt{program.md}.}
   \label{tab:program-contract}
-  \centering
   \small
   \begin{tabular}{@{}p{0.22\textwidth}p{0.70\textwidth}@{}}
     \toprule
@@ -477,17 +473,16 @@ Each SENPAI target repository carries a \texttt{program.md} file that makes task
     Workflow & Roles are coordinated through PRs and GitHub issues; final result claims must be traceable to run IDs and code state. \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 \section{Skill Catalogue}
 \label{app:skill-catalogue}
 
 SENPAI's prompts route common operations through small helper skills and a shared \texttt{senpai-gh} library. This was a deliberate control choice: high-frequency GitHub and bookkeeping operations should have narrow, testable interfaces instead of being reconstructed from scratch by each agent invocation.
 
-\begin{table}[h]
-  \caption{Helper skills used by the Advisor and Students.}
+\begin{center}
+  \captionof{table}{Helper skills used by the Advisor and Students.}
   \label{tab:skill-catalogue}
-  \centering
   \small
   \begin{tabular}{@{}p{0.18\textwidth}p{0.15\textwidth}p{0.57\textwidth}@{}}
     \toprule
@@ -503,7 +498,7 @@ SENPAI's prompts route common operations through small helper skills and a share
     \texttt{senpai-gh} & Both & Provides lower-level label swaps, PR comments, closure, preflight, and read-only query primitives. \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 \section{Advisor Outer Loop}
 \label{app:outer-loop}
@@ -537,13 +532,13 @@ SENPAI's prompts route common operations through small helper skills and a share
 
 The key property is that ordinary polling remains outside the LLM. The Advisor is invoked only when there is actionable state: a PR to review, a human issue to answer, or idle Students that need assignments. The watermark advances only after successful invocations, so transient failures retry against the same triage state.
 
+\clearpage
 \section{DrivAerML Recipe Details}
 \label{app:drivaerml-recipe}
 
-\begin{table}[h]
-  \caption{Selected DrivAerML SENPAI single-model configuration.}
+\begin{center}
+  \captionof{table}{Selected DrivAerML SENPAI single-model configuration.}
   \label{tab:app-drivaerml-config}
-  \centering
   \small
   \begin{tabular}{@{}ll@{}}
     \toprule
@@ -562,7 +557,7 @@ The key property is that ordinary polling remains outside the LLM. The Advisor i
     Loss & Normalized MSE with GradNorm ($\alpha=0.5$, learning rate \texttt{1e-3}) and base surface/volume weights 1.0/1.0 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 The \texttt{string\_multisigma} encoding is a lightweight adaptation of separable translationally invariant position encodings \citep{schenck2025learningropes}: per-axis learnable sine/cosine bases are initialized across several spatial scales and projected into the Transolver width.
 
@@ -571,10 +566,9 @@ The ensemble result in \Cref{tab:drivaerml} is documented in PR \#602. It was a 
 \section{AirfRANS Recipe Details}
 \label{app:airfrans-recipe}
 
-\begin{table}[h]
-  \caption{AirfRANS SENPAI configuration from PR \#3135.}
+\begin{center}
+  \captionof{table}{AirfRANS SENPAI configuration from PR \#3135.}
   \label{tab:app-airfrans-config}
-  \centering
   \small
   \begin{tabular}{@{}ll@{}}
     \toprule
@@ -595,12 +589,11 @@ The ensemble result in \Cref{tab:drivaerml} is documented in PR \#602. It was a 
     Loss & Normalized surface MSE plus $10.0 \times$ normalized volume MSE \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
-\begin{table}[h]
-  \caption{AirfRANS five-seed verification runs.}
+\begin{center}
+  \captionof{table}{AirfRANS five-seed verification runs.}
   \label{tab:app-airfrans-seeds}
-  \centering
   \small
   \begin{tabular}{@{}rcrrr@{}}
     \toprule
@@ -616,7 +609,7 @@ The ensemble result in \Cref{tab:drivaerml} is documented in PR \#602. It was a 
     Median & -- & -- & 0.001029 & 0.003769 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 \section{\texttt{kagent} Comparator Details}
 \label{app:kagent-details}
@@ -626,10 +619,9 @@ The \texttt{kagent} comparator used a flat competition prompt rather than SENPAI
 \paragraph{TandemFoilSet parity run.}
 An eight-agent \texttt{kagent} cohort ran on the TandemFoilSet parity benchmark from 2026-04-23 15:53 UTC to 2026-04-24 04:00 UTC, using one GPU pod per agent, a 30-minute per-training-run budget, and the Transolver starter. The run produced 330 agent commits and 223 scored leaderboard updates without human intervention. Agents communicated only through shared data/prediction volumes, the git remote and leaderboard, and W\&B telemetry.
 
-\begin{table}[h]
-  \caption{\texttt{kagent} April 23 TandemFoilSet parity leaderboard. Surface-pressure MAE; lower is better.}
+\begin{center}
+  \captionof{table}{\texttt{kagent} April 23 TandemFoilSet parity leaderboard. Surface-pressure MAE; lower is better.}
   \label{tab:app-kagent-leaderboard}
-  \centering
   \small
   \begin{tabular}{@{}rlrrrrr@{}}
     \toprule
@@ -645,7 +637,7 @@ An eight-agent \texttt{kagent} cohort ran on the TandemFoilSet parity benchmark 
     8 & nezuko & 85.84 & 96.56 & 96.43 & 63.43 & 86.94 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 The most important qualitative finding was rapid peer diffusion. Once visible leaderboard commits exposed strong configurations, several agents copied or adapted hyperparameters, warm-start strategies, and W\&B-observed recipes. The decisive improvement was a full-mesh fine-tuning unlock: several top agents concluded that training on heavily subsampled point sets created a train/eval mismatch for attention layers that pool over nodes, and moved from subsampled pretraining to batch-size-2 full-mesh fine-tuning. Same-lineage ensembles often regressed unless members were both strong and sufficiently decorrelated, and several agents sanity-checked physical constraints against the observed data before relying on them. A separate scorer-race incident marked partially written prediction directories as terminally incomplete, illustrating the same infrastructure-contract fragility discussed in \Cref{app:evidence-taxonomy}.
 
@@ -664,10 +656,9 @@ The experiment ledger supports several supplementary audit views beyond the main
   \item sprint evidence logs including experiment snapshots, run panels, advisor-branch git logs, and urgent human issue timelines.
 \end{itemize}
 
-\begin{table}[h]
-  \caption{Median token load observed per PR in the rough appendix evidence log.}
+\begin{center}
+  \captionof{table}{Median token load observed per PR in the rough appendix evidence log.}
   \label{tab:app-pr-token-load}
-  \centering
   \small
   \begin{tabular}{@{}lr@{}}
     \toprule
@@ -679,13 +670,12 @@ The experiment ledger supports several supplementary audit views beyond the main
     Median Advisor output tokens per PR & 1,621 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 We organize full failure-mode notes under four infrastructure-facing categories. \textit{Monitoring failures} include unfiltered log monitors, heartbeat events that wake agents for low-information lines, and long-lived streams that inflate cached context. \textit{Tool-interface failures} include brittle shell/GitHub sequences, missing scopes, wrong paths, blocked waits, failed pushes, oversized reads, and edit-guard failures. \textit{Result-capture failures} include missing final metrics, invalid terminal result markers, checkpoint selection mistakes, and scorer/checkpoint races. \textit{State-reconciliation failures} include stale PR labels, incomplete W\&B-to-PR reconciliation, lossy compaction summaries, and conflicts between markdown caches and the authoritative ledger.
 
 These categories explain why SENPAI's mitigations are mostly infrastructural: filtered monitors, narrow helper scripts, terminal result schemas, checkpoint preflights, and treating local summaries as caches over the PR/git/W\&B ledger.
 
-\clearpage
 \section{Full Source Prompts and Contracts}
 \label{app:full-prompts}
 

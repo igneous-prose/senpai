@@ -22,7 +22,7 @@ The baseline model given in `model.py` and trained by `train.py` is a plain grou
 
 ## Codebase
 
-- `train.py` — [REFERENCE]trainer CLI, config, loss, and training loop. **Primary editable entrypoint.**
+- `train.py` — [REFERENCE] trainer CLI, config, loss, and training loop. **Primary editable entrypoint.**
 - `model.py` — grouped surface/volume Transolver architecture. **Editable for experiment PRs.**
 - `trainer_runtime.py` — DDP, evaluation, W&B, scheduler, telemetry, masking, and checkpoint/runtime helpers. **Editable for experiment PRs.**
 - `data/loader.py` — PVC-backed DrivAerML case store, point-view sampling, batching, target stats. **Read-only during normal experiment PRs.**
@@ -245,4 +245,4 @@ Here are the current public reference metrics:
 | Wall shear `tau_y` | `test_primary/wall_shear_y_rel_l2_pct` | `3.65` |
 | Wall shear `tau_z` | `test_primary/wall_shear_z_rel_l2_pct` | `3.63` |
 
-Your test metrics MUST beat these targets. We have put a massive amount of effort into this research programme to get this far, now is the time for you to step up and deliver the results we need and claim victory for the worlds best result on DrivAerML.
+Your test metrics MUST beat these targets. We have put a massive amount of effort into this research programme to get this far, now is the time for you to step up and deliver the results we need and claim victory for the world's best result on DrivAerML.
