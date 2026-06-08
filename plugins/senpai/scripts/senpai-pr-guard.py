@@ -9,6 +9,7 @@ import sys
 
 
 HOLD_RE = re.compile(r"SENPAI-HOLD|hold the merge|do not merge|don't merge|hold .*until", re.I)
+RESULT_PREFIX = "SENPAI-RESULT:"
 
 
 def stamp(comment):
@@ -19,10 +20,11 @@ def result_markers(comments, errors):
     markers = []
     for comment in comments:
         for line in (comment.get("body") or "").splitlines():
-            if "SENPAI-RESULT:" not in line:
+            marker = line.lstrip()
+            if not marker.startswith(RESULT_PREFIX):
                 continue
             try:
-                markers.append((stamp(comment), json.loads(line.split("SENPAI-RESULT:", 1)[1].strip())))
+                markers.append((stamp(comment), json.loads(marker.split(RESULT_PREFIX, 1)[1].strip())))
             except json.JSONDecodeError as exc:
                 errors.append(f"Invalid SENPAI-RESULT JSON at {stamp(comment) or 'unknown time'}: {exc}")
     return sorted(markers)

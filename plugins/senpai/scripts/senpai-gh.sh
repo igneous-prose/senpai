@@ -21,6 +21,7 @@
 # bitten by) the footgun.
 
 SENPAI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SENPAI_TRAIN_SCRIPT_RE='(^|[[:space:]/])train[[:alnum:]_]*[.]py([[:space:]]|$)'
 
 # ---------------------------------------------------------------------------
 # Retry helpers.
@@ -605,13 +606,13 @@ student_pr_looks_live() {
         # A stale GitHub timestamp is not actionable if the pod is still doing
         # useful work on this exact PR branch. Count either active training,
         # active GPU use, or Claude Code editing an uncommitted checkout.
-        pytrain=$(ps -eo comm=,args= | awk '\''$1 ~ /^python/ && /train[.]py/ {n++} END{print n+0}'\'')
+        pytrain=$(ps -eo comm=,args= | awk -v train_re="$2" '\''$1 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ train_re {n++} END{print n+0}'\'')
         gpu=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | awk '\''NF{n++} END{print n+0}'\'')
         claude=$(ps -eo comm=,args= | awk '\''$1 ~ /^claude$/ || /[ /]claude( |$)/ {n++} END{print n+0}'\'')
         dirty=$(git -C /workspace/senpai/target status --porcelain 2>/dev/null | wc -l | tr -d " ")
 
         [ "$pytrain" -gt 0 ] || [ "$gpu" -gt 0 ] || { [ "$claude" -gt 0 ] && [ "${dirty:-0}" -gt 0 ]; }
-    ' sh "$head_ref" >/dev/null 2>&1
+    ' sh "$head_ref" "$SENPAI_TRAIN_SCRIPT_RE" >/dev/null 2>&1
 }
 
 suppress_live_stale_wips() {
@@ -696,10 +697,10 @@ for pr in json.load(sys.stdin):
             branch=$(git -C /workspace/senpai/target branch --show-current 2>/dev/null || true)
             # Only active training/GPU use is a zombie risk. Claude editing a
             # checkout is handled by stale-WIP suppression above, not here.
-            pytrain=$(ps -eo comm=,args= | awk '\''$1 ~ /^python/ && /train[.]py/ {n++} END{print n+0}'\'')
+            pytrain=$(ps -eo comm=,args= | awk -v train_re="$1" '\''$1 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ train_re {n++} END{print n+0}'\'')
             gpu=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | awk '\''NF{n++} END{print n+0}'\'')
             printf "%s\t%s\t%s\n" "$branch" "$pytrain" "$gpu"
-        ' 2>/dev/null) || continue
+        ' sh "$SENPAI_TRAIN_SCRIPT_RE" 2>/dev/null) || continue
 
         current_branch=${snapshot%%$'\t'*}
         snapshot=${snapshot#*$'\t'}

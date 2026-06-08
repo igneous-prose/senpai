@@ -16,6 +16,7 @@ STUDENT_CLAUDE_MIN_RUNTIME_S="${STUDENT_CLAUDE_MIN_RUNTIME_S:-600}"
 STUDENT_CLAUDE_STALE_LOG_S="${STUDENT_CLAUDE_STALE_LOG_S:-1200}"
 STUDENT_CLAUDE_KILL_GRACE_S="${STUDENT_CLAUDE_KILL_GRACE_S:-15}"
 STUDENT_ASSIGNMENT_DRIFT_GRACE_S="${STUDENT_ASSIGNMENT_DRIFT_GRACE_S:-1800}"
+SENPAI_TRAIN_SCRIPT_RE='(^|[[:space:]/])train[[:alnum:]_]*[.]py([[:space:]]|$)'
 
 student_file_mtime_s() {
     stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
@@ -34,17 +35,17 @@ print(",".join(f"#{number}" for number in numbers))
 
 student_has_active_training() {
     ps -eo pid,ppid,comm,args |
-        awk '$3 ~ /^(python[0-9.]*|torchrun)$/ && $0 ~ /train[.]py/ { found = 1 } END { exit !found }'
+        awk -v train_re="$SENPAI_TRAIN_SCRIPT_RE" '$3 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ train_re { found = 1 } END { exit !found }'
 }
 
 student_training_pids() {
     ps -eo pid,ppid,comm,args |
-        awk '$3 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ /train[.]py/ { print $1 }'
+        awk -v train_re="$SENPAI_TRAIN_SCRIPT_RE" '$3 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ train_re { print $1 }'
 }
 
 student_training_snapshot() {
     ps -eo pid,ppid,etimes,pcpu,pmem,comm,args |
-        awk '$6 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ /train[.]py/ { print }' |
+        awk -v train_re="$SENPAI_TRAIN_SCRIPT_RE" '$6 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ train_re { print }' |
         head -20
 }
 
@@ -77,7 +78,7 @@ student_stop_training_trees() {
     pids=$(student_training_pids | sort -nr)
     [ -n "$pids" ] || return 0
 
-    echo "=== Claude watchdog: stopping active train.py processes ==="
+    echo "=== Claude watchdog: stopping active train*.py processes ==="
     printf '%s\n' "$pids" | while IFS= read -r pid; do
         [ -n "$pid" ] || continue
         student_kill_process_tree TERM "$pid"
@@ -96,7 +97,7 @@ student_comment_watchdog_stop() {
     [ -n "$start_numbers" ] || return 0
 
     snapshot=$(student_training_snapshot || true)
-    [ -n "$snapshot" ] || snapshot="(no active train.py process found at comment time)"
+    [ -n "$snapshot" ] || snapshot="(no active train*.py process found at comment time)"
     body=$(cat <<EOF
 STUDENT-WATCHDOG: stopping this student invocation on $(hostname).
 
@@ -157,7 +158,7 @@ run_student_claude_with_watchdog() {
                         if [ "$runtime" -ge "$STUDENT_CLAUDE_MIN_RUNTIME_S" ]; then
                             reason="assignment changed from ${start_numbers:-none} to ${current_numbers:-none}"
                         else
-                            echo "=== Claude watchdog: assignment changed but no train.py is active; waiting until minimum runtime before stopping Claude ==="
+                            echo "=== Claude watchdog: assignment changed but no train*.py is active; waiting until minimum runtime before stopping Claude ==="
                         fi
                     else
                         if [ "$assignment_drift_active" -eq 0 ] || [ "$assignment_drift_numbers" != "$current_numbers" ]; then
@@ -167,9 +168,9 @@ run_student_claude_with_watchdog() {
                         fi
                         assignment_drift_age=$((now_ts - assignment_drift_first_ts))
                         if [ "$assignment_drift_age" -ge "$STUDENT_ASSIGNMENT_DRIFT_GRACE_S" ]; then
-                            reason="assignment changed from ${start_numbers:-none} to ${current_numbers:-none} for ${assignment_drift_age}s while train.py is active"
+                            reason="assignment changed from ${start_numbers:-none} to ${current_numbers:-none} for ${assignment_drift_age}s while train*.py is active"
                         else
-                            echo "=== Claude watchdog: assignment changed but train.py is active; waiting ${assignment_drift_age}/${STUDENT_ASSIGNMENT_DRIFT_GRACE_S}s before intervention ==="
+                            echo "=== Claude watchdog: assignment changed but train*.py is active; waiting ${assignment_drift_age}/${STUDENT_ASSIGNMENT_DRIFT_GRACE_S}s before intervention ==="
                         fi
                     fi
                 else
@@ -191,7 +192,7 @@ run_student_claude_with_watchdog() {
             log_mtime=$(student_file_mtime_s "$LOGFILE" 2>/dev/null || printf '%s' "$now_ts")
             log_age=$((now_ts - log_mtime))
             if [ "$log_age" -ge "$STUDENT_CLAUDE_STALE_LOG_S" ]; then
-                reason="no train.py process and Claude log stale for ${log_age}s"
+                reason="no train*.py process and Claude log stale for ${log_age}s"
             fi
         fi
 
