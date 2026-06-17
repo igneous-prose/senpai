@@ -7,7 +7,6 @@ watchdogs, assignment routing, and logs; this file owns only a single agent run.
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import sys
@@ -16,12 +15,43 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from simple_parsing import ArgumentParser, field
+from simple_parsing.helpers import flag
+
 DEFAULT_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_REASONING_EFFORT = "xhigh"
 SENPAI_CONTINUATION_FILE = "current_conversation_id"
 FAILING_STATUSES = {"error", "stuck"}
 EVENT_TEXT_LIMIT = 20000
+
+
+def parse_bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() not in {"0", "false", "no", "off"}
+
+
+@dataclass(frozen=True)
+class RunnerArgs:
+    max_turns: int = field(alias="--max-turns")
+    continue_session: bool = field(default=False, alias=["-c", "--continue"], action="store_true")
+    model: str | None = field(default=None, alias="--model")
+    api_key_env: str | None = field(default=None, alias="--api-key-env")
+    reasoning_effort: str | None = field(
+        default=None,
+        alias="--reasoning-effort",
+        choices=("low", "medium", "high", "xhigh", "none"),
+    )
+    workspace: str | None = field(default=None, alias="--workspace")
+    state_dir: str | None = field(default=None, alias="--state-dir")
+    conversation_id: str | None = field(default=None, alias="--conversation-id")
+    role_file: str | None = field(default=None, alias="--role-file")
+    agent: str | None = field(default=None, alias="--agent")
+    enable_browser: bool | None = flag(
+        default=None,
+        alias="--enable-browser",
+        negative_option="--no-enable-browser",
+        type=parse_bool,
+    )
 
 
 @dataclass(frozen=True)
@@ -42,58 +72,19 @@ class RunnerConfig:
     agent_dirs: tuple[Path, ...]
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a Senpai OpenHands agent.")
-    parser.add_argument("-c", "--continue", dest="continue_session", action="store_true")
-    parser.add_argument("--max-turns", type=int, required=True)
-    parser.add_argument("--model", default=os.environ.get("SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL))
-    parser.add_argument(
-        "--api-key-env",
-        default=os.environ.get("SENPAI_OPENHANDS_API_KEY_ENV", DEFAULT_API_KEY_ENV),
-        help="Environment variable containing the provider API key.",
-    )
-    parser.add_argument(
-        "--reasoning-effort",
-        choices=["low", "medium", "high", "xhigh", "none"],
-        default=os.environ.get("SENPAI_OPENHANDS_REASONING_EFFORT", DEFAULT_REASONING_EFFORT),
-        help="Reasoning effort passed to the OpenHands LLM.",
-    )
-    parser.add_argument(
-        "--workspace",
-        default=os.environ.get("SENPAI_OPENHANDS_WORKSPACE", os.getcwd()),
-        help="Workspace directory exposed to OpenHands tools.",
-    )
-    parser.add_argument(
-        "--state-dir",
-        default=os.environ.get("SENPAI_OPENHANDS_STATE_DIR"),
-        help="Directory for OpenHands conversation state.",
-    )
-    parser.add_argument(
-        "--conversation-id",
-        default=os.environ.get("SENPAI_OPENHANDS_CONVERSATION_ID"),
-        help="Explicit conversation id. Usually only tests need this.",
-    )
-    parser.add_argument(
-        "--role-file",
-        default=os.environ.get("SENPAI_OPENHANDS_ROLE_FILE"),
-        help="Role instruction file. Defaults to nearest CLAUDE.md in cwd parents.",
-    )
-    parser.add_argument(
-        "--agent",
-        default=os.environ.get("SENPAI_OPENHANDS_AGENT"),
-        help="Run a named file-based agent directly, for example researcher-agent.",
-    )
-    parser.add_argument(
-        "--enable-browser",
-        action=argparse.BooleanOptionalAction,
-        default=parse_bool(os.environ.get("SENPAI_OPENHANDS_ENABLE_BROWSER", "1")),
-        help="Enable OpenHands browser tooling for web research.",
-    )
-    return parser
+def parse_runner_args(argv: Sequence[str] | None = None) -> RunnerArgs:
+    parser = ArgumentParser(description="Run a Senpai OpenHands agent.")
+    parser.add_arguments(RunnerArgs, dest="args")
+    return parser.parse_args(argv).args
 
 
-def parse_bool(value: str | None) -> bool:
-    return str(value or "").strip().lower() not in {"0", "false", "no", "off"}
+def env_value(
+    parsed_value: str | None,
+    env: Mapping[str, str],
+    key: str,
+    default: str | None = None,
+) -> str | None:
+    return parsed_value if parsed_value is not None else env.get(key, default)
 
 
 def resolve_api_key(env: Mapping[str, str], key_env: str) -> str:
@@ -265,30 +256,59 @@ def default_subagent_tools(*, enable_browser: bool) -> list[str]:
 
 
 def resolve_config(
-    args: argparse.Namespace,
+    args: RunnerArgs,
     env: Mapping[str, str] = os.environ,
 ) -> RunnerConfig:
-    workspace = Path(args.workspace).expanduser().resolve()
+    workspace_arg = (
+        env_value(args.workspace, env, "SENPAI_OPENHANDS_WORKSPACE", os.getcwd())
+        or os.getcwd()
+    )
+    workspace = Path(workspace_arg).expanduser().resolve()
     if not workspace.exists():
         raise RuntimeError(f"OpenHands workspace does not exist: {workspace}")
-    state_dir = Path(args.state_dir).expanduser().resolve() if args.state_dir else default_state_dir(workspace, env)
+
+    state_dir_arg = env_value(args.state_dir, env, "SENPAI_OPENHANDS_STATE_DIR")
+    state_dir = (
+        Path(state_dir_arg).expanduser().resolve()
+        if state_dir_arg
+        else default_state_dir(workspace, env)
+    )
+    api_key_env = (
+        env_value(args.api_key_env, env, "SENPAI_OPENHANDS_API_KEY_ENV", DEFAULT_API_KEY_ENV)
+        or DEFAULT_API_KEY_ENV
+    )
+    enable_browser = (
+        args.enable_browser
+        if args.enable_browser is not None
+        else parse_bool(env.get("SENPAI_OPENHANDS_ENABLE_BROWSER", "1"))
+    )
+
     return RunnerConfig(
         max_turns=args.max_turns,
-        model=args.model,
-        api_key_env=args.api_key_env,
-        api_key=resolve_api_key(env, args.api_key_env),
-        reasoning_effort=args.reasoning_effort,
+        model=env_value(args.model, env, "SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL,
+        api_key_env=api_key_env,
+        api_key=resolve_api_key(env, api_key_env),
+        reasoning_effort=env_value(
+            args.reasoning_effort,
+            env,
+            "SENPAI_OPENHANDS_REASONING_EFFORT",
+            DEFAULT_REASONING_EFFORT,
+        )
+        or DEFAULT_REASONING_EFFORT,
         workspace=workspace,
         state_dir=state_dir,
         conversation_id=select_conversation_id(
             state_dir,
             continue_session=args.continue_session,
-            explicit_id=args.conversation_id,
+            explicit_id=env_value(args.conversation_id, env, "SENPAI_OPENHANDS_CONVERSATION_ID"),
         ),
         continue_session=args.continue_session,
-        enable_browser=args.enable_browser,
-        agent_name=args.agent,
-        role_file=find_role_file(workspace, args.role_file),
+        enable_browser=enable_browser,
+        agent_name=env_value(args.agent, env, "SENPAI_OPENHANDS_AGENT"),
+        role_file=find_role_file(
+            workspace,
+            env_value(args.role_file, env, "SENPAI_OPENHANDS_ROLE_FILE"),
+        ),
         skill_dirs=candidate_skill_dirs(workspace, env),
         agent_dirs=candidate_agent_dirs(workspace, env),
     )
@@ -531,10 +551,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args, unknown = parser.parse_known_args(argv)
-    if unknown:
-        parser.error(f"unsupported OpenHands runtime arguments: {' '.join(unknown)}")
+    args = parse_runner_args(argv)
     prompt = sys.stdin.read()
     if not prompt:
         raise RuntimeError("OpenHands runner requires a prompt on stdin")
