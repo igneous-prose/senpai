@@ -1,0 +1,546 @@
+"""Run Senpai loops on the OpenHands SDK.
+
+This module is the OpenHands equivalent of the Claude Code headless invocation
+in ``k8s/run-senpai-claude.sh``. The shell loop still owns polling, checkout,
+watchdogs, assignment routing, and logs; this file owns only a single agent run.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Mapping, Sequence
+
+DEFAULT_MODEL = "anthropic/claude-opus-4-8"
+DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
+DEFAULT_REASONING_EFFORT = "xhigh"
+SENPAI_CONTINUATION_FILE = "current_conversation_id"
+FAILING_STATUSES = {"error", "stuck"}
+EVENT_TEXT_LIMIT = 20000
+
+
+@dataclass(frozen=True)
+class RunnerConfig:
+    max_turns: int
+    model: str
+    api_key_env: str
+    api_key: str
+    reasoning_effort: str
+    workspace: Path
+    state_dir: Path
+    conversation_id: uuid.UUID
+    continue_session: bool
+    enable_browser: bool
+    agent_name: str | None
+    role_file: Path | None
+    skill_dirs: tuple[Path, ...]
+    agent_dirs: tuple[Path, ...]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run a Senpai OpenHands agent.")
+    parser.add_argument("-c", "--continue", dest="continue_session", action="store_true")
+    parser.add_argument("--max-turns", type=int, required=True)
+    parser.add_argument("--model", default=os.environ.get("SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL))
+    parser.add_argument(
+        "--api-key-env",
+        default=os.environ.get("SENPAI_OPENHANDS_API_KEY_ENV", DEFAULT_API_KEY_ENV),
+        help="Environment variable containing the provider API key.",
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=["low", "medium", "high", "xhigh", "none"],
+        default=os.environ.get("SENPAI_OPENHANDS_REASONING_EFFORT", DEFAULT_REASONING_EFFORT),
+        help="Reasoning effort passed to the OpenHands LLM.",
+    )
+    parser.add_argument(
+        "--workspace",
+        default=os.environ.get("SENPAI_OPENHANDS_WORKSPACE", os.getcwd()),
+        help="Workspace directory exposed to OpenHands tools.",
+    )
+    parser.add_argument(
+        "--state-dir",
+        default=os.environ.get("SENPAI_OPENHANDS_STATE_DIR"),
+        help="Directory for OpenHands conversation state.",
+    )
+    parser.add_argument(
+        "--conversation-id",
+        default=os.environ.get("SENPAI_OPENHANDS_CONVERSATION_ID"),
+        help="Explicit conversation id. Usually only tests need this.",
+    )
+    parser.add_argument(
+        "--role-file",
+        default=os.environ.get("SENPAI_OPENHANDS_ROLE_FILE"),
+        help="Role instruction file. Defaults to nearest CLAUDE.md in cwd parents.",
+    )
+    parser.add_argument(
+        "--agent",
+        default=os.environ.get("SENPAI_OPENHANDS_AGENT"),
+        help="Run a named file-based agent directly, for example researcher-agent.",
+    )
+    parser.add_argument(
+        "--enable-browser",
+        action=argparse.BooleanOptionalAction,
+        default=parse_bool(os.environ.get("SENPAI_OPENHANDS_ENABLE_BROWSER", "1")),
+        help="Enable OpenHands browser tooling for web research.",
+    )
+    return parser
+
+
+def parse_bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def resolve_api_key(env: Mapping[str, str], key_env: str) -> str:
+    value = env.get(key_env)
+    if not value:
+        raise RuntimeError(f"{key_env} is required for the OpenHands runtime")
+    return value
+
+
+def default_state_dir(workspace: Path, env: Mapping[str, str]) -> Path:
+    if env.get("LOGDIR"):
+        return Path(env["LOGDIR"]) / "openhands_state"
+    return workspace / ".senpai" / "openhands"
+
+
+def find_role_file(workspace: Path, explicit: str | None = None) -> Path | None:
+    if explicit:
+        path = Path(explicit).expanduser()
+        return path if path.exists() else None
+
+    for current in (workspace, *workspace.parents):
+        candidate = current / "CLAUDE.md"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def read_role_instructions(path: Path | None) -> str | None:
+    if not path:
+        return None
+    return path.read_text(encoding="utf-8").strip() or None
+
+
+def candidate_skill_dirs(workspace: Path, env: Mapping[str, str]) -> tuple[Path, ...]:
+    paths = [
+        Path.home() / ".claude" / "skills",
+        Path.home() / ".agents" / "skills",
+        Path.home() / ".openhands" / "skills",
+        workspace / ".claude" / "skills",
+        workspace / ".agents" / "skills",
+        workspace / ".openhands" / "skills",
+    ]
+    if env.get("SENPAI_PLUGIN"):
+        paths.append(Path(env["SENPAI_PLUGIN"]) / "skills")
+        paths.append(Path(env["SENPAI_PLUGIN"]).parent.parent / ".claude" / "skills")
+    for current in workspace.parents:
+        paths.extend(
+            [
+                current / ".claude" / "skills",
+                current / ".agents" / "skills",
+                current / ".openhands" / "skills",
+            ]
+        )
+    return existing_unique_paths(paths)
+
+
+def candidate_agent_dirs(workspace: Path, env: Mapping[str, str]) -> tuple[Path, ...]:
+    paths = [
+        Path.home() / ".claude" / "agents",
+        Path.home() / ".agents" / "agents",
+        Path.home() / ".openhands" / "agents",
+        workspace / ".claude" / "agents",
+        workspace / ".agents" / "agents",
+        workspace / ".openhands" / "agents",
+    ]
+    if env.get("SENPAI_PLUGIN"):
+        paths.append(Path(env["SENPAI_PLUGIN"]).parent.parent / ".claude" / "agents")
+    for current in workspace.parents:
+        paths.extend(
+            [
+                current / ".claude" / "agents",
+                current / ".agents" / "agents",
+                current / ".openhands" / "agents",
+            ]
+        )
+    return existing_unique_paths(paths)
+
+
+def existing_unique_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    seen: set[Path] = set()
+    existing: list[Path] = []
+    for raw_path in paths:
+        path = raw_path.expanduser().resolve()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        existing.append(path)
+    return tuple(existing)
+
+
+def fresh_conversation_id() -> uuid.UUID:
+    return uuid.uuid4()
+
+
+def select_conversation_id(
+    state_dir: Path,
+    *,
+    continue_session: bool,
+    explicit_id: str | None = None,
+) -> uuid.UUID:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = state_dir / SENPAI_CONTINUATION_FILE
+    if explicit_id:
+        conversation_id = uuid.UUID(explicit_id)
+        if continue_session:
+            marker.write_text(str(conversation_id), encoding="utf-8")
+        return conversation_id
+    if continue_session and marker.exists():
+        previous = marker.read_text(encoding="utf-8").strip()
+        if previous:
+            return uuid.UUID(previous)
+    conversation_id = fresh_conversation_id()
+    if continue_session:
+        marker.write_text(str(conversation_id), encoding="utf-8")
+    return conversation_id
+
+
+def normalize_skill_name(name: str) -> str:
+    return name.split(":", 1)[1] if ":" in name else name
+
+
+def normalize_skill_names(names: Sequence[str]) -> list[str]:
+    return [normalize_skill_name(name) for name in names]
+
+
+def openhands_tool_aliases(enable_browser: bool) -> dict[str, str]:
+    from openhands.tools.file_editor import FileEditorTool
+    from openhands.tools.task_tracker import TaskTrackerTool
+    from openhands.tools.terminal import TerminalTool
+
+    aliases = {
+        "TerminalTool": TerminalTool.name,
+        "terminal": TerminalTool.name,
+        "FileEditorTool": FileEditorTool.name,
+        "file_editor": FileEditorTool.name,
+        "str_replace_editor": FileEditorTool.name,
+        "TaskTrackerTool": TaskTrackerTool.name,
+        "task_tracker": TaskTrackerTool.name,
+    }
+    if enable_browser:
+        from openhands.tools.browser_use import BrowserToolSet
+
+        aliases.update(
+            {
+                "BrowserToolSet": BrowserToolSet.name,
+                "browser": BrowserToolSet.name,
+                "browser_tool_set": BrowserToolSet.name,
+            }
+        )
+    return aliases
+
+
+def normalize_tool_names(names: Sequence[str], *, enable_browser: bool) -> list[str]:
+    aliases = openhands_tool_aliases(enable_browser)
+    return [aliases.get(name, name) for name in names]
+
+
+def default_subagent_tools(*, enable_browser: bool) -> list[str]:
+    from openhands.tools.file_editor import FileEditorTool
+    from openhands.tools.task_tracker import TaskTrackerTool
+    from openhands.tools.terminal import TerminalTool
+
+    names = [TerminalTool.name, FileEditorTool.name, TaskTrackerTool.name]
+    if enable_browser:
+        from openhands.tools.browser_use import BrowserToolSet
+
+        names.append(BrowserToolSet.name)
+    return names
+
+
+def resolve_config(
+    args: argparse.Namespace,
+    env: Mapping[str, str] = os.environ,
+) -> RunnerConfig:
+    workspace = Path(args.workspace).expanduser().resolve()
+    if not workspace.exists():
+        raise RuntimeError(f"OpenHands workspace does not exist: {workspace}")
+    state_dir = Path(args.state_dir).expanduser().resolve() if args.state_dir else default_state_dir(workspace, env)
+    return RunnerConfig(
+        max_turns=args.max_turns,
+        model=args.model,
+        api_key_env=args.api_key_env,
+        api_key=resolve_api_key(env, args.api_key_env),
+        reasoning_effort=args.reasoning_effort,
+        workspace=workspace,
+        state_dir=state_dir,
+        conversation_id=select_conversation_id(
+            state_dir,
+            continue_session=args.continue_session,
+            explicit_id=args.conversation_id,
+        ),
+        continue_session=args.continue_session,
+        enable_browser=args.enable_browser,
+        agent_name=args.agent,
+        role_file=find_role_file(workspace, args.role_file),
+        skill_dirs=candidate_skill_dirs(workspace, env),
+        agent_dirs=candidate_agent_dirs(workspace, env),
+    )
+
+
+def load_agent_definition(
+    path: Path,
+    skills_by_name: Mapping[str, object],
+    *,
+    enable_browser: bool,
+):
+    from openhands.sdk.subagent import AgentDefinition
+
+    definition = AgentDefinition.load(path)
+    skill_sections = []
+    for name in normalize_skill_names(definition.skills):
+        skill = skills_by_name.get(name)
+        if not skill:
+            continue
+        content = getattr(skill, "content", "")
+        if content:
+            skill_sections.append(f"## {name}\n\n{content}")
+
+    system_prompt = definition.system_prompt
+    if skill_sections:
+        system_prompt = (
+            f"{system_prompt}\n\n# Referenced skills\n\n"
+            + "\n\n".join(skill_sections)
+        )
+
+    updates = {
+        "skills": [],
+        "system_prompt": system_prompt,
+        "permission_mode": definition.permission_mode or "never_confirm",
+    }
+    if definition.model in {"opus", "sonnet", "haiku"}:
+        updates["model"] = "inherit"
+    updates["tools"] = (
+        normalize_tool_names(definition.tools, enable_browser=enable_browser)
+        if definition.tools
+        else default_subagent_tools(enable_browser=enable_browser)
+    )
+    return definition.model_copy(update=updates)
+
+
+def load_named_agent_definition(
+    name: str,
+    agent_dirs: Sequence[Path],
+    skills: Sequence[object],
+    *,
+    enable_browser: bool,
+):
+    from openhands.sdk.subagent import AgentDefinition
+
+    skills_by_name = {getattr(skill, "name"): skill for skill in skills}
+    for agent_dir in agent_dirs:
+        for path in sorted(agent_dir.glob("*.md")):
+            definition = AgentDefinition.load(path)
+            if definition.name == name or path.stem == name:
+                return load_agent_definition(path, skills_by_name, enable_browser=enable_browser)
+    raise RuntimeError(f"OpenHands agent not found: {name}")
+
+
+def append_role_instructions(definition: object, role_instructions: str | None) -> object:
+    if not role_instructions:
+        return definition
+    prompt = getattr(definition, "system_prompt", "")
+    return definition.model_copy(
+        update={
+            "system_prompt": (
+                f"{prompt}\n\n# Senpai role instructions\n\n{role_instructions}"
+                if prompt
+                else role_instructions
+            )
+        }
+    )
+
+
+def load_skills(skill_dirs: Sequence[Path]):
+    from openhands.sdk import load_skills_from_dir
+
+    skills_by_name = {}
+    for skill_dir in skill_dirs:
+        repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skill_dir)
+        skills_by_name.update(repo_skills)
+        skills_by_name.update(knowledge_skills)
+        skills_by_name.update(agent_skills)
+    return list(skills_by_name.values())
+
+
+def register_subagents(
+    agent_dirs: Sequence[Path],
+    skills: Sequence[object],
+    *,
+    enable_browser: bool,
+) -> list[str]:
+    from openhands.sdk.subagent import agent_definition_to_factory, register_agent_if_absent
+    from openhands.tools.preset.default import register_builtins_agents
+
+    skills_by_name = {getattr(skill, "name"): skill for skill in skills}
+    registered = register_builtins_agents(enable_browser=enable_browser)
+    for agent_dir in agent_dirs:
+        for path in sorted(agent_dir.glob("*.md")):
+            definition = load_agent_definition(
+                path,
+                skills_by_name,
+                enable_browser=enable_browser,
+            )
+            if register_agent_if_absent(
+                name=definition.name,
+                factory_func=agent_definition_to_factory(definition),
+                description=definition,
+            ):
+                registered.append(definition.name)
+    return registered
+
+
+def event_summary(event: object) -> dict[str, object]:
+    summary: dict[str, object] = {"event": event.__class__.__name__}
+    for attr in ("source", "tool_name", "action", "status"):
+        value = getattr(event, attr, None)
+        if value is not None:
+            summary[attr] = str(value)
+
+    message = getattr(event, "llm_message", None)
+    if getattr(event, "source", None) == "agent" and message is not None:
+        text_parts = [
+            getattr(part, "text", "")
+            for part in getattr(message, "content", [])
+            if getattr(part, "text", "")
+        ]
+        text = "\n".join(text_parts).strip()
+        if text:
+            summary["text"] = text[-EVENT_TEXT_LIMIT:]
+    return summary
+
+
+def print_event(event: object) -> None:
+    print("OPENHANDS_EVENT " + json.dumps(event_summary(event), sort_keys=True), flush=True)
+
+
+def run_openhands(prompt: str, config: RunnerConfig) -> int:
+    os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
+
+    from openhands.sdk import Agent, AgentContext, Conversation, LLM
+    from openhands.sdk.subagent import agent_definition_to_factory
+    from openhands.tools.preset.default import get_default_condenser, get_default_tools
+    from pydantic import SecretStr
+
+    skills = load_skills(config.skill_dirs)
+    role_instructions = read_role_instructions(config.role_file)
+    direct_agent_definition = None
+    if config.agent_name:
+        direct_agent_definition = append_role_instructions(
+            load_named_agent_definition(
+                config.agent_name,
+                config.agent_dirs,
+                skills,
+                enable_browser=config.enable_browser,
+            ),
+            role_instructions,
+        )
+        subagents = [getattr(direct_agent_definition, "name", config.agent_name)]
+    else:
+        subagents = register_subagents(
+            config.agent_dirs,
+            skills,
+            enable_browser=config.enable_browser,
+        )
+
+    print(
+        "OPENHANDS_RUN "
+        + json.dumps(
+            {
+                "workspace": str(config.workspace),
+                "state_dir": str(config.state_dir),
+                "conversation_id": str(config.conversation_id),
+                "continue": config.continue_session,
+                "model": config.model,
+                "reasoning_effort": config.reasoning_effort,
+                "agent": config.agent_name,
+                "enable_browser": config.enable_browser,
+                "role_file": str(config.role_file) if config.role_file else None,
+                "skill_dirs": [str(path) for path in config.skill_dirs],
+                "skills": [skill.name for skill in skills],
+                "agent_dirs": [str(path) for path in config.agent_dirs],
+                "subagents": subagents,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
+    llm = LLM(
+        model=config.model,
+        api_key=SecretStr(config.api_key),
+        reasoning_effort=config.reasoning_effort,
+        usage_id="senpai",
+    )
+    get_default_tools(enable_browser=config.enable_browser, enable_sub_agents=True)
+    if direct_agent_definition:
+        agent = agent_definition_to_factory(direct_agent_definition, work_dir=config.workspace)(llm)
+    else:
+        agent = Agent(
+            llm=llm,
+            tools=get_default_tools(
+                enable_browser=config.enable_browser,
+                enable_sub_agents=True,
+            ),
+            agent_context=AgentContext(
+                skills=skills,
+                system_message_suffix=role_instructions,
+                load_public_skills=False,
+                load_user_skills=False,
+                load_project_skills=False,
+            ),
+            system_prompt_kwargs={"cli_mode": True},
+            condenser=get_default_condenser(llm.model_copy(update={"usage_id": "senpai-condenser"})),
+        )
+    conversation = Conversation(
+        agent=agent,
+        workspace=config.workspace,
+        persistence_dir=config.state_dir,
+        conversation_id=config.conversation_id,
+        callbacks=[print_event],
+        max_iteration_per_run=config.max_turns,
+        visualizer=None,
+        tags={"runtime": "senpai-openhands"},
+    )
+    conversation.send_message(prompt)
+    conversation.run()
+
+    status = str(conversation.state.execution_status.value)
+    print(
+        "OPENHANDS_RESULT "
+        + json.dumps({"conversation_id": str(conversation.id), "status": status}, sort_keys=True),
+        flush=True,
+    )
+    return 1 if status in FAILING_STATUSES else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        parser.error(f"unsupported OpenHands runtime arguments: {' '.join(unknown)}")
+    prompt = sys.stdin.read()
+    if not prompt:
+        raise RuntimeError("OpenHands runner requires a prompt on stdin")
+    config = resolve_config(args)
+    return run_openhands(prompt, config)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

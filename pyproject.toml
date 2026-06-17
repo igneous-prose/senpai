@@ -5,7 +5,7 @@
 [project]
 name = "senpai"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "PyYAML",
@@ -20,6 +20,8 @@ dependencies = [
     "weave",
     "tqdm",
     "matplotlib",
+    "openhands-sdk",
+    "openhands-tools",
 ]
 
 [tool.setuptools.packages.find]
