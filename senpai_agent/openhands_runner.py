@@ -189,16 +189,16 @@ def select_conversation_id(
     marker = state_dir / SENPAI_CONTINUATION_FILE
     if explicit_id:
         conversation_id = uuid.UUID(explicit_id)
-        if continue_session:
-            marker.write_text(str(conversation_id), encoding="utf-8")
+        marker.write_text(str(conversation_id), encoding="utf-8")
         return conversation_id
     if continue_session and marker.exists():
         previous = marker.read_text(encoding="utf-8").strip()
         if previous:
-            return uuid.UUID(previous)
+            conversation_id = uuid.UUID(previous)
+            marker.write_text(str(conversation_id), encoding="utf-8")
+            return conversation_id
     conversation_id = fresh_conversation_id()
-    if continue_session:
-        marker.write_text(str(conversation_id), encoding="utf-8")
+    marker.write_text(str(conversation_id), encoding="utf-8")
     return conversation_id
 
 

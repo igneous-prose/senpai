@@ -1,2 +1,1 @@
 """Senpai agent runtime adapters."""
-
