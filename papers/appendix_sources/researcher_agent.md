@@ -5,7 +5,7 @@ description: >
   generating new hypotheses — it searches arxiv, Semantic Scholar, AlphaXiv,
   and GitHub for techniques from ML, physics, math, optimization,
   and systems design, then returns structured summaries with concrete implementation guidance.
-model: claude-opus-4-8
+model: opus
 effort: max
 skills:
   - senpai:survey-prs
