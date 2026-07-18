@@ -84,7 +84,7 @@ senpai/
 │   ├── entrypoint-advisor.sh
 │   └── entrypoint-student.sh
 ├── Dockerfile
-├── plugins/senpai/                # Shared Claude/OpenHands workflow plugin + Exa MCP
+├── plugins/senpai/                # OpenHands workflow plugin + Exa MCP
 ├── .agents/                       # OpenHands-compatible skills
 └── .claude/                       # Shared skills and researcher-agent definition
 ```
@@ -96,9 +96,9 @@ senpai/
 The pod image runs OpenHands 1.28 and PyTorch 2.13 on Python 3.13 with CUDA 13.
 The entrypoints install the checked-in `.agents` and `.claude` resources into
 user scope, and the runner also loads `plugins/senpai` through OpenHands' native
-`PluginSource`. The plugin's `.claude-plugin/plugin.json` is accepted by both
-Claude Code and OpenHands; its `.mcp.json` adds Exa, and its `skills/` directory
-contains the Senpai workflow and GitHub helpers.
+`PluginSource`. Its OpenHands-native `.plugin/plugin.json` declares the plugin,
+its `.mcp.json` adds Exa, and its `skills/` directory contains the Senpai
+workflow and GitHub helpers.
 
 Advisor/student role files are rendered to the runner repository's
 `CLAUDE.md` and passed explicitly as the OpenHands system-message suffix before

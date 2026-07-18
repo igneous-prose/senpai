@@ -126,7 +126,7 @@ def test_python_deps_and_icml_target_import(test_pod):
 
 
 def test_openhands_plugin_loads_workflow_skills_and_exa(test_pod):
-    """The shared plugin is valid OpenHands input and carries Exa."""
+    """The native OpenHands plugin carries the workflow skills and Exa."""
     cmd = (
         "python - <<'PY'\n"
         "from openhands.sdk.plugin import Plugin\n"

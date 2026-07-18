@@ -5,12 +5,17 @@ from types import SimpleNamespace
 import pytest
 from openhands.sdk.plugin import Plugin
 from openhands.sdk.subagent import AgentDefinition
+from openhands.tools.browser_use import BrowserToolSet
 
+import senpai_agent.openhands_runner as runner
 from senpai_agent.openhands_runner import (
     RunnerConfig,
     build_main_agent_context,
+    default_subagent_tools,
     find_role_file,
     load_agent_definition,
+    openhands_reasoning_effort,
+    parse_runner_args,
     read_role_instructions,
     resolve_plugin_dir,
     run_openhands,
@@ -20,6 +25,23 @@ from senpai_agent.openhands_runner import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
 RESEARCHER_AGENT = REPO_ROOT / ".claude" / "agents" / "researcher-agent.md"
+
+
+@pytest.mark.parametrize("effort", ["max", "ultra"])
+def test_simple_parsing_accepts_extended_reasoning_effort(effort):
+    args = parse_runner_args(["--max-turns", "1", "--reasoning-effort", effort])
+
+    assert args.reasoning_effort == effort
+    assert openhands_reasoning_effort(args.reasoning_effort) == "xhigh"
+
+
+def test_browser_is_enabled_by_default_and_can_be_disabled():
+    default_args = parse_runner_args(["--max-turns", "1"])
+    disabled_args = parse_runner_args(["--max-turns", "1", "--no-browser"])
+
+    assert default_args.enable_browser is True
+    assert BrowserToolSet.name in default_subagent_tools(enable_browser=True)
+    assert disabled_args.enable_browser is False
 
 
 def test_explicit_role_file_cannot_be_replaced_by_target_instructions(tmp_path):
@@ -70,10 +92,7 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
         def run(self):
             pass
 
-    import openhands.sdk
-    import senpai_agent.openhands_runner as runner
-
-    monkeypatch.setattr(openhands.sdk, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "load_skills", lambda _: [])
     monkeypatch.setattr(runner, "register_subagents", lambda *args, **kwargs: [])
     config = RunnerConfig(
@@ -102,8 +121,10 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
     }
 
 
-def test_openhands_loads_the_shared_senpai_plugin():
+def test_openhands_loads_the_native_senpai_plugin():
     assert resolve_plugin_dir(str(PLUGIN_DIR)) == PLUGIN_DIR
+    assert (PLUGIN_DIR / ".plugin" / "plugin.json").is_file()
+    assert not (PLUGIN_DIR / ".claude-plugin").exists()
 
     plugin = Plugin.load(PLUGIN_DIR)
     skill_names = {skill.name for skill in plugin.skills}

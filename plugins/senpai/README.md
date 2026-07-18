@@ -1,9 +1,7 @@
 # Senpai agent plugin
 
-This directory is the runtime-owned integration point for Senpai workflow
-capabilities. Claude Code and OpenHands both accept the existing
-`.claude-plugin/plugin.json` manifest, so the plugin intentionally has one
-manifest rather than provider-specific copies.
+This directory is the OpenHands-native integration point for Senpai workflow
+capabilities. Its manifest lives at `.plugin/plugin.json`.
 
 OpenHands receives this directory through `PluginSource` before the first user
 message. It natively loads:
@@ -15,5 +13,4 @@ message. It natively loads:
 Keep Senpai-owned workflow skills here instead of relying on a provider's user
 skill directory. Add `${ENV_VAR}` placeholders for secrets in `.mcp.json`; the
 OpenHands conversation expands them at startup, and secret values must not be
-committed. Provider-specific compatibility code should only adapt names and
-paths—the plugin remains the source of truth.
+committed. The plugin remains the source of truth.

@@ -15,31 +15,49 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
+
+from openhands.sdk import Agent, AgentContext, Conversation, LLM, load_skills_from_dir
+from openhands.sdk.plugin import PluginSource
+from openhands.sdk.subagent import (
+    AgentDefinition,
+    agent_definition_to_factory,
+    register_agent_if_absent,
+)
+from openhands.tools.browser_use import BrowserToolSet
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.preset.default import (
+    get_default_condenser,
+    get_default_tools,
+    register_builtins_agents,
+)
+from openhands.tools.task_tracker import TaskTrackerTool
+from openhands.tools.terminal import TerminalTool
+from pydantic import SecretStr
 from simple_parsing import ArgumentParser, field
 from simple_parsing.helpers import flag
 
 DEFAULT_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_REASONING_EFFORT = "xhigh"
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra", "none")
 SENPAI_CONTINUATION_FILE = "current_conversation_id"
 FAILING_STATUSES = {"error", "stuck"}
 EVENT_TEXT_LIMIT = 20000
 
 
-def parse_bool(value: str | None) -> bool:
-    return str(value or "").strip().lower() not in {"0", "false", "no", "off"}
-
-
 @dataclass(frozen=True)
 class RunnerArgs:
     max_turns: int = field(alias="--max-turns")
-    continue_session: bool = field(default=False, alias=["-c", "--continue"], action="store_true")
+    continue_session: bool = field(
+        default=False, alias=["-c", "--continue"], action="store_true"
+    )
     model: str | None = field(default=None, alias="--model")
     api_key_env: str | None = field(default=None, alias="--api-key-env")
     reasoning_effort: str | None = field(
         default=None,
         alias="--reasoning-effort",
-        choices=("low", "medium", "high", "xhigh", "none"),
+        choices=REASONING_EFFORTS,
     )
     workspace: str | None = field(default=None, alias="--workspace")
     state_dir: str | None = field(default=None, alias="--state-dir")
@@ -47,11 +65,10 @@ class RunnerArgs:
     role_file: str | None = field(default=None, alias="--role-file")
     plugin_dir: str | None = field(default=None, alias="--plugin-dir")
     agent: str | None = field(default=None, alias="--agent")
-    enable_browser: bool | None = flag(
-        default=None,
-        alias="--enable-browser",
-        negative_option="--no-enable-browser",
-        type=parse_bool,
+    enable_browser: bool = flag(
+        default=True,
+        alias="--browser",
+        negative_option="--no-browser",
     )
 
 
@@ -78,6 +95,12 @@ def parse_runner_args(argv: Sequence[str] | None = None) -> RunnerArgs:
     parser = ArgumentParser(description="Run a Senpai OpenHands agent.")
     parser.add_arguments(RunnerArgs, dest="args")
     return parser.parse_args(argv).args
+
+
+def openhands_reasoning_effort(reasoning_effort: str) -> str:
+    if reasoning_effort in {"max", "ultra"}:
+        return "xhigh"
+    return reasoning_effort
 
 
 def env_value(
@@ -131,11 +154,8 @@ def resolve_plugin_dir(explicit: str | None = None) -> Path:
         if explicit
         else Path(__file__).resolve().parents[1] / "plugins" / "senpai"
     )
-    manifests = (
-        path / ".plugin" / "plugin.json",
-        path / ".claude-plugin" / "plugin.json",
-    )
-    if not path.is_dir() or not any(manifest.is_file() for manifest in manifests):
+    manifest = path / ".plugin" / "plugin.json"
+    if not path.is_dir() or not manifest.is_file():
         raise RuntimeError(f"Senpai OpenHands plugin does not exist: {path}")
     return path
 
@@ -233,10 +253,6 @@ def normalize_skill_names(names: Sequence[str]) -> list[str]:
 
 
 def openhands_tool_aliases(enable_browser: bool) -> dict[str, str]:
-    from openhands.tools.file_editor import FileEditorTool
-    from openhands.tools.task_tracker import TaskTrackerTool
-    from openhands.tools.terminal import TerminalTool
-
     aliases = {
         "TerminalTool": TerminalTool.name,
         "terminal": TerminalTool.name,
@@ -247,8 +263,6 @@ def openhands_tool_aliases(enable_browser: bool) -> dict[str, str]:
         "task_tracker": TaskTrackerTool.name,
     }
     if enable_browser:
-        from openhands.tools.browser_use import BrowserToolSet
-
         aliases.update(
             {
                 "BrowserToolSet": BrowserToolSet.name,
@@ -265,14 +279,8 @@ def normalize_tool_names(names: Sequence[str], *, enable_browser: bool) -> list[
 
 
 def default_subagent_tools(*, enable_browser: bool) -> list[str]:
-    from openhands.tools.file_editor import FileEditorTool
-    from openhands.tools.task_tracker import TaskTrackerTool
-    from openhands.tools.terminal import TerminalTool
-
     names = [TerminalTool.name, FileEditorTool.name, TaskTrackerTool.name]
     if enable_browser:
-        from openhands.tools.browser_use import BrowserToolSet
-
         names.append(BrowserToolSet.name)
     return names
 
@@ -296,18 +304,15 @@ def resolve_config(
         else default_state_dir(workspace, env)
     )
     api_key_env = (
-        env_value(args.api_key_env, env, "SENPAI_OPENHANDS_API_KEY_ENV", DEFAULT_API_KEY_ENV)
+        env_value(
+            args.api_key_env, env, "SENPAI_OPENHANDS_API_KEY_ENV", DEFAULT_API_KEY_ENV
+        )
         or DEFAULT_API_KEY_ENV
     )
-    enable_browser = (
-        args.enable_browser
-        if args.enable_browser is not None
-        else parse_bool(env.get("SENPAI_OPENHANDS_ENABLE_BROWSER", "1"))
-    )
-
     return RunnerConfig(
         max_turns=args.max_turns,
-        model=env_value(args.model, env, "SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL) or DEFAULT_MODEL,
+        model=env_value(args.model, env, "SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL)
+        or DEFAULT_MODEL,
         api_key_env=api_key_env,
         api_key=resolve_api_key(env, api_key_env),
         reasoning_effort=env_value(
@@ -322,10 +327,12 @@ def resolve_config(
         conversation_id=select_conversation_id(
             state_dir,
             continue_session=args.continue_session,
-            explicit_id=env_value(args.conversation_id, env, "SENPAI_OPENHANDS_CONVERSATION_ID"),
+            explicit_id=env_value(
+                args.conversation_id, env, "SENPAI_OPENHANDS_CONVERSATION_ID"
+            ),
         ),
         continue_session=args.continue_session,
-        enable_browser=enable_browser,
+        enable_browser=args.enable_browser,
         agent_name=env_value(args.agent, env, "SENPAI_OPENHANDS_AGENT"),
         role_file=find_role_file(
             workspace,
@@ -345,8 +352,6 @@ def load_agent_definition(
     *,
     enable_browser: bool,
 ):
-    from openhands.sdk.subagent import AgentDefinition
-
     definition = AgentDefinition.load(path)
     skill_sections = []
     for name in normalize_skill_names(definition.skills):
@@ -359,9 +364,8 @@ def load_agent_definition(
 
     system_prompt = definition.system_prompt
     if skill_sections:
-        system_prompt = (
-            f"{system_prompt}\n\n# Referenced skills\n\n"
-            + "\n\n".join(skill_sections)
+        system_prompt = f"{system_prompt}\n\n# Referenced skills\n\n" + "\n\n".join(
+            skill_sections
         )
 
     updates = {
@@ -386,18 +390,20 @@ def load_named_agent_definition(
     *,
     enable_browser: bool,
 ):
-    from openhands.sdk.subagent import AgentDefinition
-
     skills_by_name = {getattr(skill, "name"): skill for skill in skills}
     for agent_dir in agent_dirs:
         for path in sorted(agent_dir.glob("*.md")):
             definition = AgentDefinition.load(path)
             if definition.name == name or path.stem == name:
-                return load_agent_definition(path, skills_by_name, enable_browser=enable_browser)
+                return load_agent_definition(
+                    path, skills_by_name, enable_browser=enable_browser
+                )
     raise RuntimeError(f"OpenHands agent not found: {name}")
 
 
-def append_role_instructions(definition: object, role_instructions: str | None) -> object:
+def append_role_instructions(
+    definition: object, role_instructions: str | None
+) -> object:
     if not role_instructions:
         return definition
     prompt = getattr(definition, "system_prompt", "")
@@ -413,8 +419,6 @@ def append_role_instructions(definition: object, role_instructions: str | None) 
 
 
 def load_skills(skill_dirs: Sequence[Path]):
-    from openhands.sdk import load_skills_from_dir
-
     skills_by_name = {}
     for skill_dir in skill_dirs:
         repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skill_dir)
@@ -430,9 +434,6 @@ def register_subagents(
     *,
     enable_browser: bool,
 ) -> list[str]:
-    from openhands.sdk.subagent import agent_definition_to_factory, register_agent_if_absent
-    from openhands.tools.preset.default import register_builtins_agents
-
     skills_by_name = {getattr(skill, "name"): skill for skill in skills}
     registered = register_builtins_agents(enable_browser=enable_browser)
     for agent_dir in agent_dirs:
@@ -452,8 +453,6 @@ def register_subagents(
 
 
 def build_main_agent_context(skills: Sequence[object], role_instructions: str):
-    from openhands.sdk import AgentContext
-
     return AgentContext(
         skills=list(skills),
         system_message_suffix=role_instructions,
@@ -484,18 +483,13 @@ def event_summary(event: object) -> dict[str, object]:
 
 
 def print_event(event: object) -> None:
-    print("OPENHANDS_EVENT " + json.dumps(event_summary(event), sort_keys=True), flush=True)
+    print(
+        "OPENHANDS_EVENT " + json.dumps(event_summary(event), sort_keys=True),
+        flush=True,
+    )
 
 
 def run_openhands(prompt: str, config: RunnerConfig) -> int:
-    os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
-
-    from openhands.sdk import Agent, Conversation, LLM
-    from openhands.sdk.plugin import PluginSource
-    from openhands.sdk.subagent import agent_definition_to_factory
-    from openhands.tools.preset.default import get_default_condenser, get_default_tools
-    from pydantic import SecretStr
-
     skills = load_skills(config.skill_dirs)
     role_instructions = read_role_instructions(config.role_file)
     direct_agent_definition = None
@@ -527,6 +521,9 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "continue": config.continue_session,
                 "model": config.model,
                 "reasoning_effort": config.reasoning_effort,
+                "openhands_reasoning_effort": openhands_reasoning_effort(
+                    config.reasoning_effort
+                ),
                 "agent": config.agent_name,
                 "enable_browser": config.enable_browser,
                 "role_file": str(config.role_file) if config.role_file else None,
@@ -544,12 +541,14 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
     llm = LLM(
         model=config.model,
         api_key=SecretStr(config.api_key),
-        reasoning_effort=config.reasoning_effort,
+        reasoning_effort=openhands_reasoning_effort(config.reasoning_effort),
         usage_id="senpai",
     )
     get_default_tools(enable_browser=config.enable_browser, enable_sub_agents=True)
     if direct_agent_definition:
-        agent = agent_definition_to_factory(direct_agent_definition, work_dir=config.workspace)(llm)
+        agent = agent_definition_to_factory(
+            direct_agent_definition, work_dir=config.workspace
+        )(llm)
         agent = agent.model_copy(
             update={
                 "agent_context": agent.agent_context.model_copy(
@@ -569,7 +568,9 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             ),
             agent_context=build_main_agent_context(skills, role_instructions),
             system_prompt_kwargs={"cli_mode": True},
-            condenser=get_default_condenser(llm.model_copy(update={"usage_id": "senpai-condenser"})),
+            condenser=get_default_condenser(
+                llm.model_copy(update={"usage_id": "senpai-condenser"})
+            ),
         )
     conversation = Conversation(
         agent=agent,
@@ -588,7 +589,9 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
     status = str(conversation.state.execution_status.value)
     print(
         "OPENHANDS_RESULT "
-        + json.dumps({"conversation_id": str(conversation.id), "status": status}, sort_keys=True),
+        + json.dumps(
+            {"conversation_id": str(conversation.id), "status": status}, sort_keys=True
+        ),
         flush=True,
     )
     return 1 if status in FAILING_STATUSES else 0
