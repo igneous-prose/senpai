@@ -118,7 +118,7 @@ target_repo_branch: main
 advisor_branch: schmidhuber
 gh_history_scope: branch
 human_issues: true
-image: ghcr.io/wandb/senpai:pr-3467-afdbbf51a
+image: ghcr.io/wandb/senpai:pr-3467-a26afd7467
 pvc_claim_name: new-pvc
 pvc_mount_path: /mnt/new-pvc
 wandb_entity: wandb-applied-ai-team
@@ -180,7 +180,7 @@ python k8s/launch.py \
 ### Image rebuilds
 
 The default runner image is the public, immutable
-`ghcr.io/wandb/senpai:pr-3467-afdbbf51a` build. The
+`ghcr.io/wandb/senpai:pr-3467-a26afd7467` build. The
 `.github/workflows/build.yaml` workflow also publishes `latest` and short commit
 tags on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, or the
 workflow changes. It can also be rebuilt manually with `workflow_dispatch`.
@@ -195,7 +195,7 @@ with NVIDIA driver 580 or newer and run Docker with GPU access:
 
 ```bash
 docker run --rm --gpus all \
-  ghcr.io/wandb/senpai:pr-3467-afdbbf51a \
+  ghcr.io/wandb/senpai:pr-3467-a26afd7467 \
   senpai-gpu-smoke-test
 ```
 
