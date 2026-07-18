@@ -118,7 +118,7 @@ target_repo_branch: main
 advisor_branch: schmidhuber
 gh_history_scope: branch
 human_issues: true
-image: ghcr.io/wandb/senpai:latest
+image: ghcr.io/wandb/senpai:pr-3467-afdbbf51a
 pvc_claim_name: new-pvc
 pvc_mount_path: /mnt/new-pvc
 wandb_entity: wandb-applied-ai-team
@@ -179,7 +179,11 @@ python k8s/launch.py \
 
 ### Image rebuilds
 
-The published runner image is `ghcr.io/wandb/senpai:latest`. It is built by `.github/workflows/build.yaml` on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, or the workflow changes. It can also be rebuilt manually from the GitHub Actions `workflow_dispatch` button.
+The default runner image is the public, immutable
+`ghcr.io/wandb/senpai:pr-3467-afdbbf51a` build. The
+`.github/workflows/build.yaml` workflow also publishes `latest` and short commit
+tags on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, or the
+workflow changes. It can also be rebuilt manually with `workflow_dispatch`.
 
 ### Launch credentials
 

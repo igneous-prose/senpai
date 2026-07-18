@@ -54,7 +54,7 @@ class Args:
     memory_gi_per_gpu: int = 120  # memory Gi requested per student GPU
     repo_url: str = "https://github.com/wandb/senpai.git"  # git repo URL (senpai runner)
     repo_branch: str = "main"  # git branch to clone (senpai runner)
-    image: str = "ghcr.io/wandb/senpai:latest"  # container image for students
+    image: str = "ghcr.io/wandb/senpai:pr-3467-afdbbf51a"  # container image for students
     wandb_entity: str = "wandb-applied-ai-team"  # W&B entity (team or username)
     wandb_project: str = "senpai-v1"  # W&B project name
     human_issues: bool = True  # allow human GitHub issue triage; disable for isolated launches
@@ -328,13 +328,13 @@ def main():
         print(f"\nLaunched {len(student_list)} students: {', '.join(student_list)}")
         if args.advisor:
             print("Launched advisor pod")
-        print(f"\nMonitor:")
+        print("\nMonitor:")
         print(f"  kubectl get deployments -l research-tag={args.tag}")
         if args.advisor:
             print(f"  kubectl get deployment senpai-advisor-{args.tag}")
         if student_list:
             print(f"  kubectl logs -f deployment/senpai-{args.tag}-{student_list[0]}")
-        print(f"\nStop:")
+        print("\nStop:")
         print(f"  kubectl delete deployments,configmaps,secrets -l research-tag={args.tag}")
 
 

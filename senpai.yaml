@@ -17,7 +17,7 @@ repo_branch: main
 target_repo_branch: ""
 
 # docker image
-image: ghcr.io/wandb/senpai:latest
+image: ghcr.io/wandb/senpai:pr-3467-afdbbf51a
 
 # dataset PVC mount
 pvc_claim_name: new-pvc

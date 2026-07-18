@@ -15,7 +15,7 @@ import pytest
 ENTITY = "wandb-applied-ai-team"
 PROJECT = "senpai-v1"
 POD_NAME = "senpai-image-test"
-IMAGE = "ghcr.io/wandb/senpai:latest"
+IMAGE = "ghcr.io/wandb/senpai:pr-3467-afdbbf51a"
 REPO_URL = "https://github.com/wandb/senpai.git"
 REPO_BRANCH = "main"
 POD_TEMPLATE = Path(__file__).parent / "test-pod.yaml"
