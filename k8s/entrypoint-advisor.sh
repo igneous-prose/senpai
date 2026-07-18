@@ -12,8 +12,9 @@ GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
 TARGET_REPO_BRANCH="${TARGET_REPO_BRANCH:-}"
 export SENPAI_ROLE="advisor"
 export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
+export SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
+export SENPAI_OPENHANDS_ROLE_FILE="$WORKDIR/CLAUDE.md"
 GIT_CREDENTIAL_FILE="$WORKDIR/.git-credentials"
-SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
 
 echo "=== Senpai Advisor ==="
 echo "Runner repo:  $REPO_URL (branch: $REPO_BRANCH)"
@@ -22,6 +23,9 @@ echo "Problem dir:  $PROBLEM_DIR"
 echo "Tag:          $RESEARCH_TAG"
 echo "Students:     $STUDENT_NAMES"
 echo "GitHub history: $GH_HISTORY_SCOPE"
+
+source "$WORKDIR/k8s/wait-senpai-start-gate.sh"
+wait_for_senpai_start_gate
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
@@ -76,7 +80,7 @@ if [ ! -d "$PROBLEM_DIR/.git" ] && ! clone_target_repo; then
 fi
 git config --global --unset-all credential.helper 2>/dev/null || true
 
-uv pip install --system -e .
+uv pip install --python "$SENPAI_PYTHON" --no-deps -e .
 
 # --- Git identity (inside the problem-package repo) ---
 cd "$WORKDIR/$PROBLEM_DIR"
@@ -108,12 +112,13 @@ fi
 LOGDIR="$WORKDIR/advisor_logs"
 mkdir -p "$LOGDIR"
 
-# --- Install checked-in Claude Code config into user scope ---
-mkdir -p "$HOME/.claude"
+# --- Install checked-in agent skills and config into user scope ---
+mkdir -p "$HOME/.agents" "$HOME/.claude"
+cp -a "$WORKDIR/.agents/." "$HOME/.agents/"
 cp -a "$WORKDIR/.claude/." "$HOME/.claude/"
 
-echo "=== Claude config installed ==="
-ls "$HOME/.claude/skills/wandb-primary/SKILL.md" "$HOME/.claude/agents/researcher-agent.md"
+echo "=== Agent config installed ==="
+ls "$HOME/.agents/skills/wandb-primary/SKILL.md" "$HOME/.claude/agents/researcher-agent.md"
 
 # --- Start Hivemind logging service (streams CC session logs to hivemind.wandb.tools) ---
 source "$WORKDIR/k8s/start-hivemind.sh"
@@ -121,6 +126,7 @@ start_hivemind
 
 # --- Load CC run command helper function ---
 source "$WORKDIR/k8s/run-senpai-claude.sh"
+source "$WORKDIR/k8s/advisor-claude-watchdog.sh"
 
 # --- Register Weave CC plugin (tools already baked into Docker image) ---
 export PATH="$HOME/.claude/bin:$PATH"
@@ -131,13 +137,15 @@ source "$WORKDIR/k8s/install-weave-cc-plugin.sh"
 # command and `gh api` call targets the problem-package repo, not senpai,
 # regardless of the agent's cwd.
 
-# --- Build prompts (CC auto-discovers CLAUDE.md for role instructions) ---
+# --- Build task prompt (the runner injects CLAUDE.md as system instructions) ---
 TASK_INSTRUCTIONS="$(envsubst < "$WORKDIR/$PROBLEM_DIR/instructions/prompt-advisor.md" | sed '/^<!--$/,/^-->$/d')"
 PROMPT="${TASK_INSTRUCTIONS}"
+EXTRA_LAUNCH_INSTRUCTIONS=""
 
 # Append extra instructions from launch.py if provided
 if [ -n "${EXTRA_INSTRUCTIONS_B64:-}" ]; then
-    PROMPT="${PROMPT}"$'\n\n# Finally, some additional instructions\n\n'"$(printf '%s' "$EXTRA_INSTRUCTIONS_B64" | base64 -d)"
+    EXTRA_LAUNCH_INSTRUCTIONS="$(printf '%s' "$EXTRA_INSTRUCTIONS_B64" | base64 -d)"
+    PROMPT="${PROMPT}"$'\n\n# Finally, some additional instructions\n\n'"${EXTRA_LAUNCH_INSTRUCTIONS}"
 fi
 
 # Add "$KEY_INFO" (reminder of student names etc) to PROMPT
@@ -150,10 +158,11 @@ HEARTBEAT_PROMPT="Continue your advisor loop. Attached is the current research s
 # --- Last-check timestamp state for filtering GitHub issues ---
 LAST_CHECK_FILE="$LOGDIR/.last_check_ts"
 
-# --- Launch Claude Code Loop ---
+# --- Launch OpenHands Loop ---
 export IS_SANDBOX=1
 
-SLEEP_TIME_S=300
+SLEEP_TIME_S="${SENPAI_ADVISOR_POLL_INTERVAL_S:-${SENPAI_POLL_INTERVAL_S:-600}}"
+POLL_JITTER_S="${SENPAI_ADVISOR_POLL_JITTER_S:-${SENPAI_POLL_JITTER_S:-120}}"
 MAX_TURNS=100000
 export SENPAI_CLAUDE_TIMEOUT_SECONDS="${SENPAI_CLAUDE_TIMEOUT_SECONDS:-3600}"
 
@@ -213,12 +222,12 @@ while true; do
         echo "=== Iteration $ITERATION: Using FULL prompt + triage ==="
         echo "$FULL_PROMPT"
         echo "$TRIAGE_INFO"
-        run_senpai_claude $MAX_TURNS "${FULL_PROMPT}"$'\n\n'"${TRIAGE_INFO}" || EXIT_CODE=$?
+        run_advisor_claude_with_watchdog $MAX_TURNS "${FULL_PROMPT}"$'\n\n'"${TRIAGE_INFO}" || EXIT_CODE=$?
     else
         # --- Programmatic skip: skip rest of CC loop if nothing actionable ---
         if [ "$REVIEW_COUNT" -eq 0 ] && [ "$ADVISOR_ACTION_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ] && [ "$IDLE_COUNT" -eq 0 ] && [ "$POD_ANOMALY_COUNT" -eq 0 ]; then
-            echo "=== Iteration $ITERATION: Nothing actionable, sleeping $SLEEP_TIME_S seconds ==="
-            sleep "$SLEEP_TIME_S"
+            echo "=== Iteration $ITERATION: Nothing actionable, sleeping $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter ==="
+            senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
             continue
         fi
 
@@ -226,8 +235,12 @@ while true; do
         echo "$HEARTBEAT_PROMPT"
         echo "$TRIAGE_INFO"
 
-        CONTINUE_PROMPT="${HEARTBEAT_PROMPT}"$'\n\n'"${TRIAGE_INFO}"
-        run_senpai_claude 1000 "$CONTINUE_PROMPT" -c || EXIT_CODE=$?
+        CONTINUE_PROMPT="${HEARTBEAT_PROMPT}"
+        if [ -n "$EXTRA_LAUNCH_INSTRUCTIONS" ]; then
+            CONTINUE_PROMPT="${CONTINUE_PROMPT}"$'\n\n# Launch isolation and run-limit reminder\n\n'"${EXTRA_LAUNCH_INSTRUCTIONS}"
+        fi
+        CONTINUE_PROMPT="${CONTINUE_PROMPT}"$'\n\n'"${TRIAGE_INFO}"
+        run_advisor_claude_with_watchdog 1000 "$CONTINUE_PROMPT" -c || EXIT_CODE=$?
     fi
     DURATION=$(( $(date +%s) - START_TS ))
 
@@ -238,6 +251,10 @@ while true; do
         echo "=== Poll incomplete; not advancing last-check timestamp ==="
     fi
 
-    echo "=== Advisor exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds ==="
-    sleep "$SLEEP_TIME_S"
+    echo "=== Advisor exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter ==="
+    if [ "$EXIT_CODE" -eq 124 ]; then
+        echo "=== Advisor Claude watchdog fired; re-polling immediately ==="
+        continue
+    fi
+    senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
 done

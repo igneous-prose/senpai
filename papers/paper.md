@@ -1,7 +1,7 @@
 SENPAI: Self-ExperimentatioN for Physical AI - an observability-based research harness
 
 
-SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Training CFD surrogates encompasses standard ML training considerations - architecture, optimizer, schedule, and loss design - but also physics-aware considerations such as boundary conditions, symmetries, and rollout stability. The harness orchestration is deliberately thin: an Advisor agent proposes hypotheses as GitHub pull requests; Student agents check out each PR, execute training based on the hypothesis, and write results back to the PR. Every hypothesis is grounded by a literature-search sub-agent callable by the advisor or student. A key contribution is the observability-first memory and orchestration that goes beyond scratchpad files and in-context memory; SENPAI also grounds state in the artifacts ML researchers already use - PRs, git history, and an experiment logger (Weights & Biases) - producing an experiment ledger queryable by agents, researchers, and the harness itself. This design enables the system to learn from past experiments, reflect on its own trajectories, and keeps humans meaningfully in the research loop - properties that are difficult to achieve simultaneously in prior agentic research systems. We run SENPAI on a Transolver model jointly across three aerodynamic benchmarks: TandemFoilSet, AirfRANS, and DrivAerML. On the AirfRANS benchmark the final recipe outperforms the reported Transolver baseline on surface-MSE; on TandemFoilSet dataset it is competitive with the normalized full-field MSE reported in the TandemFoilSet paper benchmark.; on DrivAerML, preliminary runs show surface pressure relative-L2 nearing reported Large Eddy Simulation (LES) references for the Transolver model. Taken together, our results demonstrate that AI scientists function best as near-autonomous co-workers that can run up to 72 hours unsupervised, with only minor course corrections required after these durations. We release the harness, the PR-indexed experiment ledger, and a failure-mode analysis. 
+SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Training CFD surrogates encompasses standard ML training considerations - architecture, optimizer, schedule, and loss design - but also physics-aware considerations such as boundary conditions, symmetries, and rollout stability. The harness orchestration is deliberately thin: an Advisor agent proposes hypotheses as GitHub pull requests; Student agents check out each PR, execute training based on the hypothesis, and write results back to the PR. Every hypothesis is grounded by a literature-search sub-agent callable by the advisor or student. A key contribution is the observability-first memory and orchestration that goes beyond scratchpad files and in-context memory; SENPAI also grounds state in the artifacts ML researchers already use - PRs, git history, and an experiment logger (Weights & Biases) - producing an experiment ledger queryable by agents, researchers, and the harness itself. This design enables the system to learn from past experiments, reflect on its own trajectories, and keeps humans meaningfully in the research loop - properties that are difficult to achieve simultaneously in prior agentic research systems. We run SENPAI on a Transolver model jointly across three aerodynamic benchmarks: TandemFoilSet, AirfRANS, and DrivAerML. On the AirfRANS benchmark the final recipe outperforms the reported Transolver baseline on surface-MSE; on TandemFoilSet dataset it is competitive with the normalized full-field MSE reported in the TandemFoilSet paper benchmark.; on DrivAerML, H147 reaches the best single-model surface- and volume-pressure relative-L2 among compared references while improving wall shear over the original Transolver and AB-UPT. Taken together, our results demonstrate that AI scientists function best as near-autonomous co-workers that can run up to 72 hours unsupervised, with only minor course corrections required after these durations. We release the harness, the PR-indexed experiment ledger, and a failure-mode analysis.
 
 
 ---------------------
@@ -47,15 +47,15 @@ Median Advisor output tokens per PR
 
 
 
-Contributions 
+Contributions
 [Observability Harness contribution]
 SENPAI contributes a new observability-first harness for semi-autonomous research. By grounding state in structured, queryable units of data, GitHub PRs and commits and W&B runs, we produce and experiment ledger that is both researcher and agent-friendly. This structured logging of results enables the research harness to reproducibly query for past experiments, check the status of current experiments and identify idle resources. It also enables researchers to view the current experiments in flight as well as inspect successful and unsuccessful experiments. The centralisation of these results also enables researchers to do on-the-fly analysis of the current research progress which can then inform if the harness needs additional steering or guidance.
 
 [PAI contribution]
-SENPAI autonomously improves multiple CFD surrogate benchmarks starting from a basic Transolver model: Under the directly comparable aggregate AirfRANS full-regime Surface MSE protocol, SENPAI generated a solution with the lowest surface error we found (7.77e-4) however its volume MSE remains higher than the strongest reported volume results, at 3.33e-3 versus 1.1e-3 for LRSA (Yang et al., 2026) and 1.7e-3 for SpiderSolver (Qi et al., 2025). On DrivAerML, surface-pressure relative-L2 reaches 4.50%, improving on the reported Transolver DrivAerML baseline (4.81%) while still trailing Transolver++ (4.12%), AB-UPT (3.82%), and Transolver-3 (3.71%); On TandemFoilSet , SENPAI reaches normalized full-field test MSE of 1.78e-3, below the TandemFoilSet paper’s best Experiment-4 MSEs (0.10–0.36) across the Cruise Random and Race Car tasks (Lim et al., 2026), and on TandemFoilSet-Balanced (McGuire and Capelle, 2026), SENPAI reaches an average test surface-pressure MAE of 22.87 across the 4 sub-metics.
+SENPAI autonomously improves multiple CFD surrogate benchmarks starting from a basic Transolver model: Under the directly comparable aggregate AirfRANS full-regime Surface MSE protocol, SENPAI generated a solution with the lowest surface error we found (7.77e-4) however its volume MSE remains higher than the strongest reported volume results, at 3.33e-3 versus 1.1e-3 for LRSA (Yang et al., 2026) and 1.7e-3 for SpiderSolver (Qi et al., 2025). On DrivAerML, the H147 single checkpoint from PR #1344 / W&B `k6q4c3on` reaches surface-pressure relative-L2 3.5634%, volume-pressure relative-L2 3.4014%, and vector wall-shear relative-L2 6.5409%, giving the best pressure results among the compared single-model references while improving wall shear over AB-UPT and the original Transolver. On TandemFoilSet, SENPAI reaches normalized full-field test MSE of 1.78e-3, below the TandemFoilSet paper’s best Experiment-4 MSEs (0.10–0.36) across the Cruise Random and Race Car tasks (Lim et al., 2026), and on TandemFoilSet-Balanced (McGuire and Capelle, 2026), SENPAI reaches an average test surface-pressure MAE of 22.87 across the 4 sub-metics.
 
 
-Failure-mode taxonomy 
+Failure-mode taxonomy
 
 Finally, SENPAI contributes an empirical failure-mode analysis of long-running agentic ML research systems. Because every agent trajectory, tool call, PR transition, W&B run, monitor event, and context compaction was logged, we can audit the system as an experimental object rather than describe failures anecdotally. We audit a 24-hour fleet trace containing 53,022 real Claude requests and 5.24B tokens across one Advisor and 57 token-emitting Student agents. The dominant failure case was monitor-driven context bloat: 28,247 model-facing monitor events from Claude Code’s Monitor tool generated 28,246 direct model responses and consumed 3.25B cache-inclusive tokens as brief training-log updates were passed to the full, long-lived agent context. Tool-use errors accounted for 892 of 25,365 tool uses (3.5%), and Student agents spent 3.8% of their usage records checking whether a PR had been assigned to them or whether a human had opened an issue requiring attention.
 
@@ -79,17 +79,17 @@ The rest of this section describes the ledger (§2.1), the harness loop and its 
 Each experiment follows six steps:
 
 0. Research. The Advisor decides whether or not to run the research sub-agent to design the next batch of experiments(s)
-1. Assignment. The Advisor drafts a PR containing a hypothesis, the exact training code guidelines to run against the current baseline, and the metrics to improve. A PR label names the target Student; 
+1. Assignment. The Advisor drafts a PR containing a hypothesis, the exact training code guidelines to run against the current baseline, and the metrics to improve. A PR label names the target Student;
 2. Implementation and training. The Student polls for PRs assigned to it, checks out the PR branch once it discovers one, implements the changes and launches training experiments, with logging performed by W&B.
 3. Reporting On experiment completion the Student posts PR comment with a summary of the experiment results and changes the PR status from wip to review in order to request a review from the Advisor.
 4. Review The Advisor polls for PRs that are ready for review and reviews the work and results against the proposed hypothesis and validation metric (§2.3). From there it decides whether to merge the change, comment and ask for follow up work, or close the PR.
 5. Baseline advance If a PR is merged then the Advisor also updates the current baseline metric on the Advisor branch, against which every subsequent PR is compared.
 
-2.2 The Experiment Ledger - Pull requests and Experiment Logger 
+2.2 The Experiment Ledger - Pull requests and Experiment Logger
 
-Every experiment is a pull request and a set of W&B logs. The PR body holds the hypothesis, the experiment instructions, and the baseline metrics to improve upon; the comments thread carries the Student's results and any Advisor review notes. The Experiment logger (W&B) carries the quantitative side: each run documents the training config and results metric. The two tools together form an observable experiment ledger - researcher-inspectable through the GitHub and W&B UIs, and machine-queryable through the CLI. When researchers want to investigate an individual experiment they can open the GitHub PR, read the hypothesis, setup and results and open the associated W&B training run to view the configs and metrics used. The ease of research observability using tools researchers use daily lowers the barriers for researchers to understand what is going on in the system - a key feature for autoresearch systems that can produce hundreds or thousands of experiments during a research program. 
+Every experiment is a pull request and a set of W&B logs. The PR body holds the hypothesis, the experiment instructions, and the baseline metrics to improve upon; the comments thread carries the Student's results and any Advisor review notes. The Experiment logger (W&B) carries the quantitative side: each run documents the training config and results metric. The two tools together form an observable experiment ledger - researcher-inspectable through the GitHub and W&B UIs, and machine-queryable through the CLI. When researchers want to investigate an individual experiment they can open the GitHub PR, read the hypothesis, setup and results and open the associated W&B training run to view the configs and metrics used. The ease of research observability using tools researchers use daily lowers the barriers for researchers to understand what is going on in the system - a key feature for autoresearch systems that can produce hundreds or thousands of experiments during a research program.
 
-By using an experiment logger with agent observability tooling and mature CLIs, researches’ agents can also query for SENPAI agent trajectories as well as experiment results and status’ and quickly generate aggregate reports for researchers, again providing researchers with more visibility and understanding into what these autoresearch systems are doing. 
+By using an experiment logger with agent observability tooling and mature CLIs, researches’ agents can also query for SENPAI agent trajectories as well as experiment results and status’ and quickly generate aggregate reports for researchers, again providing researchers with more visibility and understanding into what these autoresearch systems are doing.
 
 Finally, this structured, accessible logging also means that harness issues or failures such as pod restarts, context compactions, and fresh-container boots are less harmful for agent state and a research program can quickly recover even if agent context and local experiment scratchpad files are lost.
 
@@ -99,12 +99,12 @@ In addition to the core experiment ledger, the Advisor also keeps a small set of
 
 2.3 SENPAI’s harness loop
 
-SENPAI deploys as a small set of Kubernetes workloads: one Advisor CPU pod, N Student GPU pods, and a shared persistent data volume for datasets and checkpoints. The harness image is stable across problems; a task repository is swapped in per programme (bring-your-own-repo), so every agent commit, branch, and PR lives in a self-contained target repository that a researcher can inspect independent of the harness. 
+SENPAI deploys as a small set of Kubernetes workloads: one Advisor CPU pod, N Student GPU pods, and a shared persistent data volume for datasets and checkpoints. The harness image is stable across problems; a task repository is swapped in per programme (bring-your-own-repo), so every agent commit, branch, and PR lives in a self-contained target repository that a researcher can inspect independent of the harness.
 
 The outer harness loop is a shell wrapper, not an LLM. The Advisor entrypoint wraps Claude Code in a `while true` iteration, in the spirit of Huntley's "Ralph loop" pattern. We use programmatic triage to determine if Students are idle as well as new PRs, Issues and comments in order to remove the cost of using an LLM to do polling. We note elsewhere in this paper that despite this we still encountered high token usage via monitoring that we have subsequently addressed. The Claude Code agent is now encouraged to exit and the outer programmatic loop is used to identify updates that require the Claude Code session to be continued with the information from the update.
 
 ```
-# Advisor outer loop 
+# Advisor outer loop
 # entrypoint_advisor.sh
 iteration, last_check = 0, None
 while True:
@@ -138,17 +138,17 @@ Researchers can steer and interact with SENPAI through GitHub. The Advisor and S
 3. Experiments and Results
 3.1 Experiment setup
 
-Claude Code (v2.1.85 to v2.1.117) was run in headless mode as the agent harness for both the Advisor and Students. The Claude Opus 4.6 LLM drove early experimentation whilst Claude Opus 4.7 drove the later experiments. Advisor and Student instructions used can be found in Appendix A. Student pods were scheduled on NVIDIA RTX 6000 Blackwell nodes (96 GB VRAM per GPU, 8 GPUs per Student node); we tested up to N = 59 concurrent Students, with peak concurrent training runs of 347. The harness experiments and iteration was run for 1 month and in that time 30 billion tokens were processed by Claude Code.
+Claude Code (v2.1.85 to v2.1.117) was run in headless mode as the agent harness for both the Advisor and Students. The Claude Opus 4.8 LLM drove the experiments. Advisor and Student instructions used can be found in Appendix A. Student pods were scheduled on NVIDIA RTX 6000 Blackwell nodes (96 GB VRAM per GPU, 8 GPUs per Student node); we tested up to N = 59 concurrent Students, with peak concurrent training runs of 347. The harness experiments and iteration was run for 1 month and in that time 30 billion tokens were processed by Claude Code.
 
 3.2 Data and Benchmarks
 
-To demonstrate SENPAI’s CFD performance across multiple benchmarks we train and evaluate on three CFD surrogate datasets spanning 2D tandem-airfoil flow, 2D airfoil RANS, and 3D automotive aerodynamics: TandemFoilSet (Lim et al., 2026), AirfRANS (Bonnet et al., 2022), and DrivAerML (Ashton et al., 2024). 
+To demonstrate SENPAI’s CFD performance across multiple benchmarks we train and evaluate on three CFD surrogate datasets spanning 2D tandem-airfoil flow, 2D airfoil RANS, and 3D automotive aerodynamics: TandemFoilSet (Lim et al., 2026), AirfRANS (Bonnet et al., 2022), and DrivAerML (Ashton et al., 2024).
 
 TandemFoilSet: we use the paper’s original Experiment 4 partition as one of two TandemFoilSet datasets and measure denormalized surface pressure MAE. We generate a second TandemFoilSet dataset split, named TandemFoilSet-Balanced (CITE https://github.com/morganmcg1/tandemfoil2), with 1,499 training cases and four balanced test splits: single-foil in-distribution, two unseen-front-camber geometry holdouts (race-car and cruise), and a Reynolds-number holdout - an average of these 4 splits is taken as the primary test metric.
 
-AirfRANS: we use the official full task with the last 10% of the official training list held out for validation, giving a 720/80/200 train/val/test split while keeping the official test set unchanged. We test on normalized targets on the official test split. 
+AirfRANS: we use the official full task with the last 10% of the official training list held out for validation, giving a 720/80/200 train/val/test split while keeping the official test set unchanged. We test on normalized targets on the official test split.
 
-DrivAerML: we use the public surface split on the available processed cases (400/34/50 train/val/test) and measure surface-pressure relative-L2 in percent, computed per case on unnormalized predictions and targets and then averaged over test cases.
+DrivAerML: we use the public processed split on the available processed cases (400/34/50 train/val/test) and measure surface-pressure, vector wall-shear, and volume-pressure relative-L2 in percent, computed per case on unnormalized predictions and targets and then averaged over test cases.
 
 
 3.2.1 AirfRANS: surface-MSE below published Transolver
@@ -203,29 +203,19 @@ The packaged parity target (`target/icml2026/tandemfoil/`) uses the public `kage
 
 Test surface-pressure MAE improved from 33.88 (run `v6amjkh7`, PR #2810) to 24.58 (run `nrn0q3ct`, branch `robin/ema-warmup-tandem-0.999`), a 27% reduction achieved entirely through PR-mediated Advisor–Student iteration, with zero manual intervention between the two numbers. The pathway is visible in the PR ledger. Early PRs stepped the learning rate down from 3e-4 to 1.25e-4 and added gradient clipping at 1.0; a subsequent EMA-warmup recipe family then crossed the 25.0 MAE threshold. Figure 2 overlays these milestones on the W&B loss curve.
 
-3.2.3 DrivAerML: preliminary surface-pressure transfer result
-< TO BE UPDATED>
+3.2.3 DrivAerML: single-checkpoint pressure result
 
-DrivAerML is treated as a transfer benchmark in this paper: we apply the shared Transolver stack used for AirfRANS and TandemFoilSet, evaluate on the public 400-train / 34-val / 50-test split, and report mean per-case surface-pressure relative-L2 on unnormalised predictions (`surface_rel_l2_pct`). There is no single canonical public scalar in the DrivAerML literature, so we follow the AB-UPT and Transolver-3 reporting convention, which has converged on this metric, split family, and aggregation rule. We do not report a volume or multi-field comparison and scope this benchmark as surface-pressure transfer only, not a full multi-field result.
+On DrivAerML we report H147 from PR #1344, W&B run `k6q4c3on`, as SENPAI's best single trained checkpoint. It reaches test surface-pressure relative-L2 3.5634%, volume-pressure relative-L2 3.4014%, vector wall-shear relative-L2 6.5409%, and AB-UPT-axis mean 5.6648%. This improves the original Transolver on all three target families, gives the best single-model pressure results among compared references, and improves wall shear over AB-UPT and Transolver while remaining behind Transolver-3 and Transolver++ for wall shear.
 
-Our best-checkpoint numbers on the public split are val = 4.62% and test = 6.24%. The strongest directly-comparable published references are Transolver-3 (3.71%) and AB-UPT (3.82%). Our best-val result sits in the secondary-provenance band (Transolver at 4.81%, Transolver++ at 4.12%, both recovered from the AB-UPT / Transolver-3 comparison tables); our best-test is above that band. We therefore report DrivAerML as preliminary transfer work and do not claim a competitive benchmark result.
+Table 3: DrivAerML public-split test relative-L2 (%). Mean per case on unnormalised predictions; lower is better.
 
-Table 3: DrivAerML public-split surface-pressure relative-L2 (%). Mean per case on unnormalised predictions; lower is better.
-
-Method
-p_s rel-L2 (%)
-Transolver-3 [2026]
-3.71
-AB-UPT [2025]
-3.82
-Transolver++ (secondary provenance)
-4.12
-Transolver (secondary provenance)
-4.81
-SENPAI, best val
-4.62
-SENPAI, best test
-6.24
+Method | p_s | tau | p_v
+--- | ---: | ---: | ---:
+SENPAI (ours) | 3.56 | 6.54 | 3.40
+Transolver-3 [2026] | 3.71 | 5.85 | 5.72
+AB-UPT [2025] | 3.82 | 7.29 | 6.08
+Transolver++ (secondary provenance) | 4.12 | 6.42 | 6.70
+Transolver (secondary provenance) | 4.81 | 8.95 | 7.74
 
 
 
@@ -248,7 +238,7 @@ Queryable retrospection: `list-experiments` answered cross-benchmark questions (
 4.1 Observable State as a Control Surface
 The PR and W&B ledger made SENPAI useful as a research assistant rather than just an autonomous executor. By placing the core experiment ledger in systems already used by ML teams, the harness kept researchers close to the work without requiring them to supervise every experiment. Agents could run large numbers of experiments independently while researchers could still see, question, and redirect the broader research program via the tools they use daily.
 
-This externalized state also reduced the fragility of this long-running system. When agents compacted, restarted, or lost local scratchpad context, the next cycle could reconstruct the experiment from the PR, git history, and W&B runs. 
+This externalized state also reduced the fragility of this long-running system. When agents compacted, restarted, or lost local scratchpad context, the next cycle could reconstruct the experiment from the PR, git history, and W&B runs.
 
 Finally, the ledger turned a collection of individual experiments into a queryable research programme. Both researchers and agents could ask what had been tried, which failures were meaningful, which recipes transferred, and where progress had stalled. In this sense, SENPAI’s core contribution is not replacing the researcher, but increasing the bandwidth at which researchers can understand, guide, and accelerate autonomous experimentation.
 
@@ -259,7 +249,7 @@ To contrast SENPAI's Advisor-mediated loop, we ran two cohorts under `kagent`, a
 > Your objective is to top the leaderboard. If you are stuck with a low scoring solution, don't be afraid to try radical changes, marginal improvements on your low scoring solution are not going to cut it!
 
 
-**TandemFoilSet parity head-to-head (Appendix G.1).** An eight-agent Opus 4.7 cohort ran for 12 h (2026-04-23 → 2026-04-24) on the same dataset, split family, and primary metric as the SENPAI result in §3.2.2b. Head-to-head on denormalised pressure-channel surface MAE averaged over the four val/test tracks:
+**TandemFoilSet parity head-to-head (Appendix G.1).** An eight-agent Opus 4.8 cohort ran for 12 h (2026-04-23 → 2026-04-24) on the same dataset, split family, and primary metric as the SENPAI result in §3.2.2b. Head-to-head on denormalised pressure-channel surface MAE averaged over the four val/test tracks:
 
 | Harness | Agents × GPUs | Scored runs | Best avg-surf-p MAE | Wall clock |
 |---|---|---|---|---|
@@ -314,7 +304,7 @@ Session mortality closed only by infrastructure fix (PR #3029 best-checkpoint sa
 Derived summary state drifted silently from the authoritative ledger
 ⇒ agentic research systems should be designed for these failure modes, not against them
 
-Release commitment: 
+Release commitment:
 harness, PR-indexed experiment ledger, failure-mode analysis all released as open source on <URL>
 
 ---
@@ -700,4 +690,4 @@ The three agents who did not find the unlock stalled. *Thorfinn* documented the 
 
 
 
-G.2 GRaM ICLR 2026 open-competition run.* We pointed sixteen Claude Opus 4.6 agents at the [GRaM ICLR 2026 competition](https://github.com/gram-competition/iclr-2026), predicting the 3D velocity field around Formula-1 front-wing geometries for five future timesteps given five past, on ~100k-point meshes, scored by mean L2 velocity error, on `gram-mar29/kaggler/<name>` branches from 2026-03-29 to 2026-03-30 (~30 h wall clock, single-GPU pod each, 30-minute-per-training-run budget, starting from the reference MLP baseline shipped with the competition). The [final leaderboard](https://github.com/tcapelle/kagent/blob/20a631f83958a912e8ba1dcc0d7f372a99c2d3f4/leaderboard.md) shows a ~2× spread across the cohort: winner *violet* at 0.8526 L2, *gilbert* at 1.0230, [*thorfinn*](https://github.com/tcapelle/kagent/commit/e087be89ed601deda6770d25aefde9597409062b) at 1.0742 (`lr=1e-3 + dropout=0.02 + aggressive val skipping`); [*frieren*](https://github.com/tcapelle/kagent/commit/731a5c0aafbb5635330c2e81a7cb17c82c368312) landed mid-pack at 1.1535 (rank 5) after twelve iterations through loss-function variants (L1+L2 → MSE+L2 → pure L2-norm); *alphonse* finished last at 1.6226. The reachable scored commits span MLP-with-regularisation, [residual-from-mean-velocity](https://github.com/tcapelle/kagent/commit/9833cd308a) (*emma* iter35), [subsample-and-tune](https://github.com/tcapelle/kagent/commit/ac1af4d388) (*haku*), and a [GNN run](https://github.com/tcapelle/kagent/commit/89f15ea165) (*nezuko* v12d). Starting from the reference MLP and with only about 30 hours of autonomous search, the best cohort checkpoint was packaged as submission PR #4 and later ranked 4th of 22 valid submissions on the official held-out leaderboard, scoring relative-L2 error 0.0553 ± 0.0168. Internally, the winning cohort member had reached 0.8526 mean L2 against a roughly 1.75 reference-MLP baseline.
+G.2 GRaM ICLR 2026 open-competition run.* We pointed sixteen Claude Opus 4.8 agents at the [GRaM ICLR 2026 competition](https://github.com/gram-competition/iclr-2026), predicting the 3D velocity field around Formula-1 front-wing geometries for five future timesteps given five past, on ~100k-point meshes, scored by mean L2 velocity error, on `gram-mar29/kaggler/<name>` branches from 2026-03-29 to 2026-03-30 (~30 h wall clock, single-GPU pod each, 30-minute-per-training-run budget, starting from the reference MLP baseline shipped with the competition). The [final leaderboard](https://github.com/tcapelle/kagent/blob/20a631f83958a912e8ba1dcc0d7f372a99c2d3f4/leaderboard.md) shows a ~2× spread across the cohort: winner *violet* at 0.8526 L2, *gilbert* at 1.0230, [*thorfinn*](https://github.com/tcapelle/kagent/commit/e087be89ed601deda6770d25aefde9597409062b) at 1.0742 (`lr=1e-3 + dropout=0.02 + aggressive val skipping`); [*frieren*](https://github.com/tcapelle/kagent/commit/731a5c0aafbb5635330c2e81a7cb17c82c368312) landed mid-pack at 1.1535 (rank 5) after twelve iterations through loss-function variants (L1+L2 → MSE+L2 → pure L2-norm); *alphonse* finished last at 1.6226. The reachable scored commits span MLP-with-regularisation, [residual-from-mean-velocity](https://github.com/tcapelle/kagent/commit/9833cd308a) (*emma* iter35), [subsample-and-tune](https://github.com/tcapelle/kagent/commit/ac1af4d388) (*haku*), and a [GNN run](https://github.com/tcapelle/kagent/commit/89f15ea165) (*nezuko* v12d). Starting from the reference MLP and with only about 30 hours of autonomous search, the best cohort checkpoint was packaged as submission PR #4 and later ranked 4th of 22 valid submissions on the official held-out leaderboard, scoring relative-L2 error 0.0553 ± 0.0168. Internally, the winning cohort member had reached 0.8526 mean L2 against a roughly 1.75 reference-MLP baseline.

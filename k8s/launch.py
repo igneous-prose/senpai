@@ -37,6 +37,8 @@ STUDENT_TEMPLATE = Path(__file__).parent / "student-deployment.yaml"
 ADVISOR_TEMPLATE = Path(__file__).parent / "advisor-deployment.yaml"
 SENPAI_CONFIG = Path(__file__).parent.parent / "senpai.yaml"
 DOTENV_PATH = Path(__file__).parent.parent / ".env"
+
+
 @dataclass
 class Args:
     """Launch senpai advisor and/or student agents on Kubernetes."""
@@ -64,8 +66,71 @@ class Args:
     extra_instructions: str = ""  # extra prompt text for the advisor: a .md file path or a literal string
     timeout_minutes: float = 30.0  # training run wall-clock limit (SENPAI_TIMEOUT_MINUTES)
     max_epochs: int = 50  # maximum training epochs (SENPAI_MAX_EPOCHS)
+    poll_interval_s: int = 600  # default advisor/student outer-loop sleep between GitHub polls
+    poll_jitter_s: int = 120  # max random jitter added to outer-loop sleeps
+    stale_wip_seconds: int = 7200  # advisor-action threshold for stale WIP PRs
+    advisor_claude_watchdog_interval_s: int = 60  # how often advisor watchdog checks active Claude
+    advisor_claude_min_runtime_s: int = 600  # minimum advisor runtime before stale-log intervention
+    advisor_claude_stale_log_s: int = 1200  # advisor stale-log intervention threshold
+    student_claude_watchdog_interval_s: int = 300  # how often student watchdog checks active Claude
+    student_claude_watchdog_jitter_s: int = 60  # max jitter added to student watchdog checks
+    student_claude_min_runtime_s: int = 600  # minimum student runtime before stale-log intervention
+    student_claude_stale_log_s: int = 1200  # student stale-log intervention threshold
+    student_assignment_drift_grace_s: int = 1800  # grace before stopping active work after assignment changes
+    start_gate_path: str = ""  # optional shared file path that must exist before advisor/student loops begin
     dry_run: bool = False  # render manifests only: do not apply them or validate credentials
     preflight_only: bool = False  # validate credentials/access only: do not render or apply manifests
+
+
+def validate_timing_args(args: Args) -> None:
+    positive = [
+        "poll_interval_s",
+        "advisor_claude_watchdog_interval_s",
+        "advisor_claude_min_runtime_s",
+        "advisor_claude_stale_log_s",
+        "student_claude_watchdog_interval_s",
+        "student_claude_min_runtime_s",
+        "student_claude_stale_log_s",
+    ]
+    non_negative = [
+        "poll_jitter_s",
+        "stale_wip_seconds",
+        "student_claude_watchdog_jitter_s",
+        "student_assignment_drift_grace_s",
+    ]
+    for name in positive:
+        if getattr(args, name) < 1:
+            sys.exit(f"ERROR: --{name} must be at least 1")
+    for name in non_negative:
+        if getattr(args, name) < 0:
+            sys.exit(f"ERROR: --{name} must be non-negative")
+
+
+def load_extra_instructions(extra_instructions: str) -> str:
+    if not extra_instructions:
+        return ""
+    p = Path(extra_instructions)
+    return p.read_text() if p.exists() else extra_instructions
+
+
+def build_extra_instructions(args: Args, tag: str, student_list: list[str]) -> str:
+    students = ", ".join(student_list)
+    target_base = args.target_repo_branch or "<default>"
+    isolation = f"""# Launch isolation and run-limit rules
+
+- This launch is scoped to research tag `{tag}`, advisor branch `{args.advisor_branch}`, and target base branch `{target_base}`.
+- Only inspect, modify, or reason from `{args.advisor_branch}` plus PR branches assigned to these students in this launch: {students}.
+- Do not inspect, compare, summarize, cherry-pick, borrow from, or base decisions on any PR or branch outside `{args.advisor_branch}` and the assigned student PR branches for this launch.
+- Do not use unrelated experiment runs or historical results unless the human explicitly names them during this launch.
+- Students branch from `{args.advisor_branch}`. Do not rebase or retarget work onto unrelated branches.
+- Treat `SENPAI_TIMEOUT_MINUTES` and `SENPAI_MAX_EPOCHS` as hard per-training-run bounds. Do not override them or continue a run past them.
+"""
+    user_extra = load_extra_instructions(args.extra_instructions)
+    return isolation if not user_extra else isolation + "\n# Additional operator instructions\n\n" + user_extra
+
+
+def encoded_extra_instructions(args: Args, tag: str, student_list: list[str]) -> str:
+    return base64.b64encode(build_extra_instructions(args, tag, student_list).encode()).decode()
 
 
 def render_student(template: str, student_name: str, tag: str, secret_name: str, args: Args) -> str:
@@ -93,8 +158,17 @@ def render_student(template: str, student_name: str, tag: str, secret_name: str,
             "SENPAI_ENABLE_HUMAN_ISSUES": "true" if args.human_issues else "false",
             "SENPAI_TIMEOUT_MINUTES": str(args.timeout_minutes),
             "SENPAI_MAX_EPOCHS": str(args.max_epochs),
+            "SENPAI_POLL_INTERVAL_S": str(args.poll_interval_s),
+            "SENPAI_POLL_JITTER_S": str(args.poll_jitter_s),
+            "STUDENT_CLAUDE_WATCHDOG_INTERVAL_S": str(args.student_claude_watchdog_interval_s),
+            "STUDENT_CLAUDE_WATCHDOG_JITTER_S": str(args.student_claude_watchdog_jitter_s),
+            "STUDENT_CLAUDE_MIN_RUNTIME_S": str(args.student_claude_min_runtime_s),
+            "STUDENT_CLAUDE_STALE_LOG_S": str(args.student_claude_stale_log_s),
+            "STUDENT_ASSIGNMENT_DRIFT_GRACE_S": str(args.student_assignment_drift_grace_s),
+            "EXTRA_INSTRUCTIONS_B64": encoded_extra_instructions(args, tag, [student_name]),
             "PROBLEM_DIR": args.problem_dir,
             "PVC_MOUNT_PATH": args.pvc_mount_path,
+            "SENPAI_START_GATE_PATH": args.start_gate_path,
         },
     )
     deployment = render_template(template, {
@@ -132,13 +206,17 @@ def render_advisor(template: str, tag: str, student_list: list[str], secret_name
         "ADVISOR_BRANCH": args.advisor_branch,
         "GH_HISTORY_SCOPE": args.gh_history_scope,
         "SENPAI_ENABLE_HUMAN_ISSUES": "true" if args.human_issues else "false",
+        "SENPAI_POLL_INTERVAL_S": str(args.poll_interval_s),
+        "SENPAI_POLL_JITTER_S": str(args.poll_jitter_s),
+        "SENPAI_STALE_WIP_SECONDS": str(args.stale_wip_seconds),
+        "ADVISOR_CLAUDE_WATCHDOG_INTERVAL_S": str(args.advisor_claude_watchdog_interval_s),
+        "ADVISOR_CLAUDE_MIN_RUNTIME_S": str(args.advisor_claude_min_runtime_s),
+        "ADVISOR_CLAUDE_STALE_LOG_S": str(args.advisor_claude_stale_log_s),
         "PROBLEM_DIR": args.problem_dir,
         "PVC_MOUNT_PATH": args.pvc_mount_path,
+        "SENPAI_START_GATE_PATH": args.start_gate_path,
     }
-    if args.extra_instructions:
-        p = Path(args.extra_instructions)
-        content = p.read_text() if p.exists() else args.extra_instructions
-        data["EXTRA_INSTRUCTIONS_B64"] = base64.b64encode(content.encode()).decode()
+    data["EXTRA_INSTRUCTIONS_B64"] = encoded_extra_instructions(args, tag, student_list)
     configmap = render_configmap(
         name=advisor_configmap_name,
         labels={"app": "senpai", "role": "advisor", "research-tag": tag},
@@ -148,6 +226,7 @@ def render_advisor(template: str, tag: str, student_list: list[str], secret_name
         "ADVISOR_DEPLOYMENT_NAME": advisor_deployment_name,
         "ADVISOR_CONFIGMAP_NAME": advisor_configmap_name,
         "RESEARCH_TAG": tag,
+        "IMAGE": args.image,
         "PVC_CLAIM_NAME": args.pvc_claim_name,
         "PVC_MOUNT_PATH": args.pvc_mount_path,
         "LAUNCH_SECRET_NAME": secret_name,
@@ -159,6 +238,7 @@ def main():
     args = sp.parse(Args, config_path=str(SENPAI_CONFIG))
     if min(args.gpus_per_student, args.cpu_per_gpu, args.memory_gi_per_gpu) < 1:
         sys.exit("ERROR: --gpus_per_student, --cpu_per_gpu, and --memory_gi_per_gpu must all be at least 1")
+    validate_timing_args(args)
     if args.gh_history_scope not in {"branch", "repo", "fresh"}:
         sys.exit("ERROR: --gh_history_scope must be one of: branch, repo, fresh")
     if target_repo_slug(args.target_repo_url) == target_repo_slug(args.repo_url):

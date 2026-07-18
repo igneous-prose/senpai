@@ -58,6 +58,22 @@ pr_all_comments <pr#>
 swap_gh_pr_label <pr#> "status:review" "status:wip"
 ```
 
+## Experiment evidence links
+
+Whenever you post a PR comment, issue reply, board message, result, baseline
+update, or research-state summary that references one or more experiments,
+always include a direct W&B link for every referenced experiment. Prefer the run
+URL and include the run id next to the link. A group, sweep, PR, local file, or
+artifact link can be useful supporting context, but it is not a substitute for
+the W&B experiment link.
+
+For larger summaries, still post the concise summary where the team expects it,
+but also create and link a W&B Report when W&B runs are available. Use the
+`experiment-report` skill if it fits the project. The report should include
+useful comparison charts, key metrics, setup details, interpretation of what
+happened, and an ELI5 explanation so humans and agents can understand and
+compare the result quickly.
+
 ## Your loop
 
 You run inside a pod entrypoint harness: it invokes Claude Code, passes the latest triage state, and re-invokes you after sleeping when there is more work to check.
@@ -88,6 +104,8 @@ You run inside a pod entrypoint harness: it invokes Claude Code, passes the late
    **b. Merge winners sequentially, best first.** A PR is a winner if it improves on the current baseline according to the target's declared primary metric direction or score contract and the student has posted a terminal `SENPAI-RESULT` marker with `terminal=true` and `pending_arms=false`. Merge aggressively once the result is terminal — even small improvements compound over rounds. Invoke the `senpai:merge-winner` skill with args `<pr-number> $PROBLEM_DIR` for each winner, starting with the best. The skill runs `senpai_merge_winner_preflight`, then handles the squash-merge, baseline update, and branch pull.
 
    If `merge-winner` refuses, do not bypass it with raw `gh pr merge`. Read the refusal message. It means the PR is still draft/WIP, lacks terminal structured results, has a newer hold comment, has bad labels, or has merge conflicts. Follow up on the PR, fix the state, and rerun the skill only after the reason is resolved.
+
+   After merging a winner, create or assign a focused cleanup PR for a student to prune stale experiment flags and dead code paths from the training code. Make deletion the explicit default: agents tend to preserve old experiment code, but stale paths are risky. The winning behavior should become the clear main path, with no legacy flags or branches kept unless they support a specific near-term experiment. The cleanup should leave simple, clean, powerful, elegant training code that is easier to reproduce and harder to mis-run.
 
    **c. Request changes** on promising PRs that didn't beat baseline but show an interesting direction. Leave specific feedback on what variation to try next, then send back:
    ```bash
@@ -187,6 +205,7 @@ You run inside a pod entrypoint harness: it invokes Claude Code, passes the late
 - Use `ScheduleWakeup` for loop re-entry.
 - Use `Monitor` for condition waits over PR state, pod state, logs, or GPU status.
 - Use a background `until ...; do sleep N; done` loop only for a bounded local check.
+- Do not wait for your own background commands with broad `pgrep -f "<wandb name or args>"` patterns. The waiting shell command line contains that pattern too, so `pgrep -f` can match the waiter itself forever. Capture the PID when you launch a background command and use `wait "$pid"`, a task id, or a pidfile instead.
 
 ### Give new experiments the best possible chance of success
 
@@ -203,6 +222,8 @@ Experiments that are clearly not working should be closed rather than extended. 
 Always add the full experiment instructions text in the PR body, never just add a link to a markdown file. If the full text is too long for the github PR body, add the most salient information in the PR body and use a comment to add supplementary information, referencing the comment in the PR body.
 
 Use the active target's documented training/evaluation command help to copy exact CLI flag spellings into reproduce commands. Also use `--wandb_group` in instructions when a hypothesis is likely to need multiple iterations — for example, trying several values of the same hyperparameter — so that related runs are grouped in W&B.
+
+When assigning cleanup after a winning merge, ask for pruning, not another experiment. Tell the student which merged PR established the new default, which flags or code paths to delete, and which cheap validation should prove the simplified training path still works. Prefer existing smoke tests, unit tests, command help checks, or tiny `--debug`/dry-run style training invocations. Do not ask for a full experiment rerun unless you explicitly want to spend the training time. Push them to remove code rather than leave compatibility switches.
 
 ### Experiment Results
 

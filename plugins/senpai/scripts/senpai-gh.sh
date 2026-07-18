@@ -21,9 +21,10 @@
 # bitten by) the footgun.
 
 SENPAI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SENPAI_TRAIN_SCRIPT_RE='(^|[[:space:]/])train[[:alnum:]_]*[.]py([[:space:]]|$)'
 
 # ---------------------------------------------------------------------------
-# Retry helper: up to 6 attempts with 15s backoff, then fail loudly.
+# Retry helpers.
 # ---------------------------------------------------------------------------
 senpai_run_with_timeout() {
     local timeout_seconds="${SENPAI_GH_TIMEOUT_SECONDS:-120}"
@@ -35,17 +36,84 @@ senpai_run_with_timeout() {
     fi
 }
 
+senpai_random_jitter_s() {
+    local max="${1:-0}"
+    case "$max" in
+        ''|*[!0-9]*) max=0 ;;
+    esac
+    [ "$max" -le 0 ] && { printf '0\n'; return; }
+
+    python3 - "$max" <<'PY' 2>/dev/null || printf '0\n'
+import random
+import sys
+
+print(random.randint(0, int(sys.argv[1])))
+PY
+}
+
+senpai_sleep_with_jitter() {
+    local base="${1:-0}" jitter="${2:-0}" extra total
+    case "$base" in
+        ''|*[!0-9]*) base=0 ;;
+    esac
+    extra=$(senpai_random_jitter_s "$jitter")
+    total=$((base + extra))
+    [ "$total" -gt 0 ] && sleep "$total"
+}
+
+gh_rate_limit_backoff_s() {
+    local err_file="$1" reset now wait max jitter
+    grep -qi "API rate limit exceeded\\|rate limit" "$err_file" || { printf '0\n'; return; }
+
+    reset=$(gh api rate_limit --jq '.resources.core.reset' 2>/dev/null || true)
+    case "$reset" in
+        ''|*[!0-9]*) printf '0\n'; return ;;
+    esac
+
+    now=$(date +%s)
+    wait=$((reset - now + 5))
+    [ "$wait" -le 0 ] && { printf '0\n'; return; }
+
+    max="${SENPAI_GH_RATE_LIMIT_MAX_SLEEP_SECONDS:-900}"
+    case "$max" in
+        ''|*[!0-9]*) max=900 ;;
+    esac
+    [ "$wait" -gt "$max" ] && wait="$max"
+
+    jitter=$(senpai_random_jitter_s "${SENPAI_GH_RATE_LIMIT_JITTER_S:-30}")
+    printf '%s\n' "$((wait + jitter))"
+}
+
 gh_retry() {
-    local attempt status
+    local attempt status out err backoff
     for attempt in 1 2 3 4 5 6; do
-        senpai_run_with_timeout "$@" && return 0
+        out=$(mktemp "${TMPDIR:-/tmp}/senpai-gh-out.XXXXXX") || return
+        err=$(mktemp "${TMPDIR:-/tmp}/senpai-gh-err.XXXXXX") || { rm -f "$out"; return; }
+
+        senpai_run_with_timeout "$@" >"$out" 2>"$err"
         status=$?
+        if [ "$status" -eq 0 ]; then
+            cat "$out"
+            rm -f "$out" "$err"
+            return 0
+        fi
+        cat "$err" >&2
         if [ "$attempt" -eq 6 ]; then
             echo "gh_retry: attempt $attempt failed with status $status; giving up" >&2
+            rm -f "$out" "$err"
             return "$status"
         fi
-        echo "gh_retry: attempt $attempt failed with status $status, retrying in 15s..." >&2
-        sleep 15
+
+        backoff=$(gh_rate_limit_backoff_s "$err")
+        if [ "${backoff:-0}" -gt 0 ]; then
+            echo "gh_retry: rate limit detected on attempt $attempt, retrying in ${backoff}s..." >&2
+            rm -f "$out" "$err"
+            sleep "$backoff"
+        else
+            echo "gh_retry: attempt $attempt failed with status $status, retrying in 15s..." >&2
+            rm -f "$out" "$err"
+            senpai_sleep_with_jitter 15 "${SENPAI_GH_RETRY_JITTER_S:-5}"
+        fi
     done
     return 1
 }
@@ -163,14 +231,30 @@ swap_gh_pr_label() {
     local num="$1" remove="$2" add="$3"
 
     # DELETE the old label — retry transient failures, tolerate 404 (already gone).
-    local attempt err
+    local attempt err_file err backoff
     for attempt in 1 2 3 4 5 6; do
-        err=$(senpai_run_with_timeout gh api "repos/${GH_REPO}/issues/${num}/labels/${remove}" \
-            --method DELETE --silent 2>&1) && break
-        echo "$err" | grep -q "404" && break
-        echo "swap_gh_pr_label: DELETE attempt $attempt failed, retrying in 15s..." >&2
+        err_file=$(mktemp "${TMPDIR:-/tmp}/senpai-gh-err.XXXXXX") || return
+        if senpai_run_with_timeout gh api "repos/${GH_REPO}/issues/${num}/labels/${remove}" \
+            --method DELETE --silent 2>"$err_file"; then
+            rm -f "$err_file"
+            break
+        fi
+        err=$(cat "$err_file")
+        cat "$err_file" >&2
+        if echo "$err" | grep -q "404"; then
+            rm -f "$err_file"
+            break
+        fi
+        backoff=$(gh_rate_limit_backoff_s "$err_file")
+        rm -f "$err_file"
         [ "$attempt" -eq 6 ] && return 1
-        sleep 15
+        if [ "${backoff:-0}" -gt 0 ]; then
+            echo "swap_gh_pr_label: rate limit detected on DELETE attempt $attempt, retrying in ${backoff}s..." >&2
+            sleep "$backoff"
+        else
+            echo "swap_gh_pr_label: DELETE attempt $attempt failed, retrying in 15s..." >&2
+            senpai_sleep_with_jitter 15 "${SENPAI_GH_RETRY_JITTER_S:-5}"
+        fi
     done
 
     # POST the new label (gh_retry gives 6 attempts on transient failure).
@@ -522,13 +606,13 @@ student_pr_looks_live() {
         # A stale GitHub timestamp is not actionable if the pod is still doing
         # useful work on this exact PR branch. Count either active training,
         # active GPU use, or Claude Code editing an uncommitted checkout.
-        pytrain=$(ps -eo comm=,args= | awk '\''$1 ~ /^python/ && /train[.]py/ {n++} END{print n+0}'\'')
+        pytrain=$(ps -eo comm=,args= | awk -v train_re="$2" '\''$1 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ train_re {n++} END{print n+0}'\'')
         gpu=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | awk '\''NF{n++} END{print n+0}'\'')
         claude=$(ps -eo comm=,args= | awk '\''$1 ~ /^claude$/ || /[ /]claude( |$)/ {n++} END{print n+0}'\'')
         dirty=$(git -C /workspace/senpai/target status --porcelain 2>/dev/null | wc -l | tr -d " ")
 
         [ "$pytrain" -gt 0 ] || [ "$gpu" -gt 0 ] || { [ "$claude" -gt 0 ] && [ "${dirty:-0}" -gt 0 ]; }
-    ' sh "$head_ref" >/dev/null 2>&1
+    ' sh "$head_ref" "$SENPAI_TRAIN_SCRIPT_RE" >/dev/null 2>&1
 }
 
 suppress_live_stale_wips() {
@@ -613,10 +697,10 @@ for pr in json.load(sys.stdin):
             branch=$(git -C /workspace/senpai/target branch --show-current 2>/dev/null || true)
             # Only active training/GPU use is a zombie risk. Claude editing a
             # checkout is handled by stale-WIP suppression above, not here.
-            pytrain=$(ps -eo comm=,args= | awk '\''$1 ~ /^python/ && /train[.]py/ {n++} END{print n+0}'\'')
+            pytrain=$(ps -eo comm=,args= | awk -v train_re="$1" '\''$1 ~ /^(python[0-9.]*|torchrun|pt_elastic)$/ && $0 ~ train_re {n++} END{print n+0}'\'')
             gpu=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | awk '\''NF{n++} END{print n+0}'\'')
             printf "%s\t%s\t%s\n" "$branch" "$pytrain" "$gpu"
-        ' 2>/dev/null) || continue
+        ' sh "$SENPAI_TRAIN_SCRIPT_RE" 2>/dev/null) || continue
 
         current_branch=${snapshot%%$'\t'*}
         snapshot=${snapshot#*$'\t'}

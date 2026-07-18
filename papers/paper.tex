@@ -5,6 +5,7 @@
 \usepackage{microtype}
 \usepackage{graphicx}
 \usepackage{subcaption}
+\usepackage{placeins}
 \usepackage{booktabs}
 \usepackage{multirow}
 \usepackage{array}
@@ -31,17 +32,40 @@
 }
 \newcommand{\promptfile}[1]{\VerbatimInput{#1}}
 
-% Use blind mode for the initial workshop submission.
+% Use accepted mode for the camera-ready workshop version.
 \usepackage{icml2026/algorithm}
 \usepackage{icml2026/algorithmic}
-\usepackage{icml2026/icml2026}
+\usepackage[accepted]{icml2026/icml2026}
 \usepackage{newtxtext}
 
 \usepackage[disable,textsize=tiny]{todonotes}
 
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{8pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\dblfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{0pt}
+
 \makeatletter
-\renewcommand{\Notice@String}{Submitted to the AI for Science workshop (ICML 2026).}
+\renewcommand{\Notice@String}{Accepted by ICML 2026 AI for Science Workshop}
 \makeatother
+
+\newcommand{\willowsankeyteaser}{%
+  \vskip 0.03in
+  \begin{center}
+    \begin{minipage}{0.70\textwidth}
+      \centering
+      \includegraphics[width=\linewidth]{icml2026/figures/willow_sankey/willow_simplified_sankey.png}
+      \vspace{-0.17in}
+      \captionof{figure}{Results of 167 experiments from the SENPAI experiment ledger for the five TandemFoilSet-Balanced trials, grouped by count of experiments per trial, the experiment hypothesis family and final PR outcome depending on if it was merged, closed or left unresolved at the 12-hour trial cut-off.}
+      \label{fig:willow-sankey}
+    \end{minipage}
+  \end{center}
+  \vskip 0.04in
+}
+\newcommand{\appendixsourcelink}[1]{\href{https://github.com/wandb/senpai/blob/main/papers/appendix_sources/#1}{\nolinkurl{#1}}}
 
 \icmltitlerunning{SENPAI: Observability-Based Research Harness}
 
@@ -51,21 +75,26 @@
   \icmltitle{SENPAI: Self-ExperimentatioN for Physical AI\\
   An Observability-Based Research Harness}
 
+  \icmlsetsymbol{equal}{*}
+
   \begin{icmlauthorlist}
-    \icmlauthor{Anonymous Authors}{anon}
+    \icmlauthor{Thomas Capelle}{equal,wandb,coreweave}
+    \icmlauthor{Morgan McGuire}{equal,wandb,coreweave}
+    \icmlauthor{Justin Hodges}{coreweave}
   \end{icmlauthorlist}
 
-  \icmlaffiliation{anon}{Anonymous Institution, Anonymous City, Anonymous Region, Anonymous Country}
-  \icmlcorrespondingauthor{Anonymous Author}{anon.email@domain.com}
+  \icmlaffiliation{wandb}{Weights \& Biases, San Francisco, CA, USA}
+  \icmlaffiliation{coreweave}{CoreWeave, Roseland, NJ, USA}
+  \icmlcorrespondingauthor{Morgan McGuire}{morg@wandb.com}
   \icmlkeywords{Autonomous research, CFD surrogates, ML systems, agent observability, AI for science}
 
-  \vskip 0.3in
+  \willowsankeyteaser
 ]
 
-\printAffiliationsAndNotice{}
+\printAffiliationsAndNotice{\icmlEqualContribution}
 
 \begin{abstract}
-SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI improves DrivAerML surface-pressure and wall-shear-stress relative-$L_2$ error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We will release the harness and full experiment ledger of all experiments undertaken.
+SENPAI (Self-Experimentation for Physical AI) is an observability-first research harness in which multi-agent state is grounded in pull requests and structured experiment logs rather than agent memory and scratchpads. Although task-agnostic, we evaluate SENPAI on CFD-surrogate recipe search, where performance depends on architecture, optimization, losses, normalization, and physics-aware considerations. SENPAI uses a thin Advisor/Student loop to turn hypotheses into PRs, training runs, and PR comments, producing an experiment ledger queryable by both agents and researchers. This makes experiments auditable, recoverable, and researcher-steerable. We evaluate SENPAI across DrivAerML, AirfRANS, and TandemFoilSet. Starting from the original Transolver model, SENPAI obtains the best single-model DrivAerML surface- and volume-pressure relative-$L_2$ errors among compared references while improving wall-shear-stress error, reduces AirfRANS surface-MSE below all compared references, and reaches lower TandemFoilSet normalized full-field MSE on the cruise-random-uniform split than the reported benchmark. Overall, SENPAI supports sparsely steered, multi-day semi-autonomous research that can deliver strong task-specific models. We release the harness\footnote{\url{https://github.com/wandb/senpai}} and Weights \& Biases experiment ledger.\footnote{See \Cref{app:wandb-projects}.}
 \end{abstract}
 
 \section{Introduction}
@@ -80,12 +109,12 @@ SENPAI's central design choice is to ground the research loop in external system
 
 The harness loop is deliberately thin. An Advisor reads the current experiment ledger, proposes a literature-grounded hypothesis as a draft PR, and assigns it to a GPU-backed Student. The Student checks out the branch, modifies the training code, runs the experiment, logs metrics to the experiment tracker, and reports results in the PR. The Advisor then merges, requests revision, or closes the line of inquiry. Humans can steer the Advisor or Student through GitHub issues and PR comments, while markdown scratchpads remain secondary sources of state rather than the primary system of record.
 
-Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment-tracker runs, and operated with up to 59 concurrent Student agents, turning a multi-day semi-autonomous research programme into a durable experiment ledger.
+Across the research programme, SENPAI produced over 3,000 PRs, 11,000 experiment-tracker runs, and operated with up to 59 concurrent Student agents, turning a multi-day semi-autonomous research programme into a durable experiment ledger. \Cref{fig:willow-sankey} shows one compact slice of this ledger: 167 TandemFoilSet-Balanced PRs grouped by research round, hypothesis family, and final outcome.
 
 \paragraph{Contributions.}
 \begin{itemize}[leftmargin=*,topsep=2pt,itemsep=2pt,parsep=0pt]
   \item \textbf{Observable research state.} We introduce SENPAI, a semi-autonomous ML research harness that grounds experiment state in PRs, commits, and experiment-tracker runs, producing a ledger that is queryable by agents and inspectable by researchers.
-  \item \textbf{CFD recipe search.} Starting from Transolver-style baselines, SENPAI discovers improved recipes across AirfRANS, DrivAerML, and TandemFoilSet, with strongest gains on surface and wall-shear quantities.
+  \item \textbf{CFD recipe search.} Starting from Transolver-style baselines, SENPAI discovers improved recipes across AirfRANS, DrivAerML, and TandemFoilSet, including best single-model DrivAerML pressure results among compared references.
   \item \textbf{Failure modes at scale.} We analyze a 24-hour fleet trace with 53,022 Claude requests and 5.24B tokens, showing that the dominant failures were monitor-driven context bloat, brittle tool interfaces, checkpoint/result-capture gaps, and state reconciliation issues rather than failures of scientific reasoning.
 \end{itemize}
 
@@ -111,7 +140,7 @@ SENPAI's central design principle is that authoritative experiment state lives i
 SENPAI is a thin two-role harness over a task repository. An Advisor reads the current experiment ledger, optionally calls a literature-search sub-agent, opens draft PRs containing hypotheses and experiment instructions, and assigns them to GPU-backed Students. Each Student claims its labeled PR, edits the branch, launches training with experiment-tracker logging, and reports results back as PR comments. Researchers can steer Advisors or Students via labeled GitHub issues or by leaving comments on a PR. A hypothesis's trajectory therefore remains visible as a standard PR history linked to experiment-tracker runs, rather than as an agent-internal trace.
 
 \paragraph{Design choices.}
-SENPAI follows three design choices: externalizing experiment state into existing systems of record, keeping the autonomous loop thin, and exposing the same ledger to both agents and researchers. The role prompts, problem-program contract, helper skills, and outer-loop pseudocode are summarized in \Cref{app:agent-instructions,app:program-contracts,app:skill-catalogue,app:outer-loop}.
+SENPAI follows three design choices: externalizing experiment state into existing systems of record, keeping the autonomous loop thin, and exposing the same ledger to both agents and researchers. The role prompts and source map are summarized in \Cref{app:agent-instructions}, the Advisor outer-loop pseudocode in \Cref{app:outer-loop}, and the problem-program contract and helper skills in \Cref{app:program-contracts,app:skill-catalogue}.
 
 \subsection{Externalized Experiment State}
 
@@ -134,6 +163,7 @@ Researchers primarily steer SENPAI's Advisor or Students through GitHub issues, 
 In our longest observed SENPAI deployment on DrivAerML, the system ran continuously for 9 days under a 4.5-hour per-experiment budget, opening 289 PRs across an 8-student active fleet with 10 issue-based interventions from researchers.
 
 \section{Experiments and Results}
+\label{sec:results}
 
 \begin{figure*}[t]
   \centering
@@ -155,51 +185,47 @@ In our longest observed SENPAI deployment on DrivAerML, the system ran continuou
 Claude Code (v2.1.85 to v2.1.117) was run in headless mode as the agent harness for both the Advisor and Students. Claude Opus 4.6 and Claude Opus 4.7 were used with a compaction trigger at 200k tokens. Student pods were scheduled on NVIDIA RTX 6000 Blackwell nodes with 96 GB VRAM per GPU, using from 1 to 8 GPUs per Student node depending on the experiment setting. At maximum, $N=59$ concurrent Students were tested, with peak concurrent training runs of 347. Over the five-week experimentation and harness-development cycle, 30 billion tokens were processed by Claude Code while running physical-AI experiments.
 
 \paragraph{Scale.}
-Over the course of the research programme, SENPAI created over 3,000 PRs and recorded over 11,000 experiment-tracker runs while deploying, at peak, 59 distinct Student agents. Approximately 30 billion Claude Code tokens were processed during experimentation.
+The research programme created over 3,000 PRs and recorded over 11,000 experiment-tracker runs, with peak deployment of 59 Student agents and 347 concurrent training runs.
 
 \subsection{Datasets and Metrics}
 
 To demonstrate SENPAI's CFD performance across multiple benchmarks, we train and evaluate on three CFD surrogate datasets spanning 3D automotive aerodynamics, 2D airfoil RANS, and 2D tandem-airfoil flow: DrivAerML \citep{ashton2024drivaerml}, AirfRANS \citep{bonnet2022airfrans}, and TandemFoilSet \citep{lim2026tandemfoilset}. \Cref{fig:cfd-problem-gallery} shows representative geometries from all three datasets.
 
 \paragraph{DrivAerML.}
-We use the public processed-case split, 400/34/50 train/validation/test, and report surface-pressure, vector wall-shear-stress, and volume-pressure relative-$L_2$, computed per case on unnormalized predictions and then averaged over test cases. Each raw DrivAerML case contains approximately 8.8M surface points and 160M volume points.
+We use the public processed-case split, 400/34/50 train/validation/test, and report surface-pressure, volume-pressure, volume-velocity, and vector wall-shear-stress relative-$L_2$, averaged per case on unnormalized predictions. Each raw DrivAerML case contains approximately 8.8M surface points and 160M volume points.
 
 \paragraph{AirfRANS.}
 We use the official full task with the last 10\% of the official training list held out for validation, giving a 720/80/200 train/validation/test split while keeping the official test set unchanged. Each simulation has roughly 150K points. We test on normalized targets on the official test split.
 
 \paragraph{TandemFoilSet.}
-We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. TandemFoilSet cases average approximately 187K points; the active TandemFoilSet-Balanced subset averages approximately 141K points. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{anonymous2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
+We use the paper's original Experiment 4 partition, Cruise Random and Race Car tasks, as one of two TandemFoilSet datasets and measure denormalized surface-pressure MAE. TandemFoilSet cases average approximately 187K points; the active TandemFoilSet-Balanced subset averages approximately 141K points. In addition, we introduce a second dataset split, TandemFoilSet-Balanced \citep{mcguire2026tandemfoilsetbalanced}, with 1,499 training cases across four balanced test splits: one single-foil in-distribution split, two unseen-front-camber geometry holdouts (race-car and cruise), and one Reynolds-number holdout. An equal-weight average denormalized surface-pressure MAE of these four splits is used as the test metric.
 
 \subsection{DrivAerML}
 
 \paragraph{Result.}
-On the DrivAerML benchmark, SENPAI, starting from a Transolver-based implementation, improves on the original Transolver's test-set metrics of surface-pressure relative-$L_2$ error (3.88\% versus 4.81\%) and vector wall-shear-stress relative-$L_2$ error (7.06\% versus 8.95\%). The selected single model also improves on AB-UPT for wall shear (7.06\% versus 7.29\%), while volume pressure remains behind public references (10.76\% versus 6.08\% for AB-UPT and 5.72\% for Transolver-3). \Cref{fig:drivaerml-surface-pareto} shows the semi-autonomous experiment trajectory for surface-pressure test error across earlier SENPAI campaigns.
+On DrivAerML, SENPAI's best single trained checkpoint is \href{https://github.com/morganmcg1/DrivAerML/pull/1344}{H147 from PR~\#1344}, W\&B run \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/k6q4c3on}{\texttt{k6q4c3on}}. Starting from a Transolver-based implementation, it improves on the original Transolver for all four reported relative-$L_2$ metrics and gives the best single-model pressure results among the public references in \Cref{tab:drivaerml}: 3.6679\% surface pressure and 3.4004\% volume pressure, compared with 3.71\% and 5.72\% for Transolver-3. Its volume-velocity error is 5.0911\% and wall-shear error is 6.6676\%; both improve on Transolver, while volume velocity remains behind Transolver-3 and Transolver++ and wall shear remains behind Transolver-3 and Transolver++. The full recipe, run provenance, and per-axis wall-shear diagnostics are in \Cref{app:drivaerml-recipe}. \Cref{fig:drivaerml-surface-pareto} shows the semi-autonomous experiment trajectory for surface-pressure test error across earlier SENPAI campaigns.
 
 \begin{table}[t]
   \caption{DrivAerML test relative-$L_2$ error (\%). Lower is better.}
   \label{tab:drivaerml}
   \centering
   \small
-  \setlength{\tabcolsep}{3pt}
-  \begin{tabular}{@{}lrrr@{}}
+  \setlength{\tabcolsep}{2pt}
+  \begin{tabular}{@{}lrrrr@{}}
     \toprule
-    Method & $p_s$ & $\tau$ & $p_v$ \\
+    Method & $p_s$ & $p_v$ & $u_v$ & $\tau$ \\
     \midrule
-    SENPAI (ours), ensemble & \best{3.69} & 6.86 & 11.36 \\
-    Transolver-3 \citep{zhou2026transolver3} & 3.71 & \best{5.85} & \best{5.72} \\
-    AB-UPT \citep{alkin2025abupt} & 3.82 & 7.29 & 6.08 \\
-    SENPAI (ours), single model & 3.88 & 7.06 & 10.76 \\
-    Transolver++ \citep{luo2025transolverplusplus} & 4.12 & 6.42 & 6.70 \\
-    Transolver \citep{wu2024transolver} & 4.81 & 8.95 & 7.74 \\
+    SENPAI (ours) & \best{3.67} & \best{3.40} & 5.09 & 6.67 \\
+    Transolver-3 \citep{zhou2026transolver3} & 3.71 & 5.72 & \best{4.14} & \best{5.85} \\
+    AB-UPT \citep{alkin2025abupt} & 3.82 & 6.08 & 5.93 & 7.29 \\
+    Transolver++ \citep{luo2025transolverplusplus} & 4.12 & 6.70 & 4.70 & 6.42 \\
+    Transolver \citep{wu2024transolver} & 4.81 & 7.74 & 6.78 & 8.95 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \paragraph{Recipe.}
-The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 4 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, and GradNorm adaptive loss balancing \citep{chen2018gradnorm}. It trained with 8-GPU DDP for an effective batch size of 16 under a 50-epoch budget, with the best EMA checkpoint selected at epoch 27. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling. Full run IDs and hyperparameters for the selected single model and ensemble are listed in \Cref{app:drivaerml-recipe}.
-
-\paragraph{Caveat.}
-Finally, a greedy inference-time ensemble found by SENPAI improved on all reported surface-pressure relative-$L_2$ metrics for DrivAerML (3.69\%) and improved on AB-UPT for wall-shear relative-$L_2$ error (6.86\%). A large gap in test-set volume-pressure relative-$L_2$ error remains for the best single model (10.76\%) relative to AB-UPT and Transolver-3, potentially in part due to the shorter training time of SENPAI compared to the 500-epoch trainings of AB-UPT and Transolver-3. This training-duration discrepancy highlights an important decision criterion in autonomous research training: whether to scale up to longer, more expensive training runs after observing promising smaller-scale experimental results.
+The selected single-model recipe SENPAI found used the original Transolver backbone but scaled it to 6 layers, 512 hidden units, and 128 slices, replaced fixed sinusoidal coordinates with a learnable Fourier positional embedding initialized across multiple spatial scales \citep{li2021learnable,schenck2025learningropes}, and trained with Lion \citep{chen2023symbolic}, EMA, GradNorm adaptive loss balancing \citep{chen2018gradnorm}, curvature attention bias, and $y$-symmetry augmentation. It trained with 8-GPU DDP for an effective batch size of 8 under a 30-epoch budget, with the best EMA checkpoint selected at epoch 25. A notable empirical finding from SENPAI was the application of this lightweight STRING-inspired encoding from computer vision and robotics use cases to CFD surrogate modelling.
 
 \subsection{AirfRANS}
 
@@ -243,7 +269,7 @@ Under the TandemFoilSet Experiment-4 task, SENPAI found a Transolver-based impro
     Race-car camber holdout & 31.2177 \\
     Cruise camber holdout & 28.3145 \\
     Reynolds-number holdout & 16.9834 \\
-    Average & 23.4515 \\
+    \textbf{Average} & \textbf{23.4515} \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -254,7 +280,7 @@ For this benchmark, SENPAI used learning rates of \texttt{\textasciitilde1e-4}, 
 \subsection{Flat-Agent Comparison}
 
 \paragraph{Setup.}
-To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \texttt{kagent} harness \citep{anonymous2026kagent} against the SENPAI harness using the TandemFoilSet-Balanced dataset and the same compute budget. \texttt{kagent} is a lighter-weight harness that drops the Advisor/Student split in favor of a flat Kaggle-like competition with a shared leaderboard; each agent keeps its own experiment journal and is prompted to compete aggressively to climb the leaderboard. In contrast to a Kaggle competition, the agents also have access to the same hosted experiment-logging project and commit history, so they can learn from other agents' work. The \texttt{kagent} prompt and the full run summary are provided in \Cref{app:kagent-details}.
+To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \texttt{kagent} harness \citep{capelle2026kagent} against the SENPAI harness using the TandemFoilSet-Balanced dataset and the same compute budget. \texttt{kagent} is a lighter-weight harness that drops the Advisor/Student split in favor of a flat Kaggle-like competition with a shared leaderboard; each agent keeps its own experiment journal and is prompted to compete aggressively to climb the leaderboard. In contrast to a Kaggle competition, the agents also have access to the same hosted experiment-logging project and commit history, so they can learn from other agents' work. The \texttt{kagent} prompt and the full run summary are provided in \Cref{app:kagent-details}.
 
 \begin{table}[t]
   \caption{TandemFoilSet-Balanced 12-hour harness comparison. Lower average surface-pressure MAE is better.}
@@ -272,6 +298,11 @@ To contrast SENPAI's Advisor-mediated loop, we compared the performance of a \te
 
 \paragraph{Interpretation.}
 In a direct 12-hour head-to-head, \texttt{kagent} behaved like a public Kaggle sprint: agents trained short variants, watched the leaderboard and shared hosted-logger configs, and quickly reused recipes that worked for peers. This fast peer diffusion, including copied hyperparameters and occasional prediction ensembles, likely gave it an exploitation-speed edge over SENPAI's slower PR-mediated review loop. While this was successful in a 12-hour experiment setting, the inability to steer these agents and the less rigorous polling and monitoring infrastructure are likely to lead to drift and context rot as each Claude Code agent's context window fills. However a later external validation potentially contradicts this. A model checkpoint from a 30-hour autonomous \texttt{kagent} run, with a 30 minute per-experiment budget, was submitted to the GRaM ICLR 2026 competition and subsequently ranked 4th of 22 entries on the official held-out leaderboard, with relative-$L_2$ error $0.0553 \pm 0.0168$.
+
+\subsection{Modded-NanoGPT Track 3}
+
+\paragraph{Result.}
+To demonstrate SENPAI's applicability beyond CFD research, we also ran SENPAI on Keller Jordan's modded-NanoGPT Track 3 optimization benchmark \citep{jordan2026moddednanogpttrack3}. SENPAI produced a Track 3 result at 2925 steps, which was competitive with the best publicly visible results in the repo at the time. The result is recorded in \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/737}{morganmcg1/modded-nanogpt-senpai PR~\#737}. We estimate that one average SENPAI trial corresponds to roughly 3.5 zettaFLOP of hardware-peak training compute; see \Cref{app:modded-nanogpt-details} for the training recipe and further details.
 
 \section{Discussion}
 
@@ -314,13 +345,13 @@ From observing these failure modes, we conclude that long-running research agent
 SENPAI is task-agnostic as a harness, but our empirical evidence comes from CFD-surrogate recipe search. We have not yet evaluated whether the same design transfers to domains with different data modalities, evaluation loops, or laboratory constraints.
 
 \paragraph{Surface metrics.}
-The strongest empirical results are on surface quantities. This matches many aerodynamic design workflows, where surface pressure and forces are primary signals, but volume-field prediction remains less developed; for example, our AirfRANS and DrivAerML experiments improve surface MSE while remaining behind the strongest published methods on volume MSE.
+The strongest empirical results are on surface quantities, primary signals in many aerodynamic design workflows. Volume-field prediction remains less developed on AirfRANS, where SENPAI improves surface MSE while remaining behind the strongest published volume-MSE method; on DrivAerML, the selected checkpoint improves both pressure fields and volume velocity over the original Transolver while wall-shear remains behind the strongest public reference.
 
 \paragraph{Supervision.}
 SENPAI is semi-autonomous rather than fully autonomous. It requires an initial task repository, metric definition, dataset setup, and occasional human steering. The GitHub Issues and PR-comment interface is auditable and low bandwidth, but slower than interactive supervision.
 
 \paragraph{Infrastructure dependence.}
-Finally, SENPAI depends on mature external systems of record and substantial compute/API budget. In our implementation these were GitHub and Weights \& Biases, which improved observability but also introduced dependence on hosted-service reliability, access control, rate limits, and retention policies. We will release the harness and experiment ledger so future work can audit costs, reproduce results, and evaluate more efficient variants.
+Finally, SENPAI depends on mature external systems of record and substantial compute/API budget. In our implementation these were GitHub and Weights \& Biases, which improved observability but also introduced dependence on hosted-service reliability, access control, rate limits, and retention policies. We release the harness and experiment ledger so future work can audit costs, reproduce results, and evaluate more efficient variants.
 
 \section{Conclusion}
 
@@ -328,15 +359,15 @@ SENPAI shows that a lightweight, observability-first harness can sustain semi-au
 
 The main lesson is that reliability comes from the harness, not the agent instructions alone. Long-running research agents did not primarily fail because they lacked clear instructions; they failed at system boundaries: brittle tool interfaces, unbounded monitoring, missing checkpoint capture, and drift between derived summaries and the authoritative ledger. Prompt hardening alone did not remove these failure modes. Durable external state, clear scripts for passing work between agents, filtered monitoring, and mandatory result capture were more important for keeping the research programme recoverable and auditable.
 
-SENPAI's contribution is therefore not to replace the researcher, but to increase the bandwidth at which researchers can understand, guide, and accelerate autonomous experimentation. By making both the inner experiment loop and the outer harness loop observable through mature systems of record, SENPAI turns autonomous research from an opaque agent workflow into a queryable, reviewable research programme. We will release the harness, experiment ledger, and failure-mode analysis to support future work on more reliable and efficient autonomous research systems.
+SENPAI's contribution is therefore not to replace the researcher, but to increase the bandwidth at which researchers can understand, guide, and accelerate autonomous experimentation. By making both the inner experiment loop and the outer harness loop observable through mature systems of record, SENPAI turns autonomous research from an opaque agent workflow into a queryable, reviewable research programme. We release the harness, experiment ledger, and failure-mode analysis to support future work on more reliable and efficient autonomous research systems.
 
 \section*{Software and Data}
 
-Identifying repository and hosted-ledger URLs are omitted for double-blind review and will be included in the camera-ready version. The CFD datasets used in the experiments are DrivAerML, AirfRANS, and TandemFoilSet; access and redistribution follow the licenses and terms provided by the original dataset authors.
+Code, data links, and W\&B logs are listed in the appendices.
 
 \section*{Impact Statement}
 
-This work aims to make autonomous ML research more auditable, recoverable, and steerable by grounding agent activity in systems of record that researchers already inspect. The positive impact is increased researcher bandwidth for expensive scientific ML experimentation, especially in domains where strong baselines require repeated empirical iteration. The main risks are increased compute/API consumption, over-trusting autonomous experiment choices, and propagating errors when agent-written summaries drift from measured evidence. SENPAI mitigates these risks by keeping humans in the review loop, preserving experiment provenance in PRs and tracked runs, and treating summaries as caches rather than authoritative state.
+This work aims to make autonomous ML research auditable and steerable. Benefits are increased researcher bandwidth; risks are compute/API use, over-trusting agent choices, and summary drift, mitigated by human review, provenance in PRs/runs, and treating summaries as caches.
 
 \bibliographystyle{icml2026/icml2026}
 \bibliography{paper}
@@ -350,108 +381,33 @@ This work aims to make autonomous ML research more auditable, recoverable, and s
 
 The experiments in this paper were controlled by a small number of versioned text artifacts rather than by hidden agent memory. The exact prompt files will be released with the SENPAI harness; this appendix summarizes their operational content, and \Cref{app:full-prompts} includes the full text of the source prompts and programme contracts.
 
-\begin{table}[h]
-  \caption{Primary instruction artifacts used by the harness and comparator.}
+\begin{center}
+  \captionof{table}{Primary instruction artifacts used by the harness and comparator.}
   \label{tab:instruction-source-map}
-  \centering
   \small
   \begin{tabular}{@{}p{0.22\textwidth}p{0.31\textwidth}p{0.39\textwidth}@{}}
     \toprule
     Artifact & Location & Role in the system \\
     \midrule
-    Advisor prompt & \url{papers/appendix_sources/claude_advisor.md} & Defines the no-GPU research lead: survey PRs, review result comments and W\&B runs, merge validated winners, close dead ends, and assign one-hypothesis PRs to idle Students. \\
-    Student prompt & \url{papers/appendix_sources/claude_student.md} & Defines the GPU worker: claim only assigned PRs, edit the task training file, run bounded experiments, report exact commands, metrics, W\&B IDs, and structured terminal results. \\
-    Researcher sub-agent & \url{papers/appendix_sources/researcher_agent.md} & Defines a literature and experiment-history specialist used to produce mechanism-grounded experiment proposals and research-state updates. \\
-    Problem contract & \url{papers/appendix_sources/drivaerml_program.md} & Example task contract specifying mission, data, editable files, metric keys, checkpoint selection, telemetry, and paper-facing target values. \\
-    TandemFoil2 contract & \url{papers/appendix_sources/tandemfoil2_program.md} & Active local problem contract for the \texttt{kagent}-seeded TandemFoil2 package, including split names, edit boundaries, and the \texttt{val/l2\_error} leaderboard metric. \\
-    Flat comparator prompt & \url{papers/appendix_sources/kaggler_agent.md} & Defines the \texttt{kagent} loop: watch leaderboard and W\&B, edit local training/prediction code, keep only useful code changes, always journal outcomes, and continue until interrupted. \\
+    Advisor prompt & \appendixsourcelink{claude_advisor.md} & Defines the no-GPU research lead: survey PRs, review result comments and W\&B runs, merge validated winners, close dead ends, and assign one-hypothesis PRs to idle Students. \\
+    Student prompt & \appendixsourcelink{claude_student.md} & Defines the GPU worker: claim only assigned PRs, edit the task training file, run bounded experiments, report exact commands, metrics, W\&B IDs, and structured terminal results. \\
+    Researcher sub-agent & \appendixsourcelink{researcher_agent.md} & Defines a literature and experiment-history specialist used to produce mechanism-grounded experiment proposals and research-state updates. \\
+    Problem contract & \appendixsourcelink{drivaerml_program.md} & Example task contract specifying mission, data, editable files, metric keys, checkpoint selection, telemetry, and paper-facing target values. \\
+    TandemFoil2 contract & \appendixsourcelink{tandemfoil2_program.md} & Active local problem contract for the \texttt{kagent}-seeded TandemFoil2 package, including split names, edit boundaries, and the \texttt{val/l2\_error} leaderboard metric. \\
+    Flat comparator prompt & \appendixsourcelink{kaggler_agent.md} & Defines the \texttt{kagent} loop: watch leaderboard and W\&B, edit local training/prediction code, keep only useful code changes, always journal outcomes, and continue until interrupted. \\
     \bottomrule
   \end{tabular}
-\end{table}
-
-The most important verbatim prompt element is the terminal result marker, which makes a Student's PR comment machine-checkable:
-
-{\small
-\begin{verbatim}
-SENPAI-RESULT: {"terminal":true,"status":"complete","pending_arms":false,
-"wandb_run_ids":["<run-id>"],"primary_metric":{"name":"<metric>","value":<number>},
-"test_metric":{"name":"<metric>","value":<number>}}
-\end{verbatim}
-}
+\end{center}
 
 The Advisor prompt additionally contains a plateau protocol: after five or more non-improving experiments, the Advisor must escalate from local tuning toward a different strategy tier, revisit first principles, use the researcher sub-agent, and propose larger mechanism changes rather than treating the plateau as a stopping signal.
 
-\begin{table}[h]
-  \caption{Role contracts induced by the prompts.}
-  \label{tab:role-contracts}
-  \centering
-  \small
-  \begin{tabular}{@{}p{0.15\textwidth}p{0.26\textwidth}p{0.27\textwidth}p{0.24\textwidth}@{}}
-    \toprule
-    Role & Inputs & Allowed actions & Required output \\
-    \midrule
-    Advisor & PR ledger, W\&B runs, Student pod state, human GitHub issues, and \texttt{program.md}. & Create draft PRs, assign labels, review each completed PR, request revisions, close dead ends, and merge winners after structured terminal results. & Updated baseline and research-state files, PR review comments, and new hypothesis PRs for idle Students. \\
-    Student & Assigned PR, target branch, \texttt{program.md}, training logs, W\&B runs, and Advisor comments. & Modify the task training file, run the assigned experiment, debug crashes/OOMs, and resubmit after requested changes. & A PR comment beginning with a single-line \texttt{SENPAI-RESULT} JSON marker, followed by metrics, run IDs, commands, interpretation, and follow-ups. \\
-    Researcher & Prior PRs, W\&B evidence, code lineage, papers, repos, and domain references. & Search literature and experiment history, reconstruct mechanisms, and design discriminating follow-up experiments. & A decision-useful synthesis: mechanism, evidence, implementation notes, proposed experiment tree, stop condition, and confidence. \\
-    \texttt{kagent} & Shared leaderboard, own experiment journal, W\&B configs, visible commits, and local logs. & Iterate directly on \texttt{train.py} and \texttt{predict.py}, run training/prediction, retain or discard code, and write the journal after every trial. & Scored submissions plus a persistent experiment journal, with no Advisor review gate. \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+\FloatBarrier
 
-\section{Problem-Program Contract}
-\label{app:program-contracts}
-
-Each SENPAI target repository carries a \texttt{program.md} file that makes task assumptions explicit. The DrivAerML contract used as a reference artifact defines the elements in \Cref{tab:program-contract}; the local TandemFoil2 contract follows the same pattern, with \texttt{val/l2\_error} averaged over four validation splits as its leaderboard metric. These files are intentionally more specific than generic prompts: they are the task-local source of truth for what a valid experiment may edit, how data are structured, and which metrics count as paper-facing evidence.
-
-\begin{table}[h]
-  \caption{Information supplied by a task \texttt{program.md}.}
-  \label{tab:program-contract}
-  \centering
-  \small
-  \begin{tabular}{@{}p{0.22\textwidth}p{0.70\textwidth}@{}}
-    \toprule
-    Contract component & Example content in the DrivAerML programme \\
-    \midrule
-    Mission and targets & Minimize held-out \texttt{test\_primary/*} metrics for surface pressure, vector wall shear, and volume pressure, using validation for steering but final test metrics for claims. \\
-    File boundaries & \texttt{train.py}, \texttt{model.py}, and runtime helpers are experiment-editable; data loaders, manifests, and split files are read-only during normal experiment PRs. \\
-    Data contract & Surface tensors include coordinates, normals, area, pressure coefficient, and wall-shear components; volume tensors include coordinates, signed-distance field, and volume pressure. \\
-    Split and evaluation & The public processed split is fixed at 400 train, 34 validation, and 50 test cases, with deterministic full-fidelity evaluation chunks for validation and test. \\
-    Model interface & The reference model consumes padded surface and volume tensors plus masks, and must not compute losses or metrics on padding tokens. \\
-    Telemetry and validity & W\&B must contain finite final primary metrics, plus gradient, weight, slope, validation, and test diagnostics sufficient to diagnose unstable or invalid runs. \\
-    Paper-facing metrics & Individual target-family relative-$L_2$ percentages are reported; the aggregate checkpoint metric is treated as a triage scalar rather than a benchmark column. \\
-    Workflow & Roles are coordinated through PRs and GitHub issues; final result claims must be traceable to run IDs and code state. \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\section{Skill Catalogue}
-\label{app:skill-catalogue}
-
-SENPAI's prompts route common operations through small helper skills and a shared \texttt{senpai-gh} library. This was a deliberate control choice: high-frequency GitHub and bookkeeping operations should have narrow, testable interfaces instead of being reconstructed from scratch by each agent invocation.
-
-\begin{table}[h]
-  \caption{Helper skills used by the Advisor and Students.}
-  \label{tab:skill-catalogue}
-  \centering
-  \small
-  \begin{tabular}{@{}p{0.18\textwidth}p{0.15\textwidth}p{0.57\textwidth}@{}}
-    \toprule
-    Helper & Caller & Effect on the experiment ledger \\
-    \midrule
-    \texttt{survey-prs} & Advisor & Reads review-ready, WIP, draft/stalled, and idle-Student state for an Advisor branch. \\
-    \texttt{poll-for-work} & Student & Returns assigned WIP PRs for a Student label and reads comments to detect revisions. \\
-    \texttt{check-human-issues} & Both & Finds labeled human issues for the caller and posts role-prefixed replies without closing issues. \\
-    \texttt{list-experiments} & Researcher & Exports merged winners, compact result tables, and detailed PR bodies from the PR ledger. \\
-    \texttt{assign-experiment} & Advisor & Creates a Student branch, opens a draft PR, labels it \texttt{status:wip}, and writes full experiment instructions. \\
-    \shortstack[l]{\texttt{submit-}\\\texttt{experiment-results}} & Student & Commits changed experiment files, pushes the branch, marks the PR ready, and swaps \texttt{status:wip} to \texttt{status:review}. \\
-    \texttt{merge-winner} & Advisor & Preflights terminal results, squash-merges a winning PR, updates the Advisor baseline, and pulls the updated branch. \\
-    \texttt{senpai-gh} & Both & Provides lower-level label swaps, PR comments, closure, preflight, and read-only query primitives. \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
+\clearpage
 \section{Advisor Outer Loop}
 \label{app:outer-loop}
+
+The key property is that ordinary polling remains outside the LLM. The Advisor is invoked only when there is actionable state: a PR to review, a human issue to answer, or idle Students that need assignments. The watermark advances only after successful invocations, so transient failures retry against the same triage state.
 
 \begin{algorithm}[h]
   \caption{Advisor triage loop outside the LLM context}
@@ -480,46 +436,45 @@ SENPAI's prompts route common operations through small helper skills and a share
   \end{algorithmic}
 \end{algorithm}
 
-The key property is that ordinary polling remains outside the LLM. The Advisor is invoked only when there is actionable state: a PR to review, a human issue to answer, or idle Students that need assignments. The watermark advances only after successful invocations, so transient failures retry against the same triage state.
-
+\clearpage
 \section{DrivAerML Recipe Details}
 \label{app:drivaerml-recipe}
 
-\begin{table}[h]
-  \caption{Selected DrivAerML SENPAI single-model configuration.}
+\begin{center}
+  \captionof{table}{Selected DrivAerML SENPAI single-model configuration.}
   \label{tab:app-drivaerml-config}
-  \centering
   \small
-  \begin{tabular}{@{}ll@{}}
+  \begin{tabular}{@{}p{0.24\textwidth}p{0.66\textwidth}@{}}
     \toprule
     Setting & Value \\
     \midrule
-    Source & PR \#740 on \texttt{drivaerml-long-20260504}; merge commit \texttt{9130201} \\
-    W\&B run & \texttt{5x8wofzm} \\
-    Training budget & 50-epoch budget; best EMA checkpoint at epoch 27 \\
-    Parallelism and batch & 8-GPU DDP; batch size 2 per rank, 16 global \\
-    Optimizer & Lion, learning rate \texttt{1e-4}, weight decay \texttt{1e-4} \\
-    EMA & 0.999 \\
-    Backbone & 4 layers, 512 hidden units, 4 attention heads, 128 slices \\
-    Positional encoding & \texttt{string\_multisigma}; sigmas 0.25, 0.5, 1.0, 2.0, 4.0 \\
-    Point sampling & Train: 40,000 surface / 65,000 volume; eval: 40,000 surface / 65,000 volume \\
-    Augmentation & None in selected run \\
-    Loss & Normalized MSE with GradNorm ($\alpha=0.5$, learning rate \texttt{1e-3}) and base surface/volume weights 1.0/1.0 \\
+    Source & \href{https://github.com/morganmcg1/DrivAerML/pull/1344}{PR~\#1344} on \texttt{drivaerml-long-20260504}; merge commit \texttt{4c027677} \\
+    W\&B run & \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/runs/k6q4c3on}{\texttt{k6q4c3on}} \\
+    Reproduction report & \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8/reports/-2026-06-22-DrivAerML-H147-Repro-vs-Volume-Velocity-Targets--VmlldzoxNzI3MTE5MQ}{W\&B report documenting a three-run reproduction} \\
+    Test metrics & Surface pressure 3.6679\%; volume pressure 3.4004\%; volume velocity 5.0911\%; wall shear 6.6676\% \\
+    Training budget & 30-epoch budget; best EMA checkpoint at epoch 25 \\
+    Parallelism and batch & 8-GPU DDP; batch size 1 per rank, 8 global \\
+    Optimizer & Lion, learning rate \texttt{1e-4}, weight decay \texttt{0.005}, $\beta_1=0.95$, $\beta_2=0.98$ \\
+    EMA & Start step 500; selected checkpoint source \texttt{ema} \\
+    Backbone & 6 layers, 512 hidden units, 4 attention heads, 128 slices \\
+    Positional encoding & \texttt{string\_multisigma}; 16 features; sigmas 0.25, 0.5, 1.0, 2.0, 4.0 \\
+    Point sampling & Train: 65,000 surface / 65,000 volume; eval: 65,536 surface / 65,536 volume \\
+    Augmentation and bias & $y$-symmetry augmentation with probability 0.5; curvature attention bias; surface output width factor 2.0 \\
+    Loss & Normalized MSE with GradNorm ($\alpha=0.5$, minimum volume-pressure weight 0.15), volume-pressure Charbonnier weight 0.1, and wall-shear Charbonnier weight 0.1 on the $z$ axis \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 The \texttt{string\_multisigma} encoding is a lightweight adaptation of separable translationally invariant position encodings \citep{schenck2025learningropes}: per-axis learnable sine/cosine bases are initialized across several spatial scales and projected into the Transolver width.
 
-The ensemble result in \Cref{tab:drivaerml} is documented in PR \#602. It was a greedy forward-selection ensemble over test predictions from seven independently trained checkpoints: \texttt{nh96x7m4}, \texttt{5o7jc7wi}, \texttt{wyz68o8r}, \texttt{9mm3sz7x}, \texttt{49aimdiz}, \texttt{19qf6di1}, and \texttt{nh2ke150}. Candidates were added one at a time to minimize validation field error, and the final inference-time prediction averaged the selected members uniformly.
+The selected checkpoint's per-axis wall-shear test metrics were 5.8155\% ($\tau_x$), 7.0556\% ($\tau_y$), and 8.4882\% ($\tau_z$), indicating that the remaining wall-shear gap is concentrated in the transverse components even as aggregate pressure metrics improve.
 
 \section{AirfRANS Recipe Details}
 \label{app:airfrans-recipe}
 
-\begin{table}[h]
-  \caption{AirfRANS SENPAI configuration from PR \#3135.}
+\begin{center}
+  \captionof{table}{AirfRANS SENPAI configuration from PR \#3135.}
   \label{tab:app-airfrans-config}
-  \centering
   \small
   \begin{tabular}{@{}ll@{}}
     \toprule
@@ -540,12 +495,11 @@ The ensemble result in \Cref{tab:drivaerml} is documented in PR \#602. It was a 
     Loss & Normalized surface MSE plus $10.0 \times$ normalized volume MSE \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
-\begin{table}[h]
-  \caption{AirfRANS five-seed verification runs.}
+\begin{center}
+  \captionof{table}{AirfRANS five-seed verification runs.}
   \label{tab:app-airfrans-seeds}
-  \centering
   \small
   \begin{tabular}{@{}rcrrr@{}}
     \toprule
@@ -561,7 +515,7 @@ The ensemble result in \Cref{tab:drivaerml} is documented in PR \#602. It was a 
     Median & -- & -- & 0.001029 & 0.003769 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 \section{\texttt{kagent} Comparator Details}
 \label{app:kagent-details}
@@ -571,10 +525,9 @@ The \texttt{kagent} comparator used a flat competition prompt rather than SENPAI
 \paragraph{TandemFoilSet parity run.}
 An eight-agent \texttt{kagent} cohort ran on the TandemFoilSet parity benchmark from 2026-04-23 15:53 UTC to 2026-04-24 04:00 UTC, using one GPU pod per agent, a 30-minute per-training-run budget, and the Transolver starter. The run produced 330 agent commits and 223 scored leaderboard updates without human intervention. Agents communicated only through shared data/prediction volumes, the git remote and leaderboard, and W\&B telemetry.
 
-\begin{table}[h]
-  \caption{\texttt{kagent} April 23 TandemFoilSet parity leaderboard. Surface-pressure MAE; lower is better.}
+\begin{center}
+  \captionof{table}{\texttt{kagent} April 23 TandemFoilSet parity leaderboard. Surface-pressure MAE; lower is better.}
   \label{tab:app-kagent-leaderboard}
-  \centering
   \small
   \begin{tabular}{@{}rlrrrrr@{}}
     \toprule
@@ -590,29 +543,106 @@ An eight-agent \texttt{kagent} cohort ran on the TandemFoilSet parity benchmark 
     8 & nezuko & 85.84 & 96.56 & 96.43 & 63.43 & 86.94 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 The most important qualitative finding was rapid peer diffusion. Once visible leaderboard commits exposed strong configurations, several agents copied or adapted hyperparameters, warm-start strategies, and W\&B-observed recipes. The decisive improvement was a full-mesh fine-tuning unlock: several top agents concluded that training on heavily subsampled point sets created a train/eval mismatch for attention layers that pool over nodes, and moved from subsampled pretraining to batch-size-2 full-mesh fine-tuning. Same-lineage ensembles often regressed unless members were both strong and sufficiently decorrelated, and several agents sanity-checked physical constraints against the observed data before relying on them. A separate scorer-race incident marked partially written prediction directories as terminally incomplete, illustrating the same infrastructure-contract fragility discussed in \Cref{app:evidence-taxonomy}.
 
 \paragraph{External competition run.}
 As an additional stress test, sixteen Claude Opus 4.6 \texttt{kagent} agents were pointed at the GRaM ICLR 2026 open competition from 2026-03-29 to 2026-03-30. Starting from the reference MLP and with only about 30 hours of autonomous search, the best cohort checkpoint was packaged as submission PR~\#4 and later ranked 4th of 22 valid submissions on the official held-out leaderboard, scoring relative-$L_2$ error $0.0553 \pm 0.0168$. Internally, the winning cohort member had reached 0.8526 mean L2 against a roughly 1.75 reference-MLP baseline.
 
+\section{Weights \& Biases Projects}
+\label{app:wandb-projects}
+
+The paper-facing experiment tracker records are grouped into the public Weights \& Biases projects in \Cref{tab:wandb-projects}.
+
+\begin{center}
+  \captionof{table}{Public Weights \& Biases projects used by the paper.}
+  \label{tab:wandb-projects}
+  \small
+  \begin{tabular}{@{}p{0.30\textwidth}p{0.62\textwidth}@{}}
+    \toprule
+    Project & Paper-facing records \\
+    \midrule
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1}{\texttt{senpai-v1}} & Primary SENPAI experiment-tracking project for the paper, including AirfRANS experiment results. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml}{\texttt{senpai-v1-drivaerml}} & DrivAerML SENPAI campaign runs and related surface-pressure trajectory records. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/senpai-v1-drivaerml-ddp8}{\texttt{senpai-v1-drivaerml-ddp8}} & Eight-GPU DrivAerML follow-up runs for the selected single-checkpoint recipe and related ablations. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/kagent-v2}{\texttt{kagent-v2}} & Flat \texttt{kagent} comparator runs. \\
+    \href{https://wandb.ai/wandb-applied-ai-team/modded-nanogpt-senpai}{\texttt{modded-nanogpt-senpai}} & Modded-NanoGPT Track 3 SENPAI runs. \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+
+\FloatBarrier
+
+\section{Modded-NanoGPT Track 3 Details}
+\label{app:modded-nanogpt-details}
+
+Track 3 of the modded-NanoGPT benchmark fixes the FineWeb dataset, batch size, and model architecture, and scores methods by the fewest optimizer steps required to reach 3.28 validation loss \citep{penedo2024fineweb,karpathy2024llmcgpt2}. With the data and architecture fixed, submissions primarily test optimizer and training-recipe changes. Valid submissions must use non-cherry-picked runs, include reproducible logs, avoid validation-loss-based per-run early stopping, and satisfy the benchmark precision rule $(3.28-\mu)\sqrt{n}\ge 0.004$ at a shared stopping point.
+
+We ran five SENPAI trials to measure result consistency and understand the distribution of autonomous search outcomes. The core SENPAI system prompts were unchanged; only the repository-specific prompts were adapted to modded-NanoGPT. To avoid bias from another autoresearch artifact, we also barred inspection or reuse of Prime Intellect's autonomous nanoGPT speedrun result \citep{primeintellect2026autonanogpt}.
+
+Across the five trials, SENPAI ran 9,591 tracked experiments using 9,772 training GPU-hours on NVIDIA RTX PRO 6000 Blackwell 96GB GPUs, or 1,954 GPU-hours per trial on average. Using NVIDIA's published dense BF16/FP16 tensor throughput for RTX PRO 6000 Blackwell and H200 GPUs \citep{nvidia2025rtxpro6000blackwell,nvidia2026h200}, one average SENPAI trial corresponds to a rough hardware-peak upper bound of about 3.5 zettaFLOP. Prime Intellect reports roughly 14k H200 GPU-hours across its autonomous nanoGPT speedrun. Of the 10,428 released runs, 2,204 are labeled Claude Code and 8,224 Codex; the Claude Code rows account for 18.6\% of logged training seconds. For a simple run-count comparison, assuming equal run duration allocates about 3.0k H200 GPU-hours to Claude Code and 11.0k to Codex, or about 10.5 and 39.3 zettaFLOP at dense H200 BF16/FP16 peak. These estimates use hardware peak throughput, not measured realized training FLOPs.
+
+The 2925-step result is recorded in \href{https://github.com/morganmcg1/modded-nanogpt-senpai/pull/737}{morganmcg1/modded-nanogpt-senpai PR~\#737}. The selected recipe adds a cooldown-aware Polyak EMA $\beta$ ramp to the Track 3 training script. The EMA uses base $\beta=0.95$ and starts after \texttt{ema\_warmup\_steps=2250}; during cooldown it couples the averaging window to the body-Muon learning-rate schedule as $\beta_t=\beta_{\mathrm{base}}+(\beta_{\mathrm{target}}-\beta_{\mathrm{base}})(1-\mathrm{lr\_mult}_t)$. The winning arm used $\beta_{\mathrm{target}}=0.99$, so the EMA window grows as the learning rate decays and live-parameter drift shrinks. A more aggressive $\beta_{\mathrm{target}}=0.999$ arm was also run and was not selected.
+
+PR~\#737 reports two confirmation seeds for the selected $\beta_{\mathrm{target}}=0.99$ arm, W\&B runs \texttt{rdbmnzpc} and \texttt{32r3isz5}. Both reached \texttt{speedrun/final\_first\_step\_to\_target}=2925; the mean final EMA-swapped validation loss was 3.266926, giving $(3.28-\mu)\sqrt{2}=0.01849$ under the Track 3 rule. The same PR reports the $\beta_{\mathrm{target}}=0.999$ comparison run \texttt{b4q13sgm}, which reached 2950 steps and a worse final validation loss, indicating that the longer terminal EMA window introduced too much lag.
+
+\section{Problem-Program Contract}
+\label{app:program-contracts}
+
+Each SENPAI target repository carries a \texttt{program.md} file that makes task assumptions explicit. The DrivAerML contract used as a reference artifact defines the elements in \Cref{tab:program-contract}; the local TandemFoil2 contract follows the same pattern, with \texttt{val/l2\_error} averaged over four validation splits as its leaderboard metric. These files are intentionally more specific than generic prompts: they are the task-local source of truth for what a valid experiment may edit, how data are structured, and which metrics count as paper-facing evidence.
+
+\begin{center}
+  \captionof{table}{Information supplied by a task \texttt{program.md}.}
+  \label{tab:program-contract}
+  \small
+  \begin{tabular}{@{}p{0.22\textwidth}p{0.70\textwidth}@{}}
+    \toprule
+    Contract component & Example content in the DrivAerML programme \\
+    \midrule
+    Mission and targets & Minimize held-out \texttt{test\_primary/*} metrics for surface pressure, vector wall shear, and volume pressure, using validation for steering but final test metrics for claims. \\
+    File boundaries & \texttt{train.py}, \texttt{model.py}, and runtime helpers are experiment-editable; data loaders, manifests, and split files are read-only during normal experiment PRs. \\
+    Data contract & Surface tensors include coordinates, normals, area, pressure coefficient, and wall-shear components; volume tensors include coordinates, signed-distance field, and volume pressure. \\
+    Split and evaluation & The public processed split is fixed at 400 train, 34 validation, and 50 test cases, with deterministic full-fidelity evaluation chunks for validation and test. \\
+    Model interface & The reference model consumes padded surface and volume tensors plus masks, and must not compute losses or metrics on padding tokens. \\
+    Telemetry and validity & W\&B must contain finite final primary metrics, plus gradient, weight, slope, validation, and test diagnostics sufficient to diagnose unstable or invalid runs. \\
+    Paper-facing metrics & Individual target-family relative-$L_2$ percentages are reported; the aggregate checkpoint metric is treated as a triage scalar rather than a benchmark column. \\
+    Workflow & Roles are coordinated through PRs and GitHub issues; final result claims must be traceable to run IDs and code state. \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+
+\section{Skill Catalogue}
+\label{app:skill-catalogue}
+
+SENPAI's prompts route common operations through small helper skills and a shared \texttt{senpai-gh} library. This was a deliberate control choice: high-frequency GitHub and bookkeeping operations should have narrow, testable interfaces instead of being reconstructed from scratch by each agent invocation.
+
+\begin{center}
+  \captionof{table}{Helper skills used by the Advisor and Students.}
+  \label{tab:skill-catalogue}
+  \small
+  \begin{tabular}{@{}p{0.18\textwidth}p{0.15\textwidth}p{0.57\textwidth}@{}}
+    \toprule
+    Helper & Caller & Effect on the experiment ledger \\
+    \midrule
+    \texttt{survey-prs} & Advisor & Reads review-ready, WIP, draft/stalled, and idle-Student state for an Advisor branch. \\
+    \texttt{poll-for-work} & Student & Returns assigned WIP PRs for a Student label and reads comments to detect revisions. \\
+    \texttt{check-human-issues} & Both & Finds labeled human issues for the caller and posts role-prefixed replies without closing issues. \\
+    \texttt{list-experiments} & Researcher & Exports merged winners, compact result tables, and detailed PR bodies from the PR ledger. \\
+    \texttt{assign-experiment} & Advisor & Creates a Student branch, opens a draft PR, labels it \texttt{status:wip}, and writes full experiment instructions. \\
+    \shortstack[l]{\texttt{submit-}\\\texttt{experiment-results}} & Student & Commits changed experiment files, pushes the branch, marks the PR ready, and swaps \texttt{status:wip} to \texttt{status:review}. \\
+    \texttt{merge-winner} & Advisor & Preflights terminal results, squash-merges a winning PR, updates the Advisor baseline, and pulls the updated branch. \\
+    \texttt{senpai-gh} & Both & Provides lower-level label swaps, PR comments, closure, preflight, and read-only query primitives. \\
+    \bottomrule
+  \end{tabular}
+\end{center}
+
 \section{Evidence Artifacts and Failure Taxonomy}
 \label{app:evidence-taxonomy}
 
-The experiment ledger supports several supplementary audit views beyond the main tables:
-
-\begin{itemize}[leftmargin=*,topsep=2pt,itemsep=2pt,parsep=0pt]
-  \item full benchmark result tables for AirfRANS, TandemFoilSet parity, TandemFoilSet-Balanced, and DrivAerML validation/test trajectories;
-  \item an experiment-ledger CSV schema with PR number, title, status, Student, W\&B run IDs, primary metric name/value, baseline delta, era tag, and merge-decision timestamp;
-  \item redacted examples of real PR conversations linked to W\&B panels;
-  \item sprint evidence logs including experiment snapshots, run panels, advisor-branch git logs, and urgent human issue timelines.
-\end{itemize}
-
-\begin{table}[h]
-  \caption{Median token load observed per PR in the rough appendix evidence log.}
+\begin{center}
+  \captionof{table}{Median token load observed per PR in the rough appendix evidence log.}
   \label{tab:app-pr-token-load}
-  \centering
   \small
   \begin{tabular}{@{}lr@{}}
     \toprule
@@ -624,17 +654,16 @@ The experiment ledger supports several supplementary audit views beyond the main
     Median Advisor output tokens per PR & 1,621 \\
     \bottomrule
   \end{tabular}
-\end{table}
+\end{center}
 
 We organize full failure-mode notes under four infrastructure-facing categories. \textit{Monitoring failures} include unfiltered log monitors, heartbeat events that wake agents for low-information lines, and long-lived streams that inflate cached context. \textit{Tool-interface failures} include brittle shell/GitHub sequences, missing scopes, wrong paths, blocked waits, failed pushes, oversized reads, and edit-guard failures. \textit{Result-capture failures} include missing final metrics, invalid terminal result markers, checkpoint selection mistakes, and scorer/checkpoint races. \textit{State-reconciliation failures} include stale PR labels, incomplete W\&B-to-PR reconciliation, lossy compaction summaries, and conflicts between markdown caches and the authoritative ledger.
 
 These categories explain why SENPAI's mitigations are mostly infrastructural: filtered monitors, narrow helper scripts, terminal result schemas, checkpoint preflights, and treating local summaries as caches over the PR/git/W\&B ledger.
 
-\clearpage
 \section{Full Source Prompts and Contracts}
 \label{app:full-prompts}
 
-This section contains review-anonymized verbatim snapshots of the prompt and contract artifacts summarized in \Cref{app:agent-instructions}. The files are vendored into \texttt{papers/appendix\_sources/}; repository owners, repository names, and private infrastructure paths that would identify the authors are replaced with bracketed placeholders for double-blind review.
+This section contains verbatim snapshots of the prompt and contract artifacts summarized in \Cref{app:agent-instructions}. The files are vendored into \texttt{papers/appendix\_sources/} so the runtime contracts can be inspected with the paper.
 
 \subsection{Advisor Role Prompt}
 \label{app:full-advisor-prompt}
@@ -652,7 +681,7 @@ This section contains review-anonymized verbatim snapshots of the prompt and con
 \label{app:full-drivaerml-program}
 \promptfile{appendix_sources/drivaerml_program.md}
 
-\subsection{Local TandemFoil2 Program Contract}
+\subsection{Local TandemFoilSet-Balanced Program Contract}
 \label{app:full-tandemfoil2-program}
 \promptfile{appendix_sources/tandemfoil2_program.md}
 

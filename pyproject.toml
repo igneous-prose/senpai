@@ -9,7 +9,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "numpy",
     "PyYAML",
-    "torch",
+    "torch==2.11.0",
     "torch_geometric",
     "einops",
     "timm",
@@ -20,8 +20,8 @@ dependencies = [
     "weave",
     "tqdm",
     "matplotlib",
-    "openhands-sdk",
-    "openhands-tools",
+    "openhands-sdk==1.28.1",
+    "openhands-tools==1.28.1",
 ]
 
 [tool.setuptools.packages.find]
@@ -31,4 +31,5 @@ exclude = ["k8s*", "target*", "tests*"]
 dev = [
     "ipython",
     "jupyter",
+    "pytest",
 ]

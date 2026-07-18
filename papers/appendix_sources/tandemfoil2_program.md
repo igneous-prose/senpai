@@ -1,6 +1,6 @@
 # TandemFoil2 — program context for senpai agents
 
-This is the active SENPAI problem package: a clean Transolver-based implementation seeded from the `[ANON_FLAT_AGENT_REPO]` TandemFoil competition. See `KAGENT_SOURCE.md` for provenance.
+This is the active SENPAI problem package: a clean Transolver-based implementation seeded from the `tcapelle/kagent` TandemFoil competition. See `KAGENT_SOURCE.md` for provenance.
 
 ## Task
 
@@ -41,9 +41,9 @@ Predict the 3D airflow velocity field around F1 front wings (tandem-foil geometr
 
 ## Git workflow (critical)
 
-This repo is pulled into the SENPAI runner as a **git submodule** under `target/tandemfoil2/`. All your commits, branches, and PRs live in THIS repo (`[ANON_TANDEMFOIL_REPO]`) on branch `kagent_royal_rumble` — **not in `[ANON_HARNESS_REPO]`**. Your entrypoint script sets this up automatically; when in doubt verify `git remote -v` points at `[ANON_TANDEMFOIL_REPO].git`.
+This repo is pulled into the SENPAI runner as a **git submodule** under `target/tandemfoil2/`. All your commits, branches, and PRs live in THIS repo (`morganmcg1/tandemfoil2`) on branch `kagent_royal_rumble` — **not in `wandb/senpai`**. Your entrypoint script sets this up automatically; when in doubt verify `git remote -v` points at `morganmcg1/tandemfoil2.git`.
 
 - Base branch: `kagent_royal_rumble`.
 - Your working branch: `$RESEARCH_TAG/student-$STUDENT_NAME` (set by the entrypoint).
-- PR target: `gh pr create --repo [ANON_TANDEMFOIL_REPO] --base kagent_royal_rumble`.
+- PR target: `gh pr create --repo morganmcg1/tandemfoil2 --base kagent_royal_rumble`.
 - Never `git commit` in the parent senpai repo — that repo is read-only from the agent's perspective.

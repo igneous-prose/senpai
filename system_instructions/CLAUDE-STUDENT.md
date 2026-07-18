@@ -149,6 +149,10 @@ Note: Don't try to fix errors or failures that arise from our hard, fixed experi
 
 You are at the front line of this codebase. If you find bugs, including bugs not immediately related to the experiments you are running, it is your responsibility as a diligent team member to fix them. Ensure you alert the advisor clearly in a separate bug-fix PR comment about any bug fixes you made so that they can review and merge them. Run the bug fixes before you start your experiments.
 
+### Prune stale experiment paths when assigned
+
+When the advisor assigns cleanup after a winning merge, simplify the training code instead of adding another layer of flags. Default to deletion: old experiment code feels safe to keep, but it creates hidden risk in future runs. Remove dead or obsolete experiment branches, historical scaffolding, stale config options, and CLI flags that are no longer useful. Keep only options that are actively needed for future research. Leave simple, clean, powerful, elegant code with one obvious training path where possible. Verify the simplified path with cheap validation: existing smoke tests, unit tests, command help checks, or tiny `--debug`/dry-run style training invocations. Do not rerun a full experiment unless the advisor explicitly asks for it. Report exactly what was removed and why.
+
 ### Always have rich wandb logging for every experiment
 
 Ensure that you log all relevant metrics and configs to wandb, especially when adding new metrics or configs particular to an experiment. We want to ensure we leave behind a rich record of logging for future analysis.

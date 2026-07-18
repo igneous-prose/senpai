@@ -1,7 +1,7 @@
 <!--
-SPDX-FileCopyrightText: 2026 [ANON_ORG]
+SPDX-FileCopyrightText: 2026 CoreWeave, Inc.
 SPDX-License-Identifier: Apache-2.0
-SPDX-PackageName: [ANON_HARNESS_PACKAGE]
+SPDX-PackageName: senpai
 -->
 
 # DrivAerML Research Target
@@ -16,13 +16,13 @@ Research target for CFD surrogate modelling on DrivAerML. Given vehicle surface 
 
 The research goal is to find the strongest DrivAerML model we can across all three target metrics. Success is measured on the held-out test metrics logged by `train.py` after the best validation checkpoint is reloaded. Validation metrics are useful for steering, but final claims must be made from `test_primary/*`.
 
-The target is not merely to match the current public reference: the goal is to beat it decisively. Agents should relentlessly search for ways to drive down `test_primary/surface_pressure_rel_l2_pct`, `test_primary/volume_pressure_rel_l2_pct`, `test_primary/wall_shear_rel_l2_pct` without hiding regressions behind a single averaged number.
+The target is not merely to match the best known reference: the goal is to beat it decisively. Agents should relentlessly search for ways to drive down `test_primary/surface_pressure_rel_l2_pct`, `test_primary/volume_pressure_rel_l2_pct`, `test_primary/wall_shear_rel_l2_pct` without hiding regressions behind a single averaged number.
 
-The baseline model given in `model.py` and trained by `train.py` is a plain grouped Transolver with one shared backbone and separate surface/volume heads. This is only a starting reference, we also need to explore more opinionated variants as separate experiment arms in order to crush the current public reference metrics.
+The baseline model given in `model.py` and trained by `train.py` is a plain grouped Transolver with one shared backbone and separate surface/volume heads. This is only a starting reference; we also need to explore more opinionated variants as separate experiment arms in order to crush the strongest relevant reference metrics.
 
 ## Codebase
 
-- `train.py` — [REFERENCE]trainer CLI, config, loss, and training loop. **Primary editable entrypoint.**
+- `train.py` — [REFERENCE] trainer CLI, config, loss, and training loop. **Primary editable entrypoint.**
 - `model.py` — grouped surface/volume Transolver architecture. **Editable for experiment PRs.**
 - `trainer_runtime.py` — DDP, evaluation, W&B, scheduler, telemetry, masking, and checkpoint/runtime helpers. **Editable for experiment PRs.**
 - `data/loader.py` — PVC-backed DrivAerML case store, point-view sampling, batching, target stats. **Read-only during normal experiment PRs.**
@@ -34,7 +34,7 @@ The baseline model given in `model.py` and trained by `train.py` is a plain grou
 
 ## Data
 
-Processed samples live on the PVC at `[ANON_PVC_ROOT]/Processed/drivaerml_processed`.
+Processed samples live on the PVC at `/mnt/new-pvc/Processed/drivaerml_processed`.
 
 Each case directory must contain:
 
@@ -166,7 +166,7 @@ Lower is better. For paper-facing reporting, use the final `test_primary/*` metr
 
 AB-UPT reports relative L2 error in percent, averaged per sample across the split. The paper defines the relative L2 over all points and output dimensions for a target vector, then averages those per-sample values across test cases.
 
-For DrivAerML, the main paper table reports `p_s`, `u`, and `omega`; Appendix A reports `p_s`, vector wall shear `tau`, and `p_v`; Appendix B also reports the DoMINO comparison with wall shear split into `tau_x`, `tau_y`, and `tau_z`. This repo logs the matching columns it can compute:
+For DrivAerML paper-facing reporting, quote the final `test_primary/*` metrics for surface pressure `p_s`, vector wall shear `tau`, volume pressure `p_v`, and the per-axis wall-shear components when diagnosing residual gaps. This repo logs the matching columns it can compute:
 
 - `surface_pressure_rel_l2_pct` maps to AB-UPT `p_s`.
 - `wall_shear_rel_l2_pct` maps to vector `tau`.
@@ -177,7 +177,7 @@ For DrivAerML, the main paper table reports `p_s`, `u`, and `omega`; Appendix A 
 
 ### State-Of-The-Art Targets
 
-AB-UPT is the current public DrivAerML reference to beat. Its reported DrivAerML values are relative L2 error in percent, averaged per test case; lower is better. Use these as external SOTA targets, while still reporting this repo's exact held-out `test_primary/*` metrics.
+AB-UPT provides aligned public DrivAerML reference targets, including per-axis wall shear. Transolver-3 and Transolver++ provide additional aggregate references for the paper-facing `p_s`, `tau`, and `p_v` comparison. Use the strongest relevant public target for the reported column, while still reporting this repo's exact held-out `test_primary/*` metrics.
 
 | Target | This repo metric | AB-UPT reference |
 |--------|------------------|-----------------:|
@@ -188,7 +188,7 @@ AB-UPT is the current public DrivAerML reference to beat. Its reported DrivAerML
 | Wall shear `tau_y` | `test_primary/wall_shear_y_rel_l2_pct` | `3.65` |
 | Wall shear `tau_z` | `test_primary/wall_shear_z_rel_l2_pct` | `3.63` |
 
-The per-axis wall-shear table reports `p_s = 3.76` and `p_v = 6.29` in the same AB-UPT/DoMINO comparison setting. Treat the stricter of the relevant published values as the target band when deciding whether a result is exciting. A run that only improves the internal aggregate but misses `p_v` or wall-shear targets has not solved the problem.
+The per-axis wall-shear table reports `p_s = 3.76` and `p_v = 6.29` in the same AB-UPT/DoMINO comparison setting. Treat the stricter of the relevant published values as the target band when deciding whether a result is exciting. The camera-ready SENPAI single-checkpoint result is H147 / PR `#1344` / W&B `k6q4c3on`: `p_s = 3.5634`, `p_v = 3.4014`, vector `tau = 6.5409`, and AB-UPT-axis mean `5.6648`.
 
 ### Target Scaling
 
@@ -214,7 +214,7 @@ For substantial architecture or training-strategy changes, preserve main context
 Mine the existing DrivAerML history of experiments before assigning a wave of experiments:
 
 - Search this target repo's prior branches and PRs, including `main`, `codex/optimized-lineage`, and any previous DrivAerML experiment branches.
-- Search the PRs from the `[ANON_HARNESS_REPO]` GitHub repo's `[ANON_BRANCH]` branch which also contains a wealth of previous DrivAerML experiments and analysis.
+- Search the PRs from the `wandb/senpai` GitHub repo's `drivaerml-long-20260504` branch which also contains a wealth of previous DrivAerML experiments and analysis.
 - Assign a subset of students to build on the strongest past ideas rather than rediscovering them: useful preprocessing, target transforms, batching choices, normalization, loss weighting, architecture deltas, and optimizer schedules.
 - When reusing a past idea, state the source PR/run/branch in the assignment and explain what is being preserved versus changed.
 
@@ -232,17 +232,17 @@ Wild ideas are welcome, but they must still honor the data split, full-fidelity 
 
 Research is coordinated through GitHub PRs with an advisor/student model. GitHub Issues are used for communication with the human researcher team. See `instructions/prompt-advisor.md` and `instructions/prompt-student.md`.
 
-## To Sum up: do everything you possibly can to crush the current public reference metrics
+## To Sum up: do everything you possibly can to crush the current reference metrics
 
-Here are the current public reference metrics: 
+Here are the public reference metrics and the current camera-ready SENPAI single-checkpoint result:
 
-| Target | This repo metric | AB-UPT reference |
-|--------|------------------|-----------------:|
-| Surface pressure `p_s` | `test_primary/surface_pressure_rel_l2_pct` | `3.82` |
-| Vector wall shear `tau` | `test_primary/wall_shear_rel_l2_pct` | `7.29` |
-| Volume pressure `p_v` | `test_primary/volume_pressure_rel_l2_pct` | `6.08` |
-| Wall shear `tau_x` | `test_primary/wall_shear_x_rel_l2_pct` | `5.35` |
-| Wall shear `tau_y` | `test_primary/wall_shear_y_rel_l2_pct` | `3.65` |
-| Wall shear `tau_z` | `test_primary/wall_shear_z_rel_l2_pct` | `3.63` |
+| Target | This repo metric | H147 single checkpoint | AB-UPT reference |
+|--------|------------------|----------------------:|-----------------:|
+| Surface pressure `p_s` | `test_primary/surface_pressure_rel_l2_pct` | `3.5634` | `3.82` |
+| Vector wall shear `tau` | `test_primary/wall_shear_rel_l2_pct` | `6.5409` | `7.29` |
+| Volume pressure `p_v` | `test_primary/volume_pressure_rel_l2_pct` | `3.4014` | `6.08` |
+| Wall shear `tau_x` | `test_primary/wall_shear_x_rel_l2_pct` | `5.8155` | `5.35` |
+| Wall shear `tau_y` | `test_primary/wall_shear_y_rel_l2_pct` | `7.0556` | `3.65` |
+| Wall shear `tau_z` | `test_primary/wall_shear_z_rel_l2_pct` | `8.4882` | `3.63` |
 
-Your test metrics MUST beat these targets. We have put a massive amount of effort into this research programme to get this far, now is the time for you to step up and deliver the results we need and claim victory for the worlds best result on DrivAerML.
+Future test metrics should beat H147 while preserving the pressure gains and closing the remaining per-axis wall-shear gap. We have put a massive amount of effort into this research programme to get this far, now is the time for you to step up and deliver the results we need.

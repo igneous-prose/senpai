@@ -11,6 +11,9 @@ run_senpai_claude() {
     local max_turns=$1 user_prompt=$2
     shift 2
 
+    export SENPAI_PLUGIN="${SENPAI_PLUGIN:-$WORKDIR/plugins/senpai}"
+    export CLAUDE_PLUGIN_ROOT="$SENPAI_PLUGIN"
+    export SENPAI_OPENHANDS_ROLE_FILE="${SENPAI_OPENHANDS_ROLE_FILE:-$WORKDIR/CLAUDE.md}"
     local openhands_cmd=(python -m senpai_agent.openhands_runner "$@" --max-turns "$max_turns")
     if [ -n "${SENPAI_CLAUDE_TIMEOUT_SECONDS:-}" ] && command -v timeout >/dev/null 2>&1; then
         local kill_after="${SENPAI_CLAUDE_TIMEOUT_KILL_AFTER_SECONDS:-30}"

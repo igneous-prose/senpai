@@ -12,8 +12,9 @@ GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
 TARGET_REPO_BRANCH="${TARGET_REPO_BRANCH:-}"
 export SENPAI_ROLE="student"
 export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
+export SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
+export SENPAI_OPENHANDS_ROLE_FILE="$WORKDIR/CLAUDE.md"
 GIT_CREDENTIAL_FILE="$WORKDIR/.git-credentials"
-SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
 
 echo "=== Senpai Student: $STUDENT_NAME ==="
 echo "Runner repo:  $REPO_URL (branch: $REPO_BRANCH)"
@@ -21,6 +22,9 @@ echo "Target repo:  $TARGET_REPO_URL (base branch: ${TARGET_REPO_BRANCH:-<defaul
 echo "Problem dir:  $PROBLEM_DIR"
 echo "GitHub history: $GH_HISTORY_SCOPE"
 echo "GPUs:         $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l) x $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+
+source "$WORKDIR/k8s/wait-senpai-start-gate.sh"
+wait_for_senpai_start_gate
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
@@ -42,7 +46,7 @@ clone_target_repo() {
 [ -d "$PROBLEM_DIR/.git" ] || clone_target_repo
 git config --global --unset-all credential.helper 2>/dev/null || true
 
-uv pip install --system -e .
+uv pip install --python "$SENPAI_PYTHON" --no-deps -e .
 
 # --- Git identity for commits (inside the problem-package repo) ---
 cd "$WORKDIR/$PROBLEM_DIR"
@@ -56,12 +60,13 @@ if [ "$GH_HISTORY_SCOPE" != "repo" ]; then
     git config remote.origin.tagOpt --no-tags
 fi
 
-# --- Install checked-in Claude Code config into user scope ---
-mkdir -p "$HOME/.claude"
+# --- Install checked-in agent skills and config into user scope ---
+mkdir -p "$HOME/.agents" "$HOME/.claude"
+cp -a "$WORKDIR/.agents/." "$HOME/.agents/"
 cp -a "$WORKDIR/.claude/." "$HOME/.claude/"
 
-echo "=== Claude config installed ==="
-ls "$HOME/.claude/skills/wandb-primary/SKILL.md" "$HOME/.claude/agents/researcher-agent.md"
+echo "=== Agent config installed ==="
+ls "$HOME/.agents/skills/wandb-primary/SKILL.md" "$HOME/.claude/agents/researcher-agent.md"
 
 # --- Start Hivemind (streams CC session logs to hivemind.wandb.tools) ---
 source "$WORKDIR/k8s/start-hivemind.sh"
@@ -80,21 +85,26 @@ source "$WORKDIR/k8s/install-weave-cc-plugin.sh"
 # command and `gh api` call targets the problem-package repo, not senpai,
 # regardless of the agent's cwd.
 
-# --- Build prompts (CC auto-discovers CLAUDE.md for role instructions) ---
+# --- Build task prompt (the runner injects CLAUDE.md as system instructions) ---
 TASK_INSTRUCTIONS="$(envsubst < "$WORKDIR/$PROBLEM_DIR/instructions/prompt-student.md" | sed '/^<!--$/,/^-->$/d')"
 PROMPT="${TASK_INSTRUCTIONS}"
+
+if [ -n "${EXTRA_INSTRUCTIONS_B64:-}" ]; then
+    PROMPT="${PROMPT}"$'\n\n# Finally, some additional instructions\n\n'"$(printf '%s' "$EXTRA_INSTRUCTIONS_B64" | base64 -d)"
+fi
 
 KEY_INFO=$'\n\nKey information:\n\nStudent: '"$STUDENT_NAME"' | GPUs per Student: '"$GPUS_PER_STUDENT"' | Target repo: '"$GH_REPO"' | Target base branch: '"${TARGET_REPO_BRANCH:-<default>}"' | Advisor Branch: '"$ADVISOR_BRANCH"' | W&B entity/project: '"$WANDB_ENTITY"'/'"$WANDB_PROJECT"$'\n'
 FULL_PROMPT="${PROMPT}"$'\n\n'"${KEY_INFO}"
 
 HEARTBEAT_PROMPT="Continue your student loop using the assigned PRs and GitHub issues listed in the Student research state below. The entrypoint owns assignment polling; do not start persistent GitHub polling monitors. For active training, use sparse wakeups plus training_log_status; do not stream per-epoch logs into Monitor."
 
-# --- Launch Claude Code Loop ---
+# --- Launch OpenHands Loop ---
 export IS_SANDBOX=1
 
 LOGDIR="$WORKDIR/student_logs"
 mkdir -p "$LOGDIR"
-SLEEP_TIME_S=300
+SLEEP_TIME_S="${SENPAI_STUDENT_POLL_INTERVAL_S:-${SENPAI_POLL_INTERVAL_S:-600}}"
+POLL_JITTER_S="${SENPAI_STUDENT_POLL_JITTER_S:-${SENPAI_POLL_JITTER_S:-120}}"
 MAX_TURNS=100000
 
 ITERATION=0
@@ -157,7 +167,7 @@ while true; do
                 comment_on_pr "$num" "$DUPLICATE_BODY"
             fi
         done
-        sleep "$SLEEP_TIME_S"
+        senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
         continue
     fi
 
@@ -165,8 +175,8 @@ while true; do
     # is no work, do not enter Claude Code; idle model sessions tend to invent
     # their own polling loops and can miss the label-based assignment contract.
     if [ "$ASSIGNED_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ]; then
-        echo "=== No work assigned, sleeping $SLEEP_TIME_S seconds without invoking Claude ==="
-        sleep "$SLEEP_TIME_S"
+        echo "=== No work assigned, sleeping $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter without invoking Claude ==="
+        senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
         continue
     fi
 
@@ -188,10 +198,10 @@ while true; do
     fi
     DURATION=$(( $(date +%s) - START_TS ))
 
-    echo "=== Claude exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds ==="
+    echo "=== Claude exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter ==="
     if [ "$EXIT_CODE" -eq 124 ]; then
         echo "=== Claude watchdog fired; re-polling immediately ==="
         continue
     fi
-    sleep "$SLEEP_TIME_S"
+    senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
 done

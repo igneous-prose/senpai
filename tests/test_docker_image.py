@@ -63,8 +63,8 @@ def _build_configmap() -> str:
         "apiVersion: v1", "kind: ConfigMap", "metadata:",
         "  name: senpai-config-test",
         "  labels:",
-        f"    app: senpai",
-        f"    role: test",
+        "    app: senpai",
+        "    role: test",
         f"    research-tag: {TAG}",
         "data:",
         f'  REPO_URL: "{REPO_URL}"',
@@ -109,10 +109,30 @@ def test_python_deps_and_icml_target_import(test_pod):
     """The image has the Python deps needed by the new ICML target."""
     cmd = (
         "python - <<'PY'\n"
+        "import sys\n"
         "import numpy\n"
+        "import openhands.sdk\n"
         "import torch\n"
         "import torch_geometric\n"
         "import yaml\n"
+        "assert sys.version_info[:2] == (3, 13)\n"
+        "assert torch.version.cuda.startswith('13.')\n"
+        "print('ok')\n"
+        "PY"
+    )
+    out = kubectl_check("exec", test_pod, "--", "bash", "-c", cmd, timeout=20)
+    assert "ok" in out
+
+
+def test_openhands_plugin_loads_workflow_skills_and_exa(test_pod):
+    """The shared plugin is valid OpenHands input and carries Exa."""
+    cmd = (
+        "python - <<'PY'\n"
+        "from openhands.sdk.plugin import Plugin\n"
+        "plugin = Plugin.load('/workspaces/senpai/plugins/senpai')\n"
+        "skills = {skill.name for skill in plugin.skills}\n"
+        "assert {'senpai-gh', 'survey-prs'} <= skills\n"
+        "assert 'exa' in plugin.mcp_config['mcpServers']\n"
         "print('ok')\n"
         "PY"
     )

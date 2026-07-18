@@ -6,7 +6,7 @@ SPDX-PackageName: senpai
 
 # senpai
 
-Autonomous ML research loop powered by Claude Code agents coordinated through GitHub PRs. Point it at a problem, deploy advisor + student agents on k8s, and let them iterate.
+Autonomous ML research loop powered by OpenHands agents coordinated through GitHub PRs. Point it at a problem, deploy advisor + student agents on k8s, and let them iterate.
 
 ## How it works
 
@@ -22,6 +22,11 @@ An **advisor** pod creates experiment PRs and assigns them to **student** GPU po
 | [`morganmcg1/icml2026`](https://github.com/morganmcg1/icml2026) | Archive | ICML 2026 CFD multi-dataset harness |
 | [`morganmcg1/cfd_tandemfoil_v1`](https://github.com/morganmcg1/cfd_tandemfoil_v1) | Archive | Original v1 TandemFoil package |
 
+## DOMAIN SPECIFIC GUIDES
+
+- [LLM Inference Optimization Senpai Guide](LLM-INFERENCE-OPTIMIZATION-SENPAI-GUIDE.md): Fast Gemma 4 case-study lessons for serving-time LLM optimization, including quality gates, bytes-per-token bottlenecks, kernels, quantization, and speculative decoding.
+- [LLM Training Optimization Guide](LLM-TRAINING-OPTIMIZATION-GUIDE.md): Modded-NanoGPT case-study lessons for reducing training steps under a fixed benchmark contract, including optimizer mechanisms, schedules, cooldown behavior, parameter groups, statistical gates, and experiment hygiene.
+
 ![val/loss over time](animated_chart.gif)
 
 [W&B Dashboard](https://wandb.ai/wandb-applied-ai-team/senpai-v1)
@@ -31,7 +36,7 @@ An **advisor** pod creates experiment PRs and assigns them to **student** GPU po
 ```mermaid
 graph TD
     subgraph K8s["Kubernetes Cluster"]
-        A["Advisor Pod<br/>(Claude Code, no GPU)<br/>Creates hypothesis PRs<br/>Reviews results, merges/closes"]
+        A["Advisor Pod<br/>(OpenHands, no GPU)<br/>Creates hypothesis PRs<br/>Reviews results, merges/closes"]
         subgraph Students["Student Deployments (one per GPU node)"]
             S1["frieren<br/>8x GPU"]
             S2["fern<br/>8x GPU"]
@@ -66,10 +71,10 @@ senpai/
 │   ├── train.py                   #   Training script + model
 │   ├── program.md                 #   Research context, metrics, constraints
 │   ├── data.py / data/            #   Data pipeline
-│   └── instructions/              #   Task-specific Claude Code prompt templates
+│   └── instructions/              #   Task-specific prompt templates
 │       ├── prompt-advisor.md
 │       └── prompt-student.md
-├── system_instructions/           # System-level Claude Code instructions (run the role)
+├── system_instructions/           # System-level advisor/student role instructions
 │   ├── CLAUDE-ADVISOR.md
 │   └── CLAUDE-STUDENT.md
 ├── k8s/                           # Kubernetes deployment (problem-agnostic)
@@ -79,10 +84,26 @@ senpai/
 │   ├── entrypoint-advisor.sh
 │   └── entrypoint-student.sh
 ├── Dockerfile
-└── .claude/                       # Claude Code skills and agents
+├── plugins/senpai/                # Shared Claude/OpenHands workflow plugin + Exa MCP
+├── .agents/                       # OpenHands-compatible skills
+└── .claude/                       # Shared skills and researcher-agent definition
 ```
 
 **Important**: agent commits and PRs land in the problem-package repo, never in `wandb/senpai`.
+
+### OpenHands runtime integration
+
+The pod image runs OpenHands 1.28 on Python 3.13 with CUDA 13. The entrypoints
+install the checked-in `.agents` and `.claude` resources into user scope, and
+the runner also loads `plugins/senpai` through OpenHands' native
+`PluginSource`. The plugin's `.claude-plugin/plugin.json` is accepted by both
+Claude Code and OpenHands; its `.mcp.json` adds Exa, and its `skills/` directory
+contains the Senpai workflow and GitHub helpers.
+
+Advisor/student role files are rendered to the runner repository's
+`CLAUDE.md` and passed explicitly as the OpenHands system-message suffix before
+the first user task. Target-repository `CLAUDE.md` or `AGENTS.md` files are
+loaded as project context and cannot replace that role.
 
 ## Configuration
 
@@ -104,6 +125,17 @@ wandb_entity: wandb-applied-ai-team
 wandb_project: senpai-v1
 timeout_minutes: 30.0
 max_epochs: 50
+poll_interval_s: 600
+poll_jitter_s: 120
+stale_wip_seconds: 7200
+advisor_claude_watchdog_interval_s: 60
+advisor_claude_min_runtime_s: 600
+advisor_claude_stale_log_s: 1200
+student_claude_watchdog_interval_s: 300
+student_claude_watchdog_jitter_s: 60
+student_claude_min_runtime_s: 600
+student_claude_stale_log_s: 1200
+student_assignment_drift_grace_s: 1800
 n_students: 4
 student_prefix: ""
 gpus_per_student: 8
@@ -114,9 +146,40 @@ preflight_only: false
 
 `launch.py` reads this via `simple_parsing` — every field can be overridden on the CLI.
 
+### Responsiveness knobs
+
+Advisor and student entrypoints poll GitHub before invoking OpenHands. By
+default they sleep for 10 minutes plus jitter between idle checks, which is
+appropriate for long training loops but too slow for short-budget targets. Use
+the polling and watchdog launch fields to make the loop more responsive without
+editing manifests by hand.
+
+`poll_interval_s` and `poll_jitter_s` are shared by both advisor and student
+outer loops. The watchdog fields tune role-specific checks while Claude is
+already running.
+
+For short, interactive experiments, lower `poll_interval_s` and
+`poll_jitter_s` so idle students and review-ready PRs are picked up quickly.
+For long training runs, keep those defaults or use larger values to reduce
+GitHub/API churn. Lower `*_claude_watchdog_interval_s` and
+`student_assignment_drift_grace_s` only when you want the outer loop to reclaim
+stale or reassigned work aggressively.
+
+```bash
+python k8s/launch.py \
+  --tag inferencebench-a-r1 \
+  --advisor \
+  --poll_interval_s 30 \
+  --poll_jitter_s 5 \
+  --stale_wip_seconds 600 \
+  --student_claude_watchdog_interval_s 30 \
+  --student_claude_watchdog_jitter_s 5 \
+  --student_assignment_drift_grace_s 120
+```
+
 ### Image rebuilds
 
-The published runner image is `ghcr.io/wandb/senpai:latest`. It is built by `.github/workflows/build.yaml` on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, `uv.lock`, or the workflow changes. It can also be rebuilt manually from the GitHub Actions `workflow_dispatch` button.
+The published runner image is `ghcr.io/wandb/senpai:latest`. It is built by `.github/workflows/build.yaml` on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, or the workflow changes. It can also be rebuilt manually from the GitHub Actions `workflow_dispatch` button.
 
 ### Launch credentials
 
@@ -150,6 +213,25 @@ GitHub token requirements: use a PAT with `repo` and `read:org`; it must clone `
 - **Isolated ablation:** use a unique `--tag`, unique `--advisor_branch`, `--gh_history_scope fresh`, `--student_prefix`, and `--nohuman_issues`. Agents see only the routed branch/PR stream unless explicitly told otherwise.
 - **Normal branch memory:** use `--gh_history_scope branch` with human issues enabled. Agents keep continuity on the active advisor branch while routine PR/issue polling stays scoped to the target repo.
 - **Deliberate exploration:** use `--gh_history_scope repo` or targeted `--extra_instructions` that ask the advisor/researcher-agent to inspect other branches, PRs, issues, W&B runs, or repos. Senpai helpers stay scoped to `GH_REPO`, but explicit `gh --repo owner/repo ...` reads are available when credentials allow.
+
+### Ablations
+
+The ICML appendix Charlie/Willow logging ablation uses long-lived runner
+branches in `wandb/senpai` plus matching mirror branches in the
+[`morganmcg1/TandemFoilSet-Balanced`](https://github.com/morganmcg1/TandemFoilSet-Balanced)
+problem-package repo. Keep these pairs matched; do not launch a Charlie runner
+against a Willow target branch, or vice versa.
+
+| Arm | Runner branch (`wandb/senpai`) | Target mirror branch (`TandemFoilSet-Balanced`) | Meaning |
+|---|---|---|---|
+| Willow | `icml-appendix-willow` | `icml-appendix-willow` | Control arm: normal Senpai with W&B experiment logging available to advisor/student workflows. The target mirror should stay functionally aligned with the target repo's `main`. |
+| Charlie | `icml-appendix-charlie` | `icml-appendix-charlie` | Treatment arm: removes W&B experiment logging from advisor/student workflows and from the target trainer. The target trainer writes committed local metrics such as `models/<experiment>/metrics.jsonl` and `metrics.yaml` instead. Developer telemetry such as Weave/Hivemind may still run from the runner, but it is not an experiment-metrics source and should not be used as a research signal. |
+
+Before rerunning this ablation, sync current operational fixes into both runner
+branches. Then verify the target mirrors: Willow should match target `main`;
+Charlie should keep the same model, data, optimizer, scheduler, validation,
+test, and timeout behavior as Willow, changing only the experiment-metrics
+logging surface and the prompts/docs that describe it.
 
 ### Shared cluster secret (`senpai-secrets`)
 
@@ -192,6 +274,10 @@ kubectl delete deployments,configmaps,secrets -l research-tag=<research-tag>
 ```
 
 ## Adding a new problem
+
+Use the `senpai:bootstrap-target <target-repo-path-or-url>` skill to onboard any ML or research target repository.
+It inspects the repo, interviews for missing metric/benchmark/guardrail decisions, and drafts the `program.md`
+plus `instructions/` files that make the target work well with Senpai.
 
 1. Create a new public repo (e.g. `myorg/my_problem`) with the minimum problem-package layout:
    - `train.py` — training script + model (entry point for students)

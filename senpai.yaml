@@ -35,6 +35,19 @@ gh_history_scope: branch
 timeout_minutes: 30.0
 max_epochs: 50
 
+# responsiveness / polling
+poll_interval_s: 600
+poll_jitter_s: 120
+stale_wip_seconds: 7200
+advisor_claude_watchdog_interval_s: 60
+advisor_claude_min_runtime_s: 600
+advisor_claude_stale_log_s: 1200
+student_claude_watchdog_interval_s: 300
+student_claude_watchdog_jitter_s: 60
+student_claude_min_runtime_s: 600
+student_claude_stale_log_s: 1200
+student_assignment_drift_grace_s: 1800
+
 # students
 n_students: 4
 student_prefix: ""

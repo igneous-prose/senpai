@@ -45,6 +45,7 @@ class RunnerArgs:
     state_dir: str | None = field(default=None, alias="--state-dir")
     conversation_id: str | None = field(default=None, alias="--conversation-id")
     role_file: str | None = field(default=None, alias="--role-file")
+    plugin_dir: str | None = field(default=None, alias="--plugin-dir")
     agent: str | None = field(default=None, alias="--agent")
     enable_browser: bool | None = flag(
         default=None,
@@ -67,7 +68,8 @@ class RunnerConfig:
     continue_session: bool
     enable_browser: bool
     agent_name: str | None
-    role_file: Path | None
+    role_file: Path
+    plugin_dir: Path
     skill_dirs: tuple[Path, ...]
     agent_dirs: tuple[Path, ...]
 
@@ -100,22 +102,42 @@ def default_state_dir(workspace: Path, env: Mapping[str, str]) -> Path:
     return workspace / ".senpai" / "openhands"
 
 
-def find_role_file(workspace: Path, explicit: str | None = None) -> Path | None:
+def find_role_file(workspace: Path, explicit: str | None = None) -> Path:
     if explicit:
-        path = Path(explicit).expanduser()
-        return path if path.exists() else None
+        path = Path(explicit).expanduser().resolve()
+        if not path.is_file():
+            raise RuntimeError(f"OpenHands role file does not exist: {path}")
+        return path
 
     for current in (workspace, *workspace.parents):
         candidate = current / "CLAUDE.md"
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
-    return None
+    raise RuntimeError(
+        "OpenHands role instructions were not found; set SENPAI_OPENHANDS_ROLE_FILE"
+    )
 
 
-def read_role_instructions(path: Path | None) -> str | None:
-    if not path:
-        return None
-    return path.read_text(encoding="utf-8").strip() or None
+def read_role_instructions(path: Path) -> str:
+    instructions = path.read_text(encoding="utf-8").strip()
+    if not instructions:
+        raise RuntimeError(f"OpenHands role file is empty: {path}")
+    return instructions
+
+
+def resolve_plugin_dir(explicit: str | None = None) -> Path:
+    path = (
+        Path(explicit).expanduser().resolve()
+        if explicit
+        else Path(__file__).resolve().parents[1] / "plugins" / "senpai"
+    )
+    manifests = (
+        path / ".plugin" / "plugin.json",
+        path / ".claude-plugin" / "plugin.json",
+    )
+    if not path.is_dir() or not any(manifest.is_file() for manifest in manifests):
+        raise RuntimeError(f"Senpai OpenHands plugin does not exist: {path}")
+    return path
 
 
 def candidate_skill_dirs(workspace: Path, env: Mapping[str, str]) -> tuple[Path, ...]:
@@ -309,6 +331,9 @@ def resolve_config(
             workspace,
             env_value(args.role_file, env, "SENPAI_OPENHANDS_ROLE_FILE"),
         ),
+        plugin_dir=resolve_plugin_dir(
+            env_value(args.plugin_dir, env, "SENPAI_PLUGIN"),
+        ),
         skill_dirs=candidate_skill_dirs(workspace, env),
         agent_dirs=candidate_agent_dirs(workspace, env),
     )
@@ -426,6 +451,18 @@ def register_subagents(
     return registered
 
 
+def build_main_agent_context(skills: Sequence[object], role_instructions: str):
+    from openhands.sdk import AgentContext
+
+    return AgentContext(
+        skills=list(skills),
+        system_message_suffix=role_instructions,
+        load_public_skills=False,
+        load_user_skills=True,
+        load_project_skills=True,
+    )
+
+
 def event_summary(event: object) -> dict[str, object]:
     summary: dict[str, object] = {"event": event.__class__.__name__}
     for attr in ("source", "tool_name", "action", "status"):
@@ -453,7 +490,8 @@ def print_event(event: object) -> None:
 def run_openhands(prompt: str, config: RunnerConfig) -> int:
     os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
 
-    from openhands.sdk import Agent, AgentContext, Conversation, LLM
+    from openhands.sdk import Agent, Conversation, LLM
+    from openhands.sdk.plugin import PluginSource
     from openhands.sdk.subagent import agent_definition_to_factory
     from openhands.tools.preset.default import get_default_condenser, get_default_tools
     from pydantic import SecretStr
@@ -492,6 +530,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "agent": config.agent_name,
                 "enable_browser": config.enable_browser,
                 "role_file": str(config.role_file) if config.role_file else None,
+                "plugin_dir": str(config.plugin_dir),
                 "skill_dirs": [str(path) for path in config.skill_dirs],
                 "skills": [skill.name for skill in skills],
                 "agent_dirs": [str(path) for path in config.agent_dirs],
@@ -511,6 +550,16 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
     get_default_tools(enable_browser=config.enable_browser, enable_sub_agents=True)
     if direct_agent_definition:
         agent = agent_definition_to_factory(direct_agent_definition, work_dir=config.workspace)(llm)
+        agent = agent.model_copy(
+            update={
+                "agent_context": agent.agent_context.model_copy(
+                    update={
+                        "load_user_skills": True,
+                        "load_project_skills": True,
+                    }
+                )
+            }
+        )
     else:
         agent = Agent(
             llm=llm,
@@ -518,19 +567,14 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 enable_browser=config.enable_browser,
                 enable_sub_agents=True,
             ),
-            agent_context=AgentContext(
-                skills=skills,
-                system_message_suffix=role_instructions,
-                load_public_skills=False,
-                load_user_skills=False,
-                load_project_skills=False,
-            ),
+            agent_context=build_main_agent_context(skills, role_instructions),
             system_prompt_kwargs={"cli_mode": True},
             condenser=get_default_condenser(llm.model_copy(update={"usage_id": "senpai-condenser"})),
         )
     conversation = Conversation(
         agent=agent,
         workspace=config.workspace,
+        plugins=[PluginSource(source=str(config.plugin_dir))],
         persistence_dir=config.state_dir,
         conversation_id=config.conversation_id,
         callbacks=[print_event],

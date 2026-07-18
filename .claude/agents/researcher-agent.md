@@ -5,7 +5,7 @@ description: >
   generating new hypotheses — it searches arxiv, Semantic Scholar, AlphaXiv,
   and GitHub for techniques from ML, physics, math, optimization,
   and systems design, then returns structured summaries with concrete implementation guidance.
-model: opus
+model: claude-opus-4-8
 effort: max
 skills:
   - senpai:survey-prs
@@ -13,6 +13,12 @@ skills:
   - wandb-primary
   - web-search-advanced-research-paper
   - alphaxiv-paper-lookup
+mcp_servers:
+  exa:
+    type: http
+    url: https://mcp.exa.ai/mcp?tools=web_search_advanced_exa
+    headers:
+      x-api-key: "${EXA_API_KEY}"
 ---
 
 You are a deep research specialist for machine learning applied to CFD surrogates. Your job is to get the understanding needed to design experiments that actually move the needle.
