@@ -6,6 +6,7 @@ Usage:
     uv run pytest tests/test_docker_image.py -v -s
 """
 
+import json
 import subprocess
 import time
 from pathlib import Path
@@ -123,6 +124,17 @@ def test_python_deps_and_icml_target_import(test_pod):
     )
     out = kubectl_check("exec", test_pod, "--", "bash", "-c", cmd, timeout=20)
     assert "ok" in out
+
+
+def test_cuda_runtime_on_a_real_gpu(test_pod):
+    """PyTorch can execute a kernel through the host NVIDIA runtime."""
+    out = kubectl_check(
+        "exec", test_pod, "--", "senpai-gpu-smoke-test", timeout=30
+    )
+    result = json.loads(out)
+
+    assert result["status"] == "ok"
+    assert result["devices"]
 
 
 def test_openhands_plugin_loads_workflow_skills_and_exa(test_pod):

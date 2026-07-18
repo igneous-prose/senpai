@@ -185,6 +185,27 @@ The default runner image is the public, immutable
 tags on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, or the
 workflow changes. It can also be rebuilt manually with `workflow_dispatch`.
 
+### AWS NVIDIA Docker
+
+The published image is Linux `amd64` and uses the standard NVIDIA Container
+Toolkit contract. Its PyTorch binaries and extension targets cover the NVIDIA
+T4, A10/A10G, A100, L4/L40S, H100/H200, B200/B300, and RTX PRO Blackwell GPUs
+used by current x86 AWS GPU families. Use an x86 AWS Deep Learning Base GPU AMI
+with NVIDIA driver 580 or newer and run Docker with GPU access:
+
+```bash
+docker run --rm --gpus all \
+  ghcr.io/wandb/senpai:pr-3467-afdbbf51a \
+  senpai-gpu-smoke-test
+```
+
+The smoke test performs a PyTorch matrix multiplication on every visible GPU.
+The image does not target arm64 G5g/GB200 nodes or previous-generation P3/V100
+nodes. AWS publishes its current x86 DLAMI through the
+[`base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id`](https://docs.aws.amazon.com/dlami/latest/devguide/aws-deep-learning-x86-base-gpu-ami-ubuntu-24-04.html)
+SSM parameter; CUDA 13 requires an
+[NVIDIA 580-series or newer driver](https://docs.nvidia.com/cuda/archive/13.2.0/cuda-toolkit-release-notes/index.html#cuda-driver).
+
 ### Launch credentials
 
 `launch.py` resolves and preflights these for real launches and `--preflight_only`, then writes them to a per-tag Secret named `senpai-launch-secrets-<tag>`:

@@ -40,4 +40,17 @@ RUN curl -fsSL https://claude.ai/install.sh | bash || true && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli-stable.list > /dev/null && \
     apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
 
+# Use the standard NVIDIA Container Toolkit contract on supported x86_64 hosts.
+# The extension targets cover current AWS NVIDIA families from T4 through
+# Blackwell, including Ada targets that use Ampere-compatible PyTorch cubins.
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    NVIDIA_REQUIRE_CUDA="cuda>=13.0" \
+    TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0;10.0;10.3;12.0+PTX"
+
+COPY scripts/senpai-gpu-smoke-test.py /usr/local/bin/senpai-gpu-smoke-test
+RUN chmod +x /usr/local/bin/senpai-gpu-smoke-test && \
+    python -c 'import torch; required={"sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120"}; assert required <= set(torch.cuda.get_arch_list())' && \
+    python -c 'from torch.utils.cpp_extension import _get_cuda_arch_flags; assert _get_cuda_arch_flags()'
+
 WORKDIR /workspaces
