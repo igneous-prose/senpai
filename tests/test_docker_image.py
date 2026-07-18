@@ -1,7 +1,6 @@
 """End-to-end test for the senpai Docker image on a k8s cluster.
 
-Deploys a test pod, verifies the weave plugin works, checks that a
-claude session produces a trace in Weave, then tears down the pod.
+Deploys a test pod, verifies the image runtime, then tears down the pod.
 
 Usage:
     uv run pytest tests/test_docker_image.py -v -s
@@ -9,12 +8,9 @@ Usage:
 
 import subprocess
 import time
-import uuid
 from pathlib import Path
 
 import pytest
-import weave
-from weave.trace.weave_client import CallsFilter
 
 ENTITY = "wandb-applied-ai-team"
 PROJECT = "senpai-v1"
@@ -23,8 +19,7 @@ IMAGE = "ghcr.io/wandb/senpai:latest"
 REPO_URL = "https://github.com/wandb/senpai.git"
 REPO_BRANCH = "main"
 POD_TEMPLATE = Path(__file__).parent / "test-pod.yaml"
-STARTUP_TIMEOUT = 120  # seconds to wait for pod + plugin install
-CLAUDE_TIMEOUT = 60
+STARTUP_TIMEOUT = 120
 TAG = "test"
 
 
@@ -91,8 +86,6 @@ def test_pod():
     kubectl_check("apply", "-f", "-", input=_build_configmap())
     kubectl_check("apply", "-f", "-", input=_render_pod_template())
     wait_for_pod(POD_NAME)
-    # Wait for plugin install script to finish
-    time.sleep(30)
     yield POD_NAME
 
     kubectl("delete", "pod,configmap", "-l", f"research-tag={TAG}", "--ignore-not-found", timeout=120)
@@ -100,9 +93,16 @@ def test_pod():
 
 def test_tools_installed(test_pod):
     """All baked-in tools are available."""
-    for cmd in ["claude --version", "gh --version", "node --version", "uv --version", "yq --version", "weave-claude-plugin --version"]:
+    for cmd in ["claude --version", "gh --version", "uv --version", "yq --version"]:
         out = kubectl_check("exec", test_pod, "--", "bash", "-c", cmd, timeout=15)
         assert out, f"`{cmd}` returned empty output"
+
+
+def test_legacy_weave_claude_plugin_removed(test_pod):
+    """The retired Claude Code tracing plugin is absent."""
+    cmd = "! command -v weave-claude-plugin && test ! -e ~/.weave_claude_plugin && echo ok"
+    out = kubectl_check("exec", test_pod, "--", "bash", "-c", cmd, timeout=15)
+    assert out == "ok"
 
 
 def test_python_deps_and_icml_target_import(test_pod):
@@ -139,37 +139,3 @@ def test_openhands_plugin_loads_workflow_skills_and_exa(test_pod):
     )
     out = kubectl_check("exec", test_pod, "--", "bash", "-c", cmd, timeout=20)
     assert "ok" in out
-
-
-def test_weave_plugin_ready(test_pod):
-    """Plugin status shows 'Ready to trace'."""
-    out = kubectl_check("exec", test_pod, "--", "bash", "-c", "weave-claude-plugin status", timeout=15)
-    assert "Ready to trace" in out
-
-
-def test_claude_creates_trace(test_pod):
-    """Running claude with a unique prompt produces a matching Weave trace."""
-    marker = f"senpai-test-{uuid.uuid4().hex[:8]}"
-    prompt = f"Reply with exactly this string and nothing else: {marker}"
-
-    out = kubectl_check(
-        "exec", test_pod, "--",
-        "bash", "-c", f'CLAUDE_CODE_ALLOW_ROOT=1 claude -p "{prompt}"',
-        timeout=CLAUDE_TIMEOUT,
-    )
-    assert marker in out, f"Expected {marker!r} in output, got: {out!r}"
-
-    # Give the daemon a moment to flush the trace
-    time.sleep(10)
-
-    # Query Weave for recent traces and find the one with our marker
-    client = weave.init(f"{ENTITY}/{PROJECT}")
-    calls = list(client.get_calls(
-        filter=CallsFilter(trace_roots_only=True),
-        limit=10,
-        sort_by=[{"field": "started_at", "direction": "desc"}],
-    ))
-    assert calls, "No traces found in Weave"
-
-    matched = [c for c in calls if marker in str(c.inputs)]
-    assert matched, f"No trace found containing marker {marker!r}"

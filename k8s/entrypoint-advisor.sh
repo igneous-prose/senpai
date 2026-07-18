@@ -128,10 +128,6 @@ start_hivemind
 source "$WORKDIR/k8s/run-senpai-claude.sh"
 source "$WORKDIR/k8s/advisor-claude-watchdog.sh"
 
-# --- Register Weave CC plugin (tools already baked into Docker image) ---
-export PATH="$HOME/.claude/bin:$PATH"
-source "$WORKDIR/k8s/install-weave-cc-plugin.sh"
-
 # $GH_REPO comes from the ConfigMap (set by launch.py = owner/repo of the
 # problem-package repo). The gh CLI honours it natively, so every `gh`
 # command and `gh api` call targets the problem-package repo, not senpai,
