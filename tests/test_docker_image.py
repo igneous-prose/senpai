@@ -116,6 +116,7 @@ def test_python_deps_and_icml_target_import(test_pod):
         "import torch_geometric\n"
         "import yaml\n"
         "assert sys.version_info[:2] == (3, 13)\n"
+        "assert torch.__version__.startswith('2.13.')\n"
         "assert torch.version.cuda.startswith('13.')\n"
         "print('ok')\n"
         "PY"

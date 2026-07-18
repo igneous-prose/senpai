@@ -1,4 +1,4 @@
-FROM ghcr.io/coreweave/ml-containers/torch-extras:c0f5966-base-cuda13.2.0-ubuntu24.04-torch2.11.0-vision0.26.0-audio2.11.0-abi1
+FROM ghcr.io/coreweave/ml-containers/torch-extras:b1daf4e-base-cuda13.2.1-ubuntu24.04-torch2.12.0-vision0.27.0-audio2.11.0-abi1
 
 ARG PYTHON_VERSION=3.13
 ENV PATH="/opt/senpai-venv/bin:/root/.local/bin:${PATH}"
@@ -30,7 +30,7 @@ COPY pyproject.toml /tmp/senpai/
 RUN cd /tmp/senpai && \
     uv export --python 3.13 --no-dev --no-emit-project --format requirements.txt > requirements.txt && \
     uv pip install --python "$SENPAI_PYTHON" --upgrade -r requirements.txt && \
-    python -c 'import openhands.sdk, sys, torch; assert sys.version_info[:2] == (3, 13); assert torch.version.cuda and torch.version.cuda.startswith("13.")'
+    python -c 'import openhands.sdk, sys, torch; assert sys.version_info[:2] == (3, 13); assert torch.__version__.startswith("2.13."); assert torch.version.cuda and torch.version.cuda.startswith("13.")'
 
 # Install Claude Code + gh
 RUN curl -fsSL https://claude.ai/install.sh | bash || true && \

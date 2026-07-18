@@ -93,9 +93,9 @@ senpai/
 
 ### OpenHands runtime integration
 
-The pod image runs OpenHands 1.28 on Python 3.13 with CUDA 13. The entrypoints
-install the checked-in `.agents` and `.claude` resources into user scope, and
-the runner also loads `plugins/senpai` through OpenHands' native
+The pod image runs OpenHands 1.28 and PyTorch 2.13 on Python 3.13 with CUDA 13.
+The entrypoints install the checked-in `.agents` and `.claude` resources into
+user scope, and the runner also loads `plugins/senpai` through OpenHands' native
 `PluginSource`. The plugin's `.claude-plugin/plugin.json` is accepted by both
 Claude Code and OpenHands; its `.mcp.json` adds Exa, and its `skills/` directory
 contains the Senpai workflow and GitHub helpers.
