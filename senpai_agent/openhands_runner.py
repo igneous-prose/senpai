@@ -609,11 +609,11 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_runner_args(argv)
-    prompt = sys.stdin.read()
-    if not prompt:
-        raise RuntimeError("OpenHands runner requires a prompt on stdin")
     try:
+        args = parse_runner_args(argv)
+        prompt = sys.stdin.read()
+        if not prompt:
+            raise RuntimeError("OpenHands runner requires a prompt on stdin")
         config = resolve_config(args)
         return run_openhands(prompt, config)
     finally:

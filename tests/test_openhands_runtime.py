@@ -140,6 +140,17 @@ def test_main_flushes_weave_when_the_run_fails(monkeypatch):
     assert flushed == [True]
 
 
+def test_main_flushes_weave_when_the_prompt_is_empty(monkeypatch):
+    flushed = []
+    monkeypatch.setattr(runner.sys, "stdin", StringIO())
+    monkeypatch.setattr(runner, "finish_weave_monitoring", lambda: flushed.append(True))
+
+    with pytest.raises(RuntimeError, match="requires a prompt"):
+        main(["--max-turns", "1"])
+
+    assert flushed == [True]
+
+
 def test_openhands_loads_the_native_senpai_plugin():
     assert resolve_plugin_dir(str(PLUGIN_DIR)) == PLUGIN_DIR
     assert (PLUGIN_DIR / ".plugin" / "plugin.json").is_file()
