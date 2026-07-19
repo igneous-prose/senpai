@@ -18,11 +18,12 @@ dependencies = [
     "python-dotenv",
     "simple-parsing",
     "wandb",
-    "weave",
+    "weave>=0.53.1,<0.54",
+    "weave-openhands @ git+https://github.com/morganmcg1/weave-openhands.git@a16fe325b2c78692b6e0d904b8883bc2e7429ee8",
     "tqdm",
     "matplotlib",
-    "openhands-sdk==1.28.1",
-    "openhands-tools==1.28.1",
+    "openhands-sdk==1.36.1",
+    "openhands-tools==1.36.1",
 ]
 
 [tool.setuptools.packages.find]

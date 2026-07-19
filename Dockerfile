@@ -30,7 +30,7 @@ COPY pyproject.toml /tmp/senpai/
 RUN cd /tmp/senpai && \
     uv export --python 3.13 --no-dev --no-emit-project --format requirements.txt > requirements.txt && \
     uv pip install --python "$SENPAI_PYTHON" --upgrade -r requirements.txt && \
-    python -c 'import openhands.sdk, sys, torch; assert sys.version_info[:2] == (3, 13); assert torch.__version__.startswith("2.13."); assert torch.version.cuda and torch.version.cuda.startswith("13.")' && \
+    python -c 'import importlib.metadata, openhands.sdk, sys, torch; assert sys.version_info[:2] == (3, 13); assert torch.__version__.startswith("2.13."); assert torch.version.cuda and torch.version.cuda.startswith("13."); assert importlib.metadata.version("openhands-sdk") == "1.36.1"; assert importlib.metadata.version("weave-openhands") == "0.1.0"' && \
     rm -rf /root/.cache/uv
 
 # Install Claude Code + gh

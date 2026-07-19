@@ -5,6 +5,9 @@ in ``k8s/run-senpai-claude.sh``. The shell loop still owns polling, checkout,
 watchdogs, assignment routing, and logs; this file owns only a single agent run.
 """
 
+# OpenHands imports intentionally follow Weave initialization below.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import json
@@ -16,6 +19,13 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
+
+from senpai_agent.weave_monitoring import (
+    finish_weave_monitoring,
+    initialize_weave_monitoring,
+)
+
+WEAVE_PROJECT = initialize_weave_monitoring()
 
 from openhands.sdk import Agent, AgentContext, Conversation, LLM, load_skills_from_dir
 from openhands.sdk.plugin import PluginSource
@@ -532,6 +542,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "skills": [skill.name for skill in skills],
                 "agent_dirs": [str(path) for path in config.agent_dirs],
                 "subagents": subagents,
+                "weave_project": WEAVE_PROJECT,
             },
             sort_keys=True,
         ),
@@ -602,8 +613,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     prompt = sys.stdin.read()
     if not prompt:
         raise RuntimeError("OpenHands runner requires a prompt on stdin")
-    config = resolve_config(args)
-    return run_openhands(prompt, config)
+    try:
+        config = resolve_config(args)
+        return run_openhands(prompt, config)
+    finally:
+        finish_weave_monitoring()
 
 
 if __name__ == "__main__":

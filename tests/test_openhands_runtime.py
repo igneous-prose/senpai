@@ -1,4 +1,5 @@
 import uuid
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from senpai_agent.openhands_runner import (
     default_subagent_tools,
     find_role_file,
     load_agent_definition,
+    main,
     openhands_reasoning_effort,
     parse_runner_args,
     read_role_instructions,
@@ -121,6 +123,23 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
     }
 
 
+def test_main_flushes_weave_when_the_run_fails(monkeypatch):
+    flushed = []
+
+    def fail_run(prompt, config):
+        raise RuntimeError("run failed")
+
+    monkeypatch.setattr(runner.sys, "stdin", StringIO("first task"))
+    monkeypatch.setattr(runner, "resolve_config", lambda args: object())
+    monkeypatch.setattr(runner, "run_openhands", fail_run)
+    monkeypatch.setattr(runner, "finish_weave_monitoring", lambda: flushed.append(True))
+
+    with pytest.raises(RuntimeError, match="run failed"):
+        main(["--max-turns", "1"])
+
+    assert flushed == [True]
+
+
 def test_openhands_loads_the_native_senpai_plugin():
     assert resolve_plugin_dir(str(PLUGIN_DIR)) == PLUGIN_DIR
     assert (PLUGIN_DIR / ".plugin" / "plugin.json").is_file()
@@ -132,15 +151,18 @@ def test_openhands_loads_the_native_senpai_plugin():
     assert plugin.manifest.name == "senpai"
     assert "senpai-gh" in skill_names
     assert "survey-prs" in skill_names
-    assert "exa" in plugin.mcp_config["mcpServers"]
+    assert "exa" in plugin.mcp_config
+    assert (
+        plugin.mcp_config["exa"].headers["x-api-key"].get_secret_value()
+        == "${EXA_API_KEY}"
+    )
 
 
 def test_researcher_agent_has_its_own_exa_server():
     source = AgentDefinition.load(RESEARCHER_AGENT)
     definition = load_agent_definition(RESEARCHER_AGENT, {}, enable_browser=False)
 
-    assert source.mcp_servers == definition.mcp_servers
-    assert definition.mcp_servers["exa"]["url"].endswith(
-        "tools=web_search_advanced_exa"
-    )
-    assert definition.mcp_servers["exa"]["headers"]["x-api-key"] == "${EXA_API_KEY}"
+    assert source.mcp_config == definition.mcp_config
+    exa = definition.mcp_config["exa"]
+    assert exa.url.endswith("tools=web_search_advanced_exa")
+    assert exa.headers["x-api-key"].get_secret_value() == "${EXA_API_KEY}"

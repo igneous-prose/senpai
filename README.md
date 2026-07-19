@@ -93,7 +93,7 @@ senpai/
 
 ### OpenHands runtime integration
 
-The pod image runs OpenHands 1.28 and PyTorch 2.13 on Python 3.13 with CUDA 13.
+The pod image runs OpenHands 1.36 and PyTorch 2.13 on Python 3.13 with CUDA 13.
 The entrypoints install the checked-in `.agents` and `.claude` resources into
 user scope, and the runner also loads `plugins/senpai` through OpenHands' native
 `PluginSource`. Its OpenHands-native `.plugin/plugin.json` declares the plugin,
@@ -104,6 +104,15 @@ Advisor/student role files are rendered to the runner repository's
 `CLAUDE.md` and passed explicitly as the OpenHands system-message suffix before
 the first user task. Target-repository `CLAUDE.md` or `AGENTS.md` files are
 loaded as project context and cannot replace that role.
+
+Before OpenHands is imported, the runner initializes
+[`weave-openhands`](https://github.com/morganmcg1/weave-openhands) against
+`$WANDB_ENTITY/$WANDB_PROJECT`. Every conversation run becomes an
+`invoke_agent` trace with child `chat` and `execute_tool` spans, grouped by the
+persisted OpenHands conversation ID. Advisor traces use the `advisor` agent name;
+student traces use `student-$STUDENT_NAME`. The runner flushes Weave before its
+process exits so each heartbeat is visible without waiting for buffered export.
+Trace content includes prompts, model responses, and tool inputs and outputs.
 
 ## Configuration
 
