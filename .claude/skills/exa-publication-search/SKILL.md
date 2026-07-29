@@ -20,8 +20,8 @@ python "$CLAUDE_SKILL_DIR/scripts/search_publications.py" \
   "mesh-based neural operators for aerodynamic surrogate modeling"
 ```
 
-The tool returns JSON with ranked publications, query-relevant highlights,
-search latency, and Exa's reported cost.
+The tool returns Markdown with ranked publications, query-relevant highlights,
+search latency, and Exa's reported cost. It does not emit raw JSON.
 
 ### Defaults
 
@@ -40,7 +40,7 @@ python "$CLAUDE_SKILL_DIR/scripts/search_publications.py" \
   "equivariant mesh neural operators" \
   --num-results 50 \
   --start-published-date 2023-01-01 \
-  --include-domains arxiv.org openreview.net \
+  --exclude-domains example.com \
   --highlights-max-characters 1800
 ```
 
@@ -53,8 +53,8 @@ Useful options:
 - `--start-published-date` / `--end-published-date`: ISO dates for genuinely
   time-bounded questions. Do not add a recency filter to searches for
   foundational or transferable mechanisms.
-- `--include-domains` / `--exclude-domains`: space-separated source filters.
-  Use only when provenance matters; do not default to arXiv.
+- `--exclude-domains`: space-separated sources to exclude. Exa's publication
+  category rejects include-domain filters, so this tool does not expose one.
 - `--include-text` / `--exclude-text`: one exact text constraint each.
 - `--additional-queries`: up to 10 space-separated, quoted query variants for
   deep search modes.
@@ -76,11 +76,13 @@ a substitute for validating claims against the paper.
 
 ## Output
 
-Return:
+The CLI formats Exa's structured response programmatically as Markdown:
 
-1. Results with title, URL, author, publication date, and relevant highlights.
-2. A short synthesis of the mechanisms and disagreements that matter.
-3. Notes about missing metadata, uncertain matches, and search coverage.
+- a search-summary heading and bold metadata fields
+- one result heading per publication
+- bold URL, author, date, ID, score, and summary labels when available
+- nested bullet points for highlights and cost details
 
-Do not paste the raw JSON into the final research report. Distill it into the
-decision-useful researcher-agent format.
+Use this Markdown as source evidence, then distill it into the
+decision-useful researcher-agent report with a short synthesis of relevant
+mechanisms, disagreements, missing metadata, uncertain matches, and coverage.

@@ -101,6 +101,52 @@ def test_default_search_uses_publication_index_and_compact_highlights():
         "total": 0.007,
         "search": {"neural": 0.007},
     }
+    assert search_publications.render_markdown(payload) == """\
+# Exa Publication Search
+
+- **Query:** neural operators for PDEs
+- **Category:** publication
+- **Search type:** auto
+- **Results:** 1 returned / 30 requested
+- **Search time:** 123.4 ms
+- **Cost (USD):**
+  - **Total:** 0.007
+  - **Search:**
+    - **Neural:** 0.007
+
+## 1. Fourier Neural Operator
+
+- **URL:** <https://example.com/fno>
+- **Authors:** Zongyi Li
+- **Published:** 2020-10-23
+- **Exa ID:** publication:fno
+- **Highlights:**
+  - We propose a Fourier neural operator."""
+
+
+def test_main_prints_markdown_not_json(monkeypatch, capsys):
+    client = FakeClient(
+        SimpleNamespace(results=[], search_time=None, cost_dollars=None)
+    )
+    monkeypatch.setattr(search_publications, "create_exa_client", lambda: client)
+
+    search_publications.main(["attention alternatives", "--num-results", "2"])
+
+    output = capsys.readouterr().out
+    assert output.startswith("# Exa Publication Search\n")
+    assert "- **Results:** 0 returned / 2 requested" in output
+    assert "No publications were returned." in output
+    assert '"results":' not in output
+
+
+def test_summary_lists_become_nested_markdown_bullets():
+    assert search_publications.render_summary(
+        "Mechanism: - Commutes with *rotations*. - # Preserves [tensor] structure."
+    ) == [
+        "- **Summary:** Mechanism:",
+        "  - Commutes with \\*rotations\\*.",
+        "  - \\# Preserves \\[tensor\\] structure.",
+    ]
 
 
 def test_search_options_are_forwarded_without_changing_publication_category():
@@ -115,9 +161,6 @@ def test_search_options_are_forwarded_without_changing_publication_category():
             "2023-01-01",
             "--end-published-date",
             "2026-01-01",
-            "--include-domains",
-            "arxiv.org",
-            "openreview.net",
             "--exclude-domains",
             "example.com",
             "--include-text",
@@ -153,7 +196,6 @@ def test_search_options_are_forwarded_without_changing_publication_category():
                 },
                 "start_published_date": "2023-01-01",
                 "end_published_date": "2026-01-01",
-                "include_domains": ["arxiv.org", "openreview.net"],
                 "exclude_domains": ["example.com"],
                 "include_text": ["equivariant"],
                 "exclude_text": ["survey"],
