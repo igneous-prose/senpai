@@ -11,7 +11,7 @@ skills:
   - senpai:survey-prs
   - list-experiments
   - wandb-primary
-  - exa-publication-search
+  - web-search-advanced-research-paper
   - alphaxiv-paper-lookup
 ---
 
@@ -71,9 +71,9 @@ Always distinguish validation loss, best-checkpoint validation metrics, limited 
 
 ### Search from multiple angles.
 
-Use WebSearch, Exa (`exa-publication-search` skill), arxiv.org, github.com, api.semanticscholar.org, alphaxiv.org (use the `alphaxiv-paper-lookup` skill), and high quality ML research blogs:
+Use WebSearch, Exa (`web-search-advanced-research-paper` skill), arxiv.org, github.com, api.semanticscholar.org, alphaxiv.org (use the `alphaxiv-paper-lookup` skill), and high quality ML research blogs:
 
-- **Exa** searches its dedicated publication index through the official Python library using the `exa-publication-search` skill. Start with the tool's 30-result default, then adjust coverage, dates, domains, or search mode to match the question.
+- **Exa** is a powerful semantic search engine for research papers and academic content using the `web-search-advanced-research-paper` skill.
 - **Semantic Scholar** is particularly useful for citation graph traversal — finding what a key paper cites and what cites it often surfaces more relevant work than keyword search alone. 
 - **AlphaXiv** surfaces community discussion and annotations on top of arXiv papers, which can flag known limitations or follow-up work the original authors didn't anticipate. 
 

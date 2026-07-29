@@ -7,8 +7,9 @@
 """Search Exa's publication index and emit compact, agent-ready Markdown."""
 
 import os
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from exa_py import Exa
@@ -16,7 +17,7 @@ from simple_parsing import ArgumentParser, DashVariant
 from simple_parsing.helpers import field
 
 DEFAULT_NUM_RESULTS = 30
-DEFAULT_HIGHLIGHTS_MAX_CHARACTERS = 1200
+DEFAULT_HIGHLIGHTS_MAX_CHARACTERS = 2000
 SearchType = Literal[
     "auto",
     "fast",
@@ -47,7 +48,7 @@ class SearchArguments:
         help="number of publications to return (1-100)",
     )
     search_type: SearchType = field(
-        default="auto",
+        default="deep",
         help="Exa search quality/latency mode",
     )
     start_published_date: str | None = field(
@@ -187,6 +188,10 @@ def render_summary(value: Any) -> list[str]:
     if len(parts) == 1 and " - " in parts[0]:
         parts = parts[0].split(" - ")
     parts = [part.removeprefix("- ").strip() for part in parts]
+    if parts[0].rstrip(":").casefold() == "summary":
+        parts = parts[1:]
+    if not parts:
+        return []
     lines = [f"- **Summary:** {markdown_text(parts[0])}"]
     lines.extend(f"  - {markdown_text(part)}" for part in parts[1:])
     return lines
@@ -212,7 +217,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
     results = payload.get("results", [])
     for result in results:
-        title = markdown_text(result.get("title", "Untitled publication"))
+        title = markdown_text(result.get("title") or "Untitled publication")
         lines.extend(["", f"## {result['rank']}. {title}", ""])
         if url := result.get("url"):
             lines.append(f"- **URL:** <{markdown_url(url)}>")

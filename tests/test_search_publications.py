@@ -85,8 +85,8 @@ def test_default_search_uses_publication_index_and_compact_highlights():
             {
                 "category": "publication",
                 "num_results": 30,
-                "type": "auto",
-                "contents": {"highlights": {"max_characters": 1200}},
+                "type": "deep",
+                "contents": {"highlights": {"max_characters": 2000}},
             },
         )
     ]
@@ -106,7 +106,7 @@ def test_default_search_uses_publication_index_and_compact_highlights():
 
 - **Query:** neural operators for PDEs
 - **Category:** publication
-- **Search type:** auto
+- **Search type:** deep
 - **Results:** 1 returned / 30 requested
 - **Search time:** 123.4 ms
 - **Cost (USD):**
@@ -147,6 +147,29 @@ def test_summary_lists_become_nested_markdown_bullets():
         "  - Commutes with \\*rotations\\*.",
         "  - \\# Preserves \\[tensor\\] structure.",
     ]
+
+
+def test_markdown_normalizes_missing_title_and_redundant_summary_label():
+    output = search_publications.render_markdown(
+        {
+            "query": "geometry transfer",
+            "category": "publication",
+            "search_type": "deep",
+            "requested_results": 1,
+            "result_count": 1,
+            "results": [
+                {
+                    "rank": 1,
+                    "title": "",
+                    "summary": "Summary:\n- Maps each shape to a reference domain.",
+                }
+            ],
+        }
+    )
+
+    assert "## 1. Untitled publication" in output
+    assert "- **Summary:** Maps each shape to a reference domain." in output
+    assert "**Summary:** Summary:" not in output
 
 
 def test_search_options_are_forwarded_without_changing_publication_category():
@@ -230,6 +253,8 @@ def test_additional_queries_require_deep_search(capsys):
         search_publications.parse_args(
             [
                 "attention alternatives",
+                "--search-type",
+                "auto",
                 "--additional-queries",
                 "linear attention",
             ]
@@ -260,7 +285,7 @@ def test_exa_client_loads_dotenv_before_reading_api_key(monkeypatch):
     assert events == ["load_dotenv", ("Exa", "test-key")]
 
 
-def test_claude_and_codex_skill_scripts_stay_identical():
+def test_claude_skill_uses_canonical_codex_script():
     codex_script = (
         Path(__file__).parents[1]
         / ".agents"
@@ -269,4 +294,5 @@ def test_claude_and_codex_skill_scripts_stay_identical():
         / "scripts"
         / "search_publications.py"
     )
-    assert SCRIPT.read_bytes() == codex_script.read_bytes()
+    assert SCRIPT.is_symlink()
+    assert SCRIPT.resolve() == codex_script.resolve()
