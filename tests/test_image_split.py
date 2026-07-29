@@ -114,6 +114,20 @@ def test_build_workflow_builds_both_images_from_the_exact_checked_out_commit():
     )
 
 
+def test_runtime_workflow_uses_the_lockfile_uv_and_exa_versions():
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "test.yaml").read_text(encoding="utf-8")
+    )
+    steps = {
+        step["name"]: step for step in workflow["jobs"]["runtime"]["steps"]
+    }
+
+    assert steps["Install uv and Python"]["with"]["version"] == "0.10.9"
+    install = steps["Install runtime test dependencies"]["run"]
+    assert "uv lock --check" in install
+    assert "exa-py @ https://github.com/exa-labs/exa-py/archive/" in install
+
+
 def test_advisor_state_is_persistent_and_student_state_is_ephemeral():
     advisor = load_kubernetes_template("advisor-deployment.yaml")
     student = load_kubernetes_template("student-deployment.yaml")
