@@ -1198,6 +1198,7 @@ def controller_main(
         close_training_runtimes,
         training_runtime,
     )
+    from senpai_agent.weave_monitoring import finish_weave_monitoring
 
     parser = argparse.ArgumentParser(
         description="Run the portable Senpai GitHub/OpenHands controller."
@@ -1333,6 +1334,7 @@ def controller_main(
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
         close_training_runtimes()
+        finish_weave_monitoring()
     return 0
 
 

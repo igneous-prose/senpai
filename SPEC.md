@@ -314,8 +314,9 @@ Every OpenHands turn has a controller-configured hard deadline. The deadline
 interrupts the conversation, produces a non-success result, and leaves durable
 events unacknowledged. The controller then retries with bounded exponential
 backoff. Controller termination interrupts and closes the current conversation,
-cancels active supervised training, and closes local stores. Weave is flushed
-at runner exit.
+cancels active supervised training, closes local stores, and flushes Weave
+before the controller exits. Standalone and child runners flush Weave at runner
+exit.
 
 ## Secrets and Weave
 
@@ -330,8 +331,10 @@ enforces role/branch rules.
 
 Weave content capture applies a longest-first transform over all configured
 API keys, tokens, passwords, secrets, credentials, and the selected custom
-model credential before content is sent. Native OpenHands OTEL migration is a
-separate PR.
+model credential before content is sent. The pinned `weave-openhands`
+integration is initialized before OpenHands imports. Each conversation run is
+an agent trace with child LLM and tool spans, all carrying the durable
+OpenHands conversation ID.
 
 ## Images and launch acceptance
 
@@ -383,7 +386,7 @@ Retained intentionally:
 - Agent skills and their model/effort metadata under `.agents`;
 - OpenHands Browser, task tracker, Think, and the high-quality default
   condenser;
-- the current Weave integration pending the separate OTEL PR; and
+- the pinned `weave-openhands` agent, LLM, and tool tracing integration; and
 - only a small bootstrap shell path for clone, identity, and Git push guards.
 
 ## Acceptance

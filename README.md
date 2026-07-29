@@ -300,9 +300,14 @@ integration, local event injection, training supervision, monitoring, hooks,
 prompt construction, state topology, image split, launch preflight, and
 cluster cutoff.
 
+When `WANDB_ENTITY` and `WANDB_PROJECT` are configured, the pinned
+`weave-openhands` integration traces every advisor, student, and child-agent
+OpenHands run to that W&B Weave project. It records the agent, LLM, and tool
+span tree under the durable OpenHands conversation ID and flushes before each
+runner or controller process exits.
+
 Deliberate deferrals:
 
-- Native OpenHands OpenTelemetry to W&B Weave is handled by a separate PR.
 - Skill-declared child model/reasoning semantics remain in skill frontmatter
   pending native OpenHands support.
 - The high-quality default OpenHands condenser remains enabled.

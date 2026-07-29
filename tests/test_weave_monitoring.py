@@ -1,7 +1,24 @@
+import json
+
 import pytest
-from weave_openhands import instrument, is_instrumented, uninstrument
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
+from weave_openhands import TracingConfig, instrument, is_instrumented, uninstrument
 
 import senpai_agent.weave_monitoring as monitoring
+
+
+@pytest.fixture(scope="module")
+def trace_exporter():
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return exporter
 
 
 def test_monitoring_uses_the_senpai_wandb_project_and_student_identity(monkeypatch):
@@ -66,10 +83,70 @@ def test_secret_redactor_replaces_overlapping_values_longest_first():
     ) == " ".join(["<secret-hidden>"] * 10)
 
 
-def test_weave_openhands_instruments_the_pinned_sdk():
+def test_weave_openhands_traces_a_real_openhands_turn(
+    tmp_path, trace_exporter: InMemorySpanExporter
+):
     uninstrument()
+    trace_exporter.clear()
     try:
-        instrument()
+        instrument(
+            TracingConfig(
+                agent_name="student-charlie",
+                content_transform=monitoring.secret_redactor(
+                    {"ANTHROPIC_API_KEY": "anthropic-secret"}
+                ),
+            )
+        )
         assert is_instrumented()
+        from openhands.sdk import Agent, Conversation
+        from openhands.sdk.llm import Message, MessageToolCall, TextContent
+        from openhands.sdk.testing import TestLLM
+
+        response = Message(
+            role="assistant",
+            content=[TextContent(text="Finishing the task")],
+            tool_calls=[
+                MessageToolCall(
+                    id="finish-call",
+                    name="finish",
+                    arguments=json.dumps({"message": "Task complete"}),
+                    origin="completion",
+                )
+            ],
+        )
+        agent = Agent(
+            llm=TestLLM.from_messages([response], model="test-model"),
+            tools=[],
+        )
+        conversation = Conversation(
+            agent=agent,
+            workspace=tmp_path,
+            visualizer=None,
+        )
+        conversation.send_message("Use anthropic-secret without exposing it")
+
+        conversation.run()
+
+        spans = [
+            span
+            for span in trace_exporter.get_finished_spans()
+            if span.instrumentation_scope.name == "weave_openhands"
+        ]
+        root = next(
+            span for span in spans if span.name == "invoke_agent student-charlie"
+        )
+        assert {span.attributes["gen_ai.operation.name"] for span in spans} == {
+            "invoke_agent",
+            "chat",
+            "execute_tool",
+        }
+        assert {span.attributes["gen_ai.conversation.id"] for span in spans} == {
+            str(conversation.id)
+        }
+        assert "anthropic-secret" not in str(
+            [dict(span.attributes or {}) for span in spans]
+        )
+        assert "<secret-hidden>" in str(root.attributes)
     finally:
         uninstrument()
+        trace_exporter.clear()
