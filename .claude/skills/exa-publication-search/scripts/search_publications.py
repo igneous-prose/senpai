@@ -6,99 +6,132 @@
 
 """Search Exa's publication index and emit compact, agent-ready JSON."""
 
-from __future__ import annotations
-
-import argparse
-import dataclasses
 import json
-from typing import Any, Sequence
+import os
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any, Literal, Sequence
 
+from dotenv import load_dotenv
 from exa_py import Exa
+from simple_parsing import ArgumentParser, DashVariant
+from simple_parsing.helpers import field
 
 DEFAULT_NUM_RESULTS = 30
 DEFAULT_HIGHLIGHTS_MAX_CHARACTERS = 1200
-SEARCH_TYPES = ("auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning")
-DEEP_SEARCH_TYPES = {"deep-lite", "deep", "deep-reasoning"}
+SearchType = Literal[
+    "auto",
+    "fast",
+    "instant",
+    "deep-lite",
+    "deep",
+    "deep-reasoning",
+]
+DEEP_SEARCH_TYPES: set[SearchType] = {"deep-lite", "deep", "deep-reasoning"}
 
 
-def bounded_int(minimum: int, maximum: int):
-    def parse(value: str) -> int:
-        number = int(value)
-        if not minimum <= number <= maximum:
-            raise argparse.ArgumentTypeError(
-                f"expected an integer from {minimum} to {maximum}"
-            )
-        return number
+@dataclass
+class SearchArguments:
+    """Search Exa's dedicated scholarly publication index."""
 
-    return parse
-
-
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Search Exa's dedicated scholarly publication index."
+    query: str = field(
+        positional=True,
+        metavar="QUERY",
+        help="natural-language publication search query",
     )
-    parser.add_argument("query", help="Natural-language publication search query")
-    parser.add_argument(
-        "-n",
-        "--num-results",
-        type=bounded_int(1, 100),
+    num_results: int = field(
         default=DEFAULT_NUM_RESULTS,
-        help=f"number of publications to return (default: {DEFAULT_NUM_RESULTS})",
+        alias="-n",
+        metavar="N",
+        help="number of publications to return (1-100)",
     )
-    parser.add_argument(
-        "--search-type",
-        choices=SEARCH_TYPES,
+    search_type: SearchType = field(
         default="auto",
-        help="Exa search quality/latency mode (default: auto)",
+        help="Exa search quality/latency mode",
     )
-    parser.add_argument("--start-published-date", help="ISO lower publication date")
-    parser.add_argument("--end-published-date", help="ISO upper publication date")
-    parser.add_argument(
-        "--include-domain",
-        action="append",
-        dest="include_domains",
-        help="only return this domain; repeat to add domains",
+    start_published_date: str | None = field(
+        default=None,
+        nargs=None,
+        metavar="DATE",
+        help="ISO lower publication date",
     )
-    parser.add_argument(
-        "--exclude-domain",
-        action="append",
-        dest="exclude_domains",
-        help="exclude this domain; repeat to add domains",
+    end_published_date: str | None = field(
+        default=None,
+        nargs=None,
+        metavar="DATE",
+        help="ISO upper publication date",
     )
-    parser.add_argument("--include-text", help="required exact text constraint")
-    parser.add_argument("--exclude-text", help="excluded exact text constraint")
-    parser.add_argument(
-        "--additional-query",
-        action="append",
-        dest="additional_queries",
-        help="additional query for deep search; repeat to add queries",
+    include_domains: list[str] = field(
+        default_factory=list,
+        metavar="DOMAIN [DOMAIN ...]",
+        help="only return these domains",
     )
-    parser.add_argument(
-        "--highlights-max-characters",
-        type=bounded_int(1, 10_000),
+    exclude_domains: list[str] = field(
+        default_factory=list,
+        metavar="DOMAIN [DOMAIN ...]",
+        help="exclude these domains",
+    )
+    include_text: str | None = field(
+        default=None,
+        nargs=None,
+        metavar="TEXT",
+        help="required exact text constraint",
+    )
+    exclude_text: str | None = field(
+        default=None,
+        nargs=None,
+        metavar="TEXT",
+        help="excluded exact text constraint",
+    )
+    additional_queries: list[str] = field(
+        default_factory=list,
+        metavar="QUERY [QUERY ...]",
+        help="additional queries for deep search",
+    )
+    highlights_max_characters: int = field(
         default=DEFAULT_HIGHLIGHTS_MAX_CHARACTERS,
-        help=(
-            "maximum highlight characters per publication "
-            f"(default: {DEFAULT_HIGHLIGHTS_MAX_CHARACTERS})"
-        ),
+        metavar="N",
+        help="maximum highlight characters per publication (1-10000)",
     )
-    parser.add_argument(
-        "--summary-query",
+    summary_query: str | None = field(
+        default=None,
+        nargs=None,
+        metavar="QUESTION",
         help="request a per-result summary focused on this question",
     )
-    parser.add_argument(
-        "--no-highlights",
+    no_highlights: bool = field(
+        default=False,
         action="store_true",
         help="return publication metadata without query highlights",
     )
 
-    args = parser.parse_args(argv)
-    if args.additional_queries and args.search_type not in DEEP_SEARCH_TYPES:
-        parser.error("--additional-query requires a deep search type")
+    def validate(self) -> None:
+        if not 1 <= self.num_results <= 100:
+            raise ValueError("--num-results must be between 1 and 100")
+        if not 1 <= self.highlights_max_characters <= 10_000:
+            raise ValueError(
+                "--highlights-max-characters must be between 1 and 10000"
+            )
+        if self.additional_queries and self.search_type not in DEEP_SEARCH_TYPES:
+            raise ValueError("--additional-queries requires a deep search type")
+        if len(self.additional_queries) > 10:
+            raise ValueError("--additional-queries accepts at most 10 queries")
+
+
+def parse_args(argv: Sequence[str] | None = None) -> SearchArguments:
+    parser = ArgumentParser(
+        add_option_string_dash_variants=DashVariant.DASH,
+        description="Search Exa's dedicated scholarly publication index.",
+    )
+    parser.add_arguments(SearchArguments, dest="options")
+    args: SearchArguments = parser.parse_args(argv).options
+    try:
+        args.validate()
+    except ValueError as error:
+        parser.error(str(error))
     return args
 
 
-def build_contents(args: argparse.Namespace) -> dict[str, Any] | bool:
+def build_contents(args: SearchArguments) -> dict[str, Any] | bool:
     contents: dict[str, Any] = {}
     if not args.no_highlights:
         contents["highlights"] = {
@@ -110,8 +143,8 @@ def build_contents(args: argparse.Namespace) -> dict[str, Any] | bool:
 
 
 def without_empty(value: Any) -> Any:
-    if dataclasses.is_dataclass(value):
-        value = dataclasses.asdict(value)
+    if is_dataclass(value):
+        value = asdict(value)
     if isinstance(value, dict):
         return {
             key: without_empty(item)
@@ -121,6 +154,16 @@ def without_empty(value: Any) -> Any:
     if isinstance(value, list):
         return [without_empty(item) for item in value]
     return value
+
+
+def create_exa_client() -> Exa:
+    load_dotenv()
+    api_key = os.environ.get("EXA_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "EXA_API_KEY is not set; add it to .env or the environment"
+        )
+    return Exa(api_key)
 
 
 def serialize_result(rank: int, result: Any) -> dict[str, Any]:
@@ -140,10 +183,10 @@ def serialize_result(rank: int, result: Any) -> dict[str, Any]:
 
 
 def search_publications(
-    args: argparse.Namespace,
+    args: SearchArguments,
     client: Exa | None = None,
 ) -> dict[str, Any]:
-    exa = client or Exa()
+    exa = client if client is not None else create_exa_client()
     options: dict[str, Any] = {
         "category": "publication",
         "num_results": args.num_results,
@@ -159,7 +202,7 @@ def search_publications(
         "exclude_text": [args.exclude_text] if args.exclude_text else None,
         "additional_queries": args.additional_queries,
     }
-    options.update({key: value for key, value in optional.items() if value is not None})
+    options.update({key: value for key, value in optional.items() if value})
 
     response = exa.search(args.query, **options)
     return without_empty(

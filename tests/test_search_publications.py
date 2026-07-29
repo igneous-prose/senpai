@@ -7,6 +7,8 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 SCRIPT = (
     Path(__file__).parents[1]
     / ".claude"
@@ -36,6 +38,22 @@ class FakeClient:
     def search(self, query, **options):
         self.calls.append((query, options))
         return self.response
+
+
+def test_installed_sdk_accepts_publication_category(monkeypatch):
+    captured_request = {}
+    client = search_publications.Exa("test-key")
+
+    def fake_request(path, options):
+        captured_request.update(path=path, options=options)
+        return {"results": []}
+
+    monkeypatch.setattr(client, "request", fake_request)
+
+    client.search("neural operators", category="publication", contents=False)
+
+    assert captured_request["path"] == "/search"
+    assert captured_request["options"]["category"] == "publication"
 
 
 def test_default_search_uses_publication_index_and_compact_highlights():
@@ -97,17 +115,16 @@ def test_search_options_are_forwarded_without_changing_publication_category():
             "2023-01-01",
             "--end-published-date",
             "2026-01-01",
-            "--include-domain",
+            "--include-domains",
             "arxiv.org",
-            "--include-domain",
             "openreview.net",
-            "--exclude-domain",
+            "--exclude-domains",
             "example.com",
             "--include-text",
             "equivariant",
             "--exclude-text",
             "survey",
-            "--additional-query",
+            "--additional-queries",
             "SE(3) mesh networks",
             "--summary-query",
             "What mechanism improves generalization?",
@@ -155,6 +172,50 @@ def test_no_highlights_requests_metadata_only():
     search_publications.search_publications(args, client)
 
     assert client.calls[0][1]["contents"] is False
+
+
+def test_argument_validation_is_reported_as_cli_usage(capsys):
+    with pytest.raises(SystemExit):
+        search_publications.parse_args(
+            ["attention alternatives", "--num-results", "101"]
+        )
+
+    assert "--num-results must be between 1 and 100" in capsys.readouterr().err
+
+
+def test_additional_queries_require_deep_search(capsys):
+    with pytest.raises(SystemExit):
+        search_publications.parse_args(
+            [
+                "attention alternatives",
+                "--additional-queries",
+                "linear attention",
+            ]
+        )
+
+    assert "--additional-queries requires a deep search type" in (
+        capsys.readouterr().err
+    )
+
+
+def test_exa_client_loads_dotenv_before_reading_api_key(monkeypatch):
+    events = []
+    client = object()
+
+    def fake_load_dotenv():
+        events.append("load_dotenv")
+        monkeypatch.setenv("EXA_API_KEY", "test-key")
+
+    def fake_exa(api_key):
+        events.append(("Exa", api_key))
+        return client
+
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    monkeypatch.setattr(search_publications, "load_dotenv", fake_load_dotenv)
+    monkeypatch.setattr(search_publications, "Exa", fake_exa)
+
+    assert search_publications.create_exa_client() is client
+    assert events == ["load_dotenv", ("Exa", "test-key")]
 
 
 def test_claude_and_codex_skill_scripts_stay_identical():

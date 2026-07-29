@@ -9,7 +9,8 @@ effort: high
 # Exa Publication Search
 
 Use the bundled `search_publications.py` tool. It calls the official `exa_py`
-library with `category="publication"` and reads `EXA_API_KEY` from the
+library with `category="publication"`. It uses `python-dotenv` to load the
+nearest `.env`, while preserving an `EXA_API_KEY` already set in the
 environment.
 
 ## Search
@@ -39,8 +40,7 @@ python "$CLAUDE_SKILL_DIR/scripts/search_publications.py" \
   "equivariant mesh neural operators" \
   --num-results 50 \
   --start-published-date 2023-01-01 \
-  --include-domain arxiv.org \
-  --include-domain openreview.net \
+  --include-domains arxiv.org openreview.net \
   --highlights-max-characters 1800
 ```
 
@@ -53,10 +53,11 @@ Useful options:
 - `--start-published-date` / `--end-published-date`: ISO dates for genuinely
   time-bounded questions. Do not add a recency filter to searches for
   foundational or transferable mechanisms.
-- `--include-domain` / `--exclude-domain`: repeatable source filters. Use only
-  when provenance matters; do not default to arXiv.
+- `--include-domains` / `--exclude-domains`: space-separated source filters.
+  Use only when provenance matters; do not default to arXiv.
 - `--include-text` / `--exclude-text`: one exact text constraint each.
-- `--additional-query`: repeatable query variants for deep search modes.
+- `--additional-queries`: up to 10 space-separated, quoted query variants for
+  deep search modes.
 - `--summary-query`: request an additional per-result summary when highlights
   are insufficient. Summaries add latency and cost.
 - `--no-highlights`: metadata-only search.
