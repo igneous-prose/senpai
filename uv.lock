@@ -4,7 +4,6 @@ requires-python = "==3.13.*"
 
 [options]
 exclude-newer = "2026-07-27T20:01:53.448785Z"
-exclude-newer-span = "P2D"
 
 [[package]]
 name = "abnf"

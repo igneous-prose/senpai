@@ -35,6 +35,9 @@ exclude = ["k8s*", "target*", "tests*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
+[tool.uv]
+exclude-newer = "2026-07-27T20:01:53.448785Z"
+
 [project.optional-dependencies]
 dev = [
     "ipython",
