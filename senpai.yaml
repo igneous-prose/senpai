@@ -8,7 +8,8 @@ problem_dir: target/
 
 # git (senpai itself)
 repo_url: https://github.com/wandb/senpai.git
-repo_branch: main
+# Required only for digest-pinned images; source-SHA tags derive it automatically.
+repo_revision: ""
 
 # problem-package repo is REQUIRED and must be passed on the CLI
 #   python k8s/launch.py --tag <tag> --target_repo_url https://github.com/<org>/<repo>.git
@@ -16,8 +17,10 @@ repo_branch: main
 # the entrypoint clones it into $PROBLEM_DIR.
 target_repo_branch: ""
 
-# docker image
-image: ghcr.io/wandb/senpai:pr-3467-fdcfbaf668
+# docker images
+# Required: use digests or matching sha-<full-commit> tags.
+advisor_image: ""
+student_image: ""
 
 # dataset PVC mount
 pvc_claim_name: new-pvc
@@ -39,14 +42,7 @@ max_epochs: 50
 poll_interval_s: 600
 poll_jitter_s: 120
 stale_wip_seconds: 7200
-advisor_claude_watchdog_interval_s: 60
-advisor_claude_min_runtime_s: 600
-advisor_claude_stale_log_s: 1200
-student_claude_watchdog_interval_s: 300
-student_claude_watchdog_jitter_s: 60
-student_claude_min_runtime_s: 600
-student_claude_stale_log_s: 1200
-student_assignment_drift_grace_s: 1800
+human_issues: true
 
 # students
 n_students: 4

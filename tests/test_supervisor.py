@@ -1,0 +1,282 @@
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+from uuid import UUID
+
+from senpai_agent.supervisor import SupervisorConfig, WorkerSupervisor
+
+
+def wait_for(path: Path, timeout: float = 5) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.01)
+    raise TimeoutError(f"{path} was not created")
+
+
+def run_supervisor(
+    supervisor: WorkerSupervisor,
+    stop: threading.Event,
+) -> tuple[threading.Thread, list[int]]:
+    results: list[int] = []
+    thread = threading.Thread(target=lambda: results.append(supervisor.run(stop)))
+    thread.start()
+    return thread, results
+
+
+def test_crashed_worker_restarts_with_the_same_durable_conversation(
+    tmp_path: Path,
+):
+    conversation_id = UUID("00000000-0000-0000-0000-000000000047")
+    (tmp_path / "advisor-conversation-id").write_text(f"{conversation_id}\n")
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        """
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+state = Path(sys.argv[1])
+count_path = state / "starts"
+count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+count_path.write_text(str(count))
+conversation_id = (state / "advisor-conversation-id").read_text().strip()
+with (state / "observed-conversations").open("a") as observations:
+    observations.write(conversation_id + "\\n")
+
+lease = Path(os.environ["SENPAI_CONTROLLER_LEASE_PATH"])
+temporary = lease.with_suffix(".tmp")
+temporary.write_text(json.dumps({
+    "pid": os.getpid(),
+    "phase": "test-worker",
+    "deadline": time.monotonic() + 30,
+}))
+temporary.replace(lease)
+
+if count == 1:
+    raise SystemExit(23)
+
+(state / "ready").write_text("ready")
+while True:
+    time.sleep(1)
+""".strip()
+    )
+    stop = threading.Event()
+    supervisor = WorkerSupervisor(
+        command=(sys.executable, str(worker), str(tmp_path)),
+        lease_path=tmp_path / "controller-lease.json",
+        config=SupervisorConfig(
+            startup_timeout_seconds=1,
+            check_interval_seconds=0.01,
+            terminate_grace_seconds=0.1,
+            initial_backoff_seconds=0.01,
+            max_backoff_seconds=0.01,
+        ),
+    )
+
+    thread, results = run_supervisor(supervisor, stop)
+    wait_for(tmp_path / "ready")
+    stop.set()
+    thread.join(5)
+
+    assert not thread.is_alive()
+    assert results == [0]
+    assert (tmp_path / "starts").read_text() == "2"
+    assert (tmp_path / "observed-conversations").read_text().splitlines() == [
+        str(conversation_id),
+        str(conversation_id),
+    ]
+
+
+def test_overdue_worker_is_killed_and_restarted(tmp_path: Path):
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        """
+import json
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+state = Path(sys.argv[1])
+count_path = state / "starts"
+count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+count_path.write_text(str(count))
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+lease = Path(os.environ["SENPAI_CONTROLLER_LEASE_PATH"])
+temporary = lease.with_suffix(".tmp")
+temporary.write_text(json.dumps({
+    "pid": os.getpid(),
+    "phase": "wedged-turn" if count == 1 else "healthy-turn",
+    "deadline": time.monotonic() + (0.05 if count == 1 else 30),
+}))
+temporary.replace(lease)
+
+if count > 1:
+    (state / "restarted").write_text("restarted")
+while True:
+    time.sleep(1)
+""".strip()
+    )
+    stop = threading.Event()
+    supervisor = WorkerSupervisor(
+        command=(sys.executable, str(worker), str(tmp_path)),
+        lease_path=tmp_path / "controller-lease.json",
+        config=SupervisorConfig(
+            startup_timeout_seconds=1,
+            check_interval_seconds=0.01,
+            terminate_grace_seconds=0.05,
+            initial_backoff_seconds=0.01,
+            max_backoff_seconds=0.01,
+        ),
+    )
+
+    thread, results = run_supervisor(supervisor, stop)
+    wait_for(tmp_path / "restarted")
+    stop.set()
+    thread.join(5)
+
+    assert not thread.is_alive()
+    assert results == [0]
+    assert int((tmp_path / "starts").read_text()) >= 2
+
+
+def test_health_command_reports_live_and_expired_worker_leases(tmp_path: Path):
+    lease = tmp_path / "controller-lease.json"
+    lease.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "phase": "sleep",
+                "deadline": time.monotonic() + 30,
+            }
+        )
+    )
+
+    healthy = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "senpai_agent.supervisor",
+            "health",
+            str(lease),
+        ],
+        check=False,
+    )
+    lease.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "phase": "openhands-turn",
+                "deadline": time.monotonic() - 1,
+            }
+        )
+    )
+    expired = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "senpai_agent.supervisor",
+            "health",
+            str(lease),
+        ],
+        check=False,
+    )
+
+    assert healthy.returncode == 0
+    assert expired.returncode == 1
+
+
+def test_openhands_reopens_durable_events_after_an_unclean_worker_exit(
+    tmp_path: Path,
+):
+    conversation_id = "00000000-0000-0000-0000-000000000049"
+    crash = tmp_path / "crash.py"
+    crash.write_text(
+        """
+import os
+import sys
+from pathlib import Path
+from uuid import UUID
+
+from pydantic import SecretStr
+from openhands.sdk import Agent, Conversation, LLM
+
+state_dir, workspace, conversation_id = sys.argv[1:]
+conversation = Conversation(
+    agent=Agent(
+        llm=LLM(model="openai/gpt-4o-mini", api_key=SecretStr("test-key")),
+        tools=[],
+    ),
+    workspace=Path(workspace),
+    persistence_dir=Path(state_dir),
+    conversation_id=UUID(conversation_id),
+    visualizer=None,
+    delete_on_close=False,
+)
+conversation.send_message("resume this durable event")
+os._exit(17)
+""".strip()
+    )
+    resume = tmp_path / "resume.py"
+    resume.write_text(
+        """
+import sys
+from pathlib import Path
+from uuid import UUID
+
+from pydantic import SecretStr
+from openhands.sdk import Agent, Conversation, LLM
+
+state_dir, workspace, conversation_id = sys.argv[1:]
+conversation = Conversation(
+    agent=Agent(
+        llm=LLM(model="openai/gpt-4o-mini", api_key=SecretStr("test-key")),
+        tools=[],
+    ),
+    workspace=Path(workspace),
+    persistence_dir=Path(state_dir),
+    conversation_id=UUID(conversation_id),
+    visualizer=None,
+    delete_on_close=False,
+)
+assert any(
+    "resume this durable event" in str(event)
+    for event in conversation.state.view.events
+)
+conversation.close()
+""".strip()
+    )
+    environment = {
+        **os.environ,
+        "OPENHANDS_SUPPRESS_BANNER": "1",
+        "LITELLM_LOCAL_MODEL_COST_MAP": "True",
+    }
+    arguments = [
+        str(tmp_path / "openhands-state"),
+        str(tmp_path / "workspace"),
+        conversation_id,
+    ]
+
+    crashed = subprocess.run(
+        [sys.executable, str(crash), *arguments],
+        env=environment,
+        check=False,
+    )
+    resumed = subprocess.run(
+        [sys.executable, str(resume), *arguments],
+        env=environment,
+        check=False,
+    )
+
+    assert crashed.returncode == 17
+    assert resumed.returncode == 0

@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from weave_openhands import finish as weave_finish
 from weave_openhands import init as weave_init
 
-
 _initialized = False
 _project_name: str | None = None
+TRACE_SECRET_ENV_NAMES = (
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "WANDB_API_KEY",
+    "EXA_API_KEY",
+    "ANTHROPIC_API_KEY",
+)
+
+
+def _is_secret_env(name: str) -> bool:
+    return name in TRACE_SECRET_ENV_NAMES or name.endswith(
+        ("_API_KEY", "_TOKEN", "_PASSWORD", "_SECRET", "_CREDENTIAL")
+    )
 
 
 def weave_project_name(env: Mapping[str, str]) -> str | None:
@@ -31,6 +43,30 @@ def weave_agent_name(env: Mapping[str, str]) -> str:
     return role
 
 
+def secret_redactor(env: Mapping[str, str]) -> Callable[[str], str]:
+    configured_model_key = env.get("SENPAI_OPENHANDS_API_KEY_ENV")
+    secret_values = sorted(
+        {
+            value
+            for name, value in env.items()
+            if value
+            and (
+                _is_secret_env(name)
+                or (configured_model_key is not None and name == configured_model_key)
+            )
+        },
+        key=len,
+        reverse=True,
+    )
+
+    def redact(content: str) -> str:
+        for value in secret_values:
+            content = content.replace(value, "<secret-hidden>")
+        return content
+
+    return redact
+
+
 def initialize_weave_monitoring(
     env: Mapping[str, str] = os.environ,
 ) -> str | None:
@@ -46,6 +82,7 @@ def initialize_weave_monitoring(
         project_name,
         agent_name=weave_agent_name(env),
         capture_content=True,
+        content_transform=secret_redactor(env),
     )
     _initialized = True
     _project_name = project_name

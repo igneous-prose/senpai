@@ -5,60 +5,36 @@
 
 name: submit-experiment-results
 description: >
-  Submit experiment results for advisor review. Commits changes, pushes
-  the branch, marks the PR as ready, and swaps the status label from
-  wip to review. Use this skill when you've finished running experiments
-  and posted your results comment. Triggers for: "submit for review",
-  "mark PR ready", "send results to advisor", "submit experiment results".
+  Commit and submit a terminal experiment result for advisor review through the
+  typed Senpai GitHub transition.
 argument-hint: "<pr-number> <problem-dir>"
 model: claude-sonnet-4-6
 effort: high
 ---
 
-# submit-experiment-results
+# Submit experiment results
 
-You've run the experiment, posted a results comment on the experiment PR — now wrap it up and hand it to the advisor.
+First make the target worktree clean by committing only the assigned change.
+Collect the current local commit SHA and the current remote assignment-branch
+SHA. Build the strict `ExperimentResult` required by the `github_transition`
+schema:
 
-## Arguments
+- the assignment repository, PR, assignment ID, revision ID, student, and
+  current expected head SHA;
+- terminal status, hypothesis, and bounded summary;
+- every W&B run ID, URL, and terminal state;
+- the primary metric comparison; and
+- the same local commit SHA.
 
-- **$0** — The experiment PR number (e.g. `1842`)
-- **$1** — The active problem directory (e.g. `target/cfd_tandemfoil`)
+Call `github_transition` with `operation="submit_result"`, the PR number,
+branch, previous remote SHA, current head SHA, and typed result.
 
-## Before you call this
+That single transition lease-pushes the clean assignment branch, verifies the
+new PR head, upserts the authenticated structured result, marks the PR ready,
+and reconciles `status:review`. That label is the durable advisor notification.
+Do not run `git push`, edit labels, write result markers, or call `gh pr ready`
+yourself.
 
-Make sure you've already posted a results comment on the experiment PR with metrics, W&B run ID, analysis, and suggested follow-ups.
-
-The comment must include a valid one-line terminal result marker before the Results section:
-
-```markdown
-SENPAI-RESULT: {"terminal":true,"status":"complete","pending_arms":false,"wandb_run_ids":["<run-id>"],"primary_metric":{"name":"<metric>","value":<number>},"test_metric":{"name":"<metric>","value":<number>}}
-```
-
-Use `terminal=true` only when every advisor-required arm/run is finished or intentionally aborted. If any arm or W&B run can still change the conclusion, leave the PR as `status:wip`.
-
-## Steps
-
-1. **Stage and commit your changes:**
-
-```bash
-git add "$1/train.py"
-# Also add any other files you modified (pyproject.toml if you added packages, etc.)
-git commit -m "<concise description of what you changed>"
-```
-
-2. **Push the branch:**
-
-```bash
-git push origin "$(git branch --show-current)"
-```
-
-3. **Mark the PR as ready for advisor review and swap labels:**
-
-```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/senpai-gh.sh"
-mark_ready_for_review $0
-```
-
-`mark_ready_for_review` refuses the handoff if the terminal `SENPAI-RESULT` marker is missing, invalid JSON, or still reports pending arms/runs. Read the error, fix the PR comment, and retry.
-
-That's it. The advisor will pick it up in their next review cycle.
+If any run is still active or could change the conclusion, keep the assignment
+in progress and register it with `monitor_training`; do not submit a terminal
+result.

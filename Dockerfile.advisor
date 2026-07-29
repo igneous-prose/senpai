@@ -1,0 +1,61 @@
+FROM python:3.13-slim-bookworm
+
+ARG PLAYWRIGHT_VERSION=1.55.0
+ARG SENPAI_SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision="${SENPAI_SOURCE_REVISION}"
+
+ENV PATH="/opt/senpai-venv/bin:/root/.local/bin:${PATH}" \
+    SENPAI_IMAGE_REVISION="${SENPAI_SOURCE_REVISION}" \
+    SENPAI_PYTHON=/opt/senpai-venv/bin/python \
+    UV_PROJECT_ENVIRONMENT=/opt/senpai-venv \
+    UV_PYTHON=/opt/senpai-venv/bin/python \
+    UV_PYTHON_DOWNLOADS=never \
+    BROWSER_USE_DISABLE_EXTENSIONS=1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl gettext-base git gnupg procps && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install gh from its architecture-neutral apt repository.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli-stable.list && \
+    apt-get update && apt-get install -y gh && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir "uv==0.10.9" && \
+    uv venv --python /usr/local/bin/python /opt/senpai-venv
+
+# Export from the project lock while pruning dependencies used only for training.
+COPY pyproject.toml uv.lock /tmp/senpai/
+RUN cd /tmp/senpai && \
+    uv export --locked --python 3.13 --no-dev --no-emit-project \
+      --format requirements.txt \
+      --prune torch \
+      --prune torchvision \
+      --prune torch-geometric \
+      --prune timm \
+      --prune einops \
+      --prune matplotlib \
+      > requirements.txt && \
+    uv pip install --python "$SENPAI_PYTHON" -r requirements.txt && \
+    python -c 'import importlib.metadata, importlib.util, openhands.sdk, sys; assert sys.version_info[:2] == (3, 13); assert importlib.util.find_spec("torch") is None; assert importlib.metadata.version("openhands-sdk") == "1.39.0"; assert importlib.metadata.version("weave-openhands") == "0.1.0"' && \
+    rm -rf /root/.cache/uv
+
+COPY scripts/senpai-browser-smoke-test.py /usr/local/bin/senpai-browser-smoke-test
+
+# Bake in Chromium and fail the image build if OpenHands cannot drive it.
+RUN uvx --from "playwright==${PLAYWRIGHT_VERSION}" \
+      playwright install chromium --with-deps --no-shell && \
+    chmod +x /usr/local/bin/senpai-browser-smoke-test && \
+    senpai-browser-smoke-test && \
+    rm -rf /root/.cache/uv /root/.config/browseruse /var/lib/apt/lists/*
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=5 \
+    CMD python -m senpai_agent.supervisor health \
+      "/var/lib/senpai/${RESEARCH_TAG}/advisor/openhands_state/controller-lease.json"
+
+WORKDIR /workspaces

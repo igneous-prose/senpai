@@ -13,7 +13,6 @@ description: >
 context: fork
 model: claude-sonnet-4-6
 effort: high
-allowed-tools: Bash(gh *), Bash(source *), Bash(python3 *)
 ---
 
 # survey-prs
@@ -24,28 +23,15 @@ Uses `$ADVISOR_BRANCH` and `$STUDENT_NAMES` from the environment (set by the k8s
 
 ## Steps
 
-1. **Source the library and query:**
-
-```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/senpai-gh.sh"
-
-# All open PRs on the branch
-list_all_prs "$ADVISOR_BRANCH"
-
-# Just the review-ready ones
-list_ready_for_review_prs "$ADVISOR_BRANCH"
-
-# PRs with stale, blocked, conflicting, duplicate, or malformed assignment state
-list_prs_requiring_advisor_action "$ADVISOR_BRANCH"
-
-# Who's idle
-list_idle_students "$STUDENT_NAMES" "$ADVISOR_BRANCH"
-```
+1. **Use the current controller events** for review-ready PRs, routing
+   anomalies, stale WIP work, and idle students. Use `get_prs` with a bounded
+   search only when complete PR evidence is needed.
 
 2. **Categorize** each PR by its status labels:
    - `status:review` — ready for advisor review
    - `status:wip` — student is working on it (note which student from the `student:*` label)
-   - advisor-action reasons from `list_prs_requiring_advisor_action` — stale WIP, duplicate student WIP, missing/unknown/unroutable routing labels, blocked/needs-rebase state, or merge-conflict comments
+   - `advisor_action` event reasons — stale WIP, duplicate student WIP,
+     missing or ambiguous routing labels, blocked/needs-rebase state
    - Draft with no status — may be newly created or stalled
 
 3. **Return a structured summary** in this format:

@@ -3,31 +3,43 @@
 Deploys a test pod, verifies the image runtime, then tears down the pod.
 
 Usage:
-    uv run pytest tests/test_docker_image.py -v -s
+    SENPAI_TEST_STUDENT_IMAGE=ghcr.io/wandb/senpai-student:sha-<full-commit> \
+    SENPAI_TEST_REVISION=<full-commit> \
+      uv run pytest tests/test_docker_image.py -v -s
 """
 
 import json
+import os
+import re
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import pytest
 
 ENTITY = "wandb-applied-ai-team"
 PROJECT = "senpai-v1"
-POD_NAME = "senpai-image-test"
-IMAGE = "ghcr.io/wandb/senpai:pr-3467-fdcfbaf668"
-REPO_URL = "https://github.com/wandb/senpai.git"
-REPO_BRANCH = "main"
+RUN_ID = uuid.uuid4().hex[:8]
+POD_NAME = f"senpai-image-test-{RUN_ID}"
+CONFIGMAP_NAME = f"{POD_NAME}-config"
+IMAGE = os.environ.get("SENPAI_TEST_STUDENT_IMAGE", "")
+REPO_URL = os.environ.get("SENPAI_TEST_REPO_URL", "https://github.com/wandb/senpai.git")
+REPO_REVISION = os.environ.get("SENPAI_TEST_REVISION", "")
 POD_TEMPLATE = Path(__file__).parent / "test-pod.yaml"
 STARTUP_TIMEOUT = 120
-TAG = "test"
+TAG = f"image-test-{RUN_ID}"
+FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
 
 
 def kubectl(*args: str, timeout: int = 30, input: str | None = None) -> str:
     result = subprocess.run(
         ["kubectl", *args],
-        capture_output=True, text=True, timeout=timeout, input=input,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        input=input,
+        check=False,
     )
     return result.stdout.strip()
 
@@ -35,7 +47,11 @@ def kubectl(*args: str, timeout: int = 30, input: str | None = None) -> str:
 def kubectl_check(*args: str, timeout: int = 30, input: str | None = None) -> str:
     result = subprocess.run(
         ["kubectl", *args],
-        capture_output=True, text=True, timeout=timeout, input=input,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        input=input,
+        check=False,
     )
     if result.returncode != 0:
         raise RuntimeError(f"kubectl {' '.join(args)} failed: {result.stderr.strip()}")
@@ -43,60 +59,120 @@ def kubectl_check(*args: str, timeout: int = 30, input: str | None = None) -> st
 
 
 def wait_for_pod(name: str, timeout: int = STARTUP_TIMEOUT):
-    """Poll until pod is Running or timeout."""
+    """Poll until the test container is ready or has failed."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        out = kubectl("get", "pod", name, "-o", "jsonpath={.status.phase}")
-        if out == "Running":
+        raw_pod = kubectl("get", "pod", name, "-o", "json")
+        if not raw_pod:
+            time.sleep(5)
+            continue
+        pod = json.loads(raw_pod)
+        phase = pod["status"].get("phase")
+        statuses = pod["status"].get("containerStatuses", [])
+        if any(status["ready"] for status in statuses):
             return
+        if phase == "Failed":
+            logs = kubectl("logs", name)
+            raise RuntimeError(f"Pod {name} failed during startup:\n{logs}")
         time.sleep(5)
-    raise TimeoutError(f"Pod {name} not running after {timeout}s")
+    raise TimeoutError(f"Pod {name} not ready after {timeout}s")
+
+
+def _require_immutable_test_inputs() -> None:
+    if not IMAGE or not REPO_REVISION:
+        pytest.skip("set SENPAI_TEST_STUDENT_IMAGE and SENPAI_TEST_REVISION")
+    if not FULL_COMMIT.fullmatch(REPO_REVISION):
+        pytest.fail("SENPAI_TEST_REVISION must be a full lowercase commit SHA")
+    if "@sha256:" not in IMAGE and not IMAGE.endswith(f":sha-{REPO_REVISION}"):
+        pytest.fail(
+            "SENPAI_TEST_STUDENT_IMAGE must use a digest or the matching "
+            "sha-<full-commit> tag"
+        )
 
 
 def _build_configmap() -> str:
-    """Generate the senpai-config-test ConfigMap YAML."""
-    return "\n".join([
-        "apiVersion: v1", "kind: ConfigMap", "metadata:",
-        "  name: senpai-config-test",
-        "  labels:",
-        "    app: senpai",
-        "    role: test",
-        f"    research-tag: {TAG}",
-        "data:",
-        f'  REPO_URL: "{REPO_URL}"',
-        f'  REPO_BRANCH: "{REPO_BRANCH}"',
-        f'  RESEARCH_TAG: "{TAG}"',
-        f'  WANDB_ENTITY: "{ENTITY}"',
-        f'  WANDB_PROJECT: "{PROJECT}"',
-    ])
+    """Generate the per-run test ConfigMap YAML."""
+    return "\n".join(
+        [
+            "apiVersion: v1",
+            "kind: ConfigMap",
+            "metadata:",
+            f"  name: {CONFIGMAP_NAME}",
+            "  labels:",
+            "    app: senpai",
+            "    role: test",
+            f"    research-tag: {TAG}",
+            "data:",
+            f'  REPO_URL: "{REPO_URL}"',
+            f'  REPO_REVISION: "{REPO_REVISION}"',
+            f'  RESEARCH_TAG: "{TAG}"',
+            f'  WANDB_ENTITY: "{ENTITY}"',
+            f'  WANDB_PROJECT: "{PROJECT}"',
+        ]
+    )
 
 
 def _render_pod_template() -> str:
-    """Render the test-pod.yaml template with IMAGE and RESEARCH_TAG."""
+    """Render the pod template for this isolated test run."""
     text = POD_TEMPLATE.read_text()
-    return text.replace("{{IMAGE}}", IMAGE).replace("{{RESEARCH_TAG}}", TAG)
+    replacements = {
+        "{{POD_NAME}}": POD_NAME,
+        "{{CONFIGMAP_NAME}}": CONFIGMAP_NAME,
+        "{{IMAGE}}": IMAGE,
+        "{{RESEARCH_TAG}}": TAG,
+    }
+    for placeholder, value in replacements.items():
+        text = text.replace(placeholder, value)
+    return text
 
 
 @pytest.fixture(scope="module")
 def test_pod():
     """Create configmap + test pod, wait for it, yield, then clean up."""
-    kubectl("delete", "pod,configmap", "-l", f"research-tag={TAG}", "--ignore-not-found", timeout=120)
+    _require_immutable_test_inputs()
+    kubectl(
+        "delete",
+        "pod,configmap",
+        "-l",
+        f"research-tag={TAG}",
+        "--ignore-not-found",
+        timeout=120,
+    )
     time.sleep(2)
 
-    # Apply configmap then pod
-    kubectl_check("apply", "-f", "-", input=_build_configmap())
-    kubectl_check("apply", "-f", "-", input=_render_pod_template())
-    wait_for_pod(POD_NAME)
-    yield POD_NAME
-
-    kubectl("delete", "pod,configmap", "-l", f"research-tag={TAG}", "--ignore-not-found", timeout=120)
+    try:
+        kubectl_check("apply", "-f", "-", input=_build_configmap())
+        kubectl_check("apply", "-f", "-", input=_render_pod_template())
+        wait_for_pod(POD_NAME)
+        yield POD_NAME
+    finally:
+        kubectl(
+            "delete",
+            "pod,configmap",
+            "-l",
+            f"research-tag={TAG}",
+            "--ignore-not-found",
+            timeout=120,
+        )
 
 
 def test_tools_installed(test_pod):
-    """All baked-in tools are available."""
-    for cmd in ["claude --version", "gh --version", "uv --version", "yq --version"]:
+    """Student runtime tools are available without advisor-only kubectl."""
+    for cmd in ["gh --version", "uv --version"]:
         out = kubectl_check("exec", test_pod, "--", "bash", "-c", cmd, timeout=15)
         assert out, f"`{cmd}` returned empty output"
+    assert (
+        kubectl(
+            "exec",
+            test_pod,
+            "--",
+            "bash",
+            "-c",
+            "! command -v kubectl",
+            timeout=15,
+        )
+        == ""
+    )
 
 
 def test_legacy_weave_claude_plugin_removed(test_pod):
@@ -121,7 +197,7 @@ def test_python_deps_and_icml_target_import(test_pod):
         "assert sys.version_info[:2] == (3, 13)\n"
         "assert torch.__version__.startswith('2.13.')\n"
         "assert torch.version.cuda.startswith('13.')\n"
-        "assert importlib.metadata.version('openhands-sdk') == '1.36.1'\n"
+        "assert importlib.metadata.version('openhands-sdk') == '1.39.0'\n"
         "assert importlib.metadata.version('weave-openhands') == '0.1.0'\n"
         "print('ok')\n"
         "PY"
@@ -132,26 +208,38 @@ def test_python_deps_and_icml_target_import(test_pod):
 
 def test_cuda_runtime_on_a_real_gpu(test_pod):
     """PyTorch can execute a kernel through the host NVIDIA runtime."""
-    out = kubectl_check(
-        "exec", test_pod, "--", "senpai-gpu-smoke-test", timeout=30
-    )
+    out = kubectl_check("exec", test_pod, "--", "senpai-gpu-smoke-test", timeout=30)
     result = json.loads(out)
 
     assert result["status"] == "ok"
     assert result["devices"]
 
 
-def test_openhands_plugin_loads_workflow_skills_and_exa(test_pod):
-    """The native OpenHands plugin carries the workflow skills and Exa."""
+def test_openhands_plugin_loads_workflow_skills_without_exa_mcp(test_pod):
+    """The native plugin carries workflow skills without an Exa MCP server."""
     cmd = (
         "python - <<'PY'\n"
         "from openhands.sdk.plugin import Plugin\n"
         "plugin = Plugin.load('/workspaces/senpai/plugins/senpai')\n"
         "skills = {skill.name for skill in plugin.skills}\n"
-        "assert {'senpai-gh', 'survey-prs'} <= skills\n"
-        "assert 'exa' in plugin.mcp_config\n"
+        "assert {'assign-experiment', 'survey-prs'} <= skills\n"
+        "assert not plugin.mcp_config\n"
+        "assert not __import__('pathlib').Path("
+        "'/workspaces/senpai/plugins/senpai/.mcp.json').exists()\n"
         "print('ok')\n"
         "PY"
     )
     out = kubectl_check("exec", test_pod, "--", "bash", "-c", cmd, timeout=20)
     assert "ok" in out
+
+
+def test_openhands_browser_toolset_runs_chromium(test_pod):
+    """BrowserToolSet starts Chromium and reads a deterministic local page."""
+    out = kubectl_check(
+        "exec",
+        test_pod,
+        "--",
+        "senpai-browser-smoke-test",
+        timeout=60,
+    )
+    assert "senpai-browser-ok" in out

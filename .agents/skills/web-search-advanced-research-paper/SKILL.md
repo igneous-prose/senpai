@@ -1,102 +1,46 @@
 ---
 name: web-search-advanced-research-paper
-description: Search for research papers and academic content using Exa advanced search. Full filter support including date ranges and text filtering. Use when searching for academic papers, arXiv preprints, or scientific research.
+description: Search for research papers and academic publications with a bounded Exa query. Use for literature searches, arXiv discovery, or finding evidence for an experiment hypothesis.
 context: fork
 model: Codex-opus-4-8
 effort: high
 ---
 
-# Web Search Advanced - Research Paper Category
+# Publication search
 
-Use the `exa` MCP server to search for research papers and academic content.
+Use the checked-in stdlib client:
 
-## Tool Restriction (Critical)
-
-ONLY use `web_search_advanced_exa` with `category: "research paper"`. Do NOT use other categories or tools.
-
-## Full Filter Support
-
-The `research paper` category supports ALL available parameters:
-
-### Core
-- `query` (required)
-- `numResults`
-- `type` ("auto", "fast", "deep", "neural")
-
-### Domain filtering
-- `includeDomains` (e.g., ["arxiv.org", "openreview.net"])
-- `excludeDomains`
-
-### Date filtering (ISO 8601)
-- `startPublishedDate` / `endPublishedDate`
-- `startCrawlDate` / `endCrawlDate`
-
-### Text filtering
-- `includeText` (must contain ALL)
-- `excludeText` (exclude if ANY match)
-
-**Array size restriction:** `includeText` and `excludeText` only support **single-item arrays**. Multi-item arrays (2+ items) cause 400 errors. To match multiple terms, put them in the `query` string or run separate searches.
-
-### Content extraction
-- `textMaxCharacters` / `contextMaxCharacters`
-- `enableSummary` / `summaryQuery`
-- `enableHighlights` / `highlightsNumSentences` / `highlightsPerUrl` / `highlightsQuery`
-
-### Additional
-- `userLocation`
-- `moderation`
-- `additionalQueries`
-- `maxAgeHours` / `livecrawlTimeout`
-- `subpages` / `subpageTarget`
-
-## Token Isolation (Critical)
-
-Never run Exa searches in main context. Always spawn Task agents:
-- Agent calls `web_search_advanced_exa` with `category: "research paper"`
-- Agent merges + deduplicates results before presenting
-- Agent returns distilled output (brief markdown or compact JSON)
-- Main context stays clean regardless of search volume
-
-## When to Use
-
-Use this category when you need:
-- Academic papers from arXiv, OpenReview, PubMed, etc.
-- Scientific research on specific topics
-- Literature reviews with date filtering
-- Papers containing specific methodologies or terms
-
-## Examples
-
-Recent papers on a topic:
-```
-web_search_advanced_exa {
-  "query": "transformer attention mechanisms efficiency",
-  "category": "research paper",
-  "startPublishedDate": "2024-01-01",
-  "numResults": 15,
-  "type": "auto"
-}
+```bash
+python "$HOME/.agents/skills/web-search-advanced-research-paper/scripts/search_publications.py" \
+  "precise research question"
 ```
 
-Papers from specific venues:
+The script always searches Exa's publication category and returns metadata
+only. It requires `EXA_API_KEY`, which the runtime supplies as a masked command
+secret.
+
+Useful bounds:
+
+```bash
+# Recent work
+python "$HOME/.agents/skills/web-search-advanced-research-paper/scripts/search_publications.py" \
+  --start-published-date 2025-01-01 --num-results 8 \
+  "neural CFD surrogate conservation loss"
+
+# Selected publication domains
+python "$HOME/.agents/skills/web-search-advanced-research-paper/scripts/search_publications.py" \
+  --include-domain arxiv.org --include-domain openreview.net \
+  "operator learning irregular meshes"
 ```
-web_search_advanced_exa {
-  "query": "large language model agents",
-  "category": "research paper",
-  "includeDomains": ["arxiv.org", "openreview.net"],
-  "includeText": ["LLM"],
-  "numResults": 20,
-  "type": "deep"
-}
-```
 
-## Output Format
+Keep the search progressive:
 
-Return:
-1) Results (structured list with title, authors, date, abstract summary)
-2) Sources (URLs with publication venue)
-3) Notes (methodology differences, conflicting findings)
+1. **Candidates:** start with one precise metadata-only query and five to eight
+   results.
+2. **Refine:** if needed, make one smaller domain/date/text-filtered query and
+   deduplicate candidates by ID or URL.
+3. **Read:** open only the one to three papers that can change the current
+   hypothesis, using the browser or AlphaXiv, then return a cited synthesis of
+   the finding, assumptions, and concrete experiment implication.
 
-## Follow-up
-
-You can use the initial summary findings from this skill to identify full papers to download and read using other skills or web search.
+Do not paste raw API responses or full papers into the conversation.

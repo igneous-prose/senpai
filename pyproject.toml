@@ -22,12 +22,16 @@ dependencies = [
     "weave-openhands @ git+https://github.com/morganmcg1/weave-openhands.git@a16fe325b2c78692b6e0d904b8883bc2e7429ee8",
     "tqdm",
     "matplotlib",
-    "openhands-sdk==1.36.1",
-    "openhands-tools==1.36.1",
+    "openhands-sdk @ git+https://github.com/morganmcg1/software-agent-sdk.git@856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e#subdirectory=openhands-sdk",
+    "openhands-tools @ git+https://github.com/morganmcg1/software-agent-sdk.git@856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e#subdirectory=openhands-tools",
+    "psutil",
 ]
 
 [tool.setuptools.packages.find]
 exclude = ["k8s*", "target*", "tests*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 
 [project.optional-dependencies]
 dev = [

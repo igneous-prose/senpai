@@ -15,13 +15,14 @@ effort: high
 
 # poll-for-work
 
-Check whether the advisor has assigned you an experiment PR to work on. This is a one-shot check: return the result to the parent agent immediately.
+Interpret the assignment event supplied by the Senpai controller. This is a
+one-shot check: return the result to the parent agent immediately.
 
 Assignments are Github labels, not GitHub assignees:
 
 - The current advisor branch is also a routing label. A PR is assigned to you only when it has the following labels: `$ADVISOR_BRANCH` (current advisor branch), your name label like so: `student:$0`, and this status label: `status:wip`.
-- Never use `gh pr list --assignee ...`, `--author`, or a hand-written replacement query for assignment polling.
-- Do not use the Claude Code `Monitor` tool for assignment polling. The pod entrypoint owns waiting and re-entry.
+- Never create a polling loop or reconstruct assignment routing with `gh`.
+- The controller owns GitHub polling, waiting, and conversation re-entry.
 
 ## Arguments
 
@@ -29,19 +30,17 @@ Assignments are Github labels, not GitHub assignees:
 
 ## Steps
 
-1. **Source the library and query** for assigned experiment PRs:
+1. **Read the current `student_assignment` event.** It contains the PR number,
+   title, branch, assignment ID, and revision ID. If no such event is present,
+   return `NO_WORK`.
 
-```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/senpai-gh.sh"
-student_poll_for_work "$0"
-```
-
-2. **If PRs are returned**, for each one:
+2. **For the assigned PR:**
    - Note the PR number, title, and branch name
-   - Check for advisor comments (this might be a revision, not a fresh assignment):
-     ```bash
-     pr_all_comments <number>
-     ```
+   - Call `get_prs` with `numbers=[<number>]` and the default
+     `max_inline_prs=5`. This returns the complete PR body, issue comments,
+     reviews, and inline review comments through the bounded read interface.
+     Check that Markdown for an advisor revision request.
+   - Do not reconstruct PR history with `gh` or shell helpers.
 
 3. **Return a summary:**
 
@@ -55,7 +54,7 @@ If the PR has revision comments from the advisor, include that:
 WORK_AVAILABLE (REVISION): PR <pr-number> "<pr-title>" on branch <branch-name> — advisor requests: "<advisor-comment>"
 ```
 
-If nothing:
+If no assignment event is present:
 ```
 NO_WORK
 ```

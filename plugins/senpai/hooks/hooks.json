@@ -1,0 +1,38 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "senpai_terminal",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m senpai_agent.hooks pre-tool-use",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m senpai_agent.hooks stop",
+          "timeout": 15
+        }
+      ]
+    }
+  ],
+  "SessionEnd": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m senpai_agent.hooks session-end",
+          "timeout": 15
+        }
+      ]
+    }
+  ]
+}

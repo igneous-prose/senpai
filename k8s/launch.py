@@ -12,24 +12,28 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import simple_parsing as sp
-
 from launch_helpers import (
     ensure_advisor_branch,
+    ensure_target_repo_labels,
     existing_student_names,
     expand_student_names,
-    ensure_target_repo_labels,
+    is_immutable_image_reference,
     kubectl_apply,
+    pod_template_hash,
     preflight_check_anthropic_api_key,
     preflight_check_exa_api_key,
-    preflight_check_target_repo_branch,
     preflight_check_target_repo_access,
+    preflight_check_target_repo_branch,
+    preflight_check_wandb_api_key,
     render_configmap,
     render_launch_secret,
     render_template,
     resolve_anthropic_api_key,
     resolve_exa_api_key,
     resolve_github_token,
+    resolve_wandb_api_key,
     routing_labels,
+    source_revision_for_image,
     target_repo_slug,
 )
 
@@ -42,6 +46,7 @@ DOTENV_PATH = Path(__file__).parent.parent / ".env"
 @dataclass
 class Args:
     """Launch senpai advisor and/or student agents on Kubernetes."""
+
     tag: str  # research tag (e.g. mar13)
     target_repo_url: str  # problem-package repo (entrypoint clones this into $PROBLEM_DIR; agent commits/PRs land here) — REQUIRED, no default
     target_repo_branch: str = ""  # target repo branch used as the base when creating advisor_branch; empty = target repo default branch
@@ -52,51 +57,56 @@ class Args:
     gpus_per_student: int = 8  # GPUs requested by each student pod
     cpu_per_gpu: int = 15  # CPU requested per student GPU
     memory_gi_per_gpu: int = 120  # memory Gi requested per student GPU
-    repo_url: str = "https://github.com/wandb/senpai.git"  # git repo URL (senpai runner)
-    repo_branch: str = "main"  # git branch to clone (senpai runner)
-    image: str = "ghcr.io/wandb/senpai:pr-3467-fdcfbaf668"  # container image for students
+    repo_url: str = (
+        "https://github.com/wandb/senpai.git"  # git repo URL (senpai runner)
+    )
+    repo_revision: str = (
+        ""  # exact runner commit; derived from :sha-<commit> image tags
+    )
+    advisor_image: str = ""  # advisor source-SHA tag or image digest — REQUIRED
+    student_image: str = ""  # student source-SHA tag or image digest — REQUIRED
     wandb_entity: str = "wandb-applied-ai-team"  # W&B entity (team or username)
     wandb_project: str = "senpai-v1"  # W&B project name
-    human_issues: bool = True  # allow human GitHub issue triage; disable for isolated launches
+    human_issues: bool = (
+        True  # allow human GitHub issue triage; disable for isolated launches
+    )
     advisor_branch: str = "schmidhuber"  # branch the advisor works on inside the problem-package repo (students PR into it; created from target_repo_branch if missing)
     gh_history_scope: str = "branch"  # branch=normal track memory, fresh=clean ablation, repo=whole-repo memory
     pvc_claim_name: str = "new-pvc"  # PVC name mounted into pods
-    pvc_mount_path: str = "/mnt/new-pvc"  # mount path for the dataset PVC inside the containers
+    pvc_mount_path: str = (
+        "/mnt/new-pvc"  # mount path for the dataset PVC inside the containers
+    )
     advisor: bool = False  # also deploy the advisor pod (default: students only)
-    extra_instructions: str = ""  # extra prompt text for the advisor: a .md file path or a literal string
-    timeout_minutes: float = 30.0  # training run wall-clock limit (SENPAI_TIMEOUT_MINUTES)
+    extra_instructions: str = (
+        ""  # extra prompt text for the advisor: a .md file path or a literal string
+    )
+    timeout_minutes: float = (
+        30.0  # training run wall-clock limit (SENPAI_TIMEOUT_MINUTES)
+    )
     max_epochs: int = 50  # maximum training epochs (SENPAI_MAX_EPOCHS)
-    poll_interval_s: int = 600  # default advisor/student outer-loop sleep between GitHub polls
+    poll_interval_s: int = (
+        600  # default advisor/student outer-loop sleep between GitHub polls
+    )
     poll_jitter_s: int = 120  # max random jitter added to outer-loop sleeps
     stale_wip_seconds: int = 7200  # advisor-action threshold for stale WIP PRs
-    advisor_claude_watchdog_interval_s: int = 60  # how often advisor watchdog checks active Claude
-    advisor_claude_min_runtime_s: int = 600  # minimum advisor runtime before stale-log intervention
-    advisor_claude_stale_log_s: int = 1200  # advisor stale-log intervention threshold
-    student_claude_watchdog_interval_s: int = 300  # how often student watchdog checks active Claude
-    student_claude_watchdog_jitter_s: int = 60  # max jitter added to student watchdog checks
-    student_claude_min_runtime_s: int = 600  # minimum student runtime before stale-log intervention
-    student_claude_stale_log_s: int = 1200  # student stale-log intervention threshold
-    student_assignment_drift_grace_s: int = 1800  # grace before stopping active work after assignment changes
     start_gate_path: str = ""  # optional shared file path that must exist before advisor/student loops begin
-    dry_run: bool = False  # render manifests only: do not apply them or validate credentials
-    preflight_only: bool = False  # validate credentials/access only: do not render or apply manifests
+    dry_run: bool = (
+        False  # render manifests only: do not apply them or validate credentials
+    )
+    preflight_only: bool = (
+        False  # validate credentials/access only: do not render or apply manifests
+    )
 
 
 def validate_timing_args(args: Args) -> None:
-    positive = [
-        "poll_interval_s",
-        "advisor_claude_watchdog_interval_s",
-        "advisor_claude_min_runtime_s",
-        "advisor_claude_stale_log_s",
-        "student_claude_watchdog_interval_s",
-        "student_claude_min_runtime_s",
-        "student_claude_stale_log_s",
-    ]
+    if args.timeout_minutes <= 0:
+        sys.exit("ERROR: --timeout_minutes must be positive")
+    if args.max_epochs < 1:
+        sys.exit("ERROR: --max_epochs must be at least 1")
+    positive = ["poll_interval_s"]
     non_negative = [
         "poll_jitter_s",
         "stale_wip_seconds",
-        "student_claude_watchdog_jitter_s",
-        "student_assignment_drift_grace_s",
     ]
     for name in positive:
         if getattr(args, name) < 1:
@@ -126,14 +136,27 @@ def build_extra_instructions(args: Args, tag: str, student_list: list[str]) -> s
 - Treat `SENPAI_TIMEOUT_MINUTES` and `SENPAI_MAX_EPOCHS` as hard per-training-run bounds. Do not override them or continue a run past them.
 """
     user_extra = load_extra_instructions(args.extra_instructions)
-    return isolation if not user_extra else isolation + "\n# Additional operator instructions\n\n" + user_extra
+    return (
+        isolation
+        if not user_extra
+        else isolation + "\n# Additional operator instructions\n\n" + user_extra
+    )
 
 
 def encoded_extra_instructions(args: Args, tag: str, student_list: list[str]) -> str:
-    return base64.b64encode(build_extra_instructions(args, tag, student_list).encode()).decode()
+    return base64.b64encode(
+        build_extra_instructions(args, tag, student_list).encode()
+    ).decode()
 
 
-def render_student(template: str, student_name: str, tag: str, secret_name: str, args: Args) -> str:
+def render_student(
+    template: str,
+    student_name: str,
+    tag: str,
+    secret_name: str,
+    launch_secret: str,
+    args: Args,
+) -> str:
     student_configmap_name = f"senpai-config-student-{tag}-{student_name}"
     student_deployment_name = f"senpai-{tag}-{student_name}"
     student_cpu = args.cpu_per_gpu * args.gpus_per_student
@@ -143,7 +166,7 @@ def render_student(template: str, student_name: str, tag: str, secret_name: str,
         labels={"app": "senpai", "role": "student", "research-tag": tag},
         data={
             "REPO_URL": args.repo_url,
-            "REPO_BRANCH": args.repo_branch,
+            "REPO_REVISION": args.repo_revision,
             "TARGET_REPO_URL": args.target_repo_url,
             "TARGET_REPO_BRANCH": args.target_repo_branch,
             "GH_REPO": target_repo_slug(args.target_repo_url),
@@ -160,40 +183,48 @@ def render_student(template: str, student_name: str, tag: str, secret_name: str,
             "SENPAI_MAX_EPOCHS": str(args.max_epochs),
             "SENPAI_POLL_INTERVAL_S": str(args.poll_interval_s),
             "SENPAI_POLL_JITTER_S": str(args.poll_jitter_s),
-            "STUDENT_CLAUDE_WATCHDOG_INTERVAL_S": str(args.student_claude_watchdog_interval_s),
-            "STUDENT_CLAUDE_WATCHDOG_JITTER_S": str(args.student_claude_watchdog_jitter_s),
-            "STUDENT_CLAUDE_MIN_RUNTIME_S": str(args.student_claude_min_runtime_s),
-            "STUDENT_CLAUDE_STALE_LOG_S": str(args.student_claude_stale_log_s),
-            "STUDENT_ASSIGNMENT_DRIFT_GRACE_S": str(args.student_assignment_drift_grace_s),
-            "EXTRA_INSTRUCTIONS_B64": encoded_extra_instructions(args, tag, [student_name]),
+            "EXTRA_INSTRUCTIONS_B64": encoded_extra_instructions(
+                args, tag, [student_name]
+            ),
             "PROBLEM_DIR": args.problem_dir,
             "PVC_MOUNT_PATH": args.pvc_mount_path,
             "SENPAI_START_GATE_PATH": args.start_gate_path,
         },
     )
-    deployment = render_template(template, {
-        "STUDENT_DEPLOYMENT_NAME": student_deployment_name,
-        "STUDENT_CONFIGMAP_NAME": student_configmap_name,
-        "STUDENT_NAME": student_name,
-        "RESEARCH_TAG": tag,
-        "IMAGE": args.image,
-        "ADVISOR_BRANCH": args.advisor_branch,
-        "PVC_CLAIM_NAME": args.pvc_claim_name,
-        "PVC_MOUNT_PATH": args.pvc_mount_path,
-        "LAUNCH_SECRET_NAME": secret_name,
-        "STUDENT_CPU": str(student_cpu),
-        "STUDENT_MEMORY": f"{student_memory_gi}Gi",
-        "GPUS_PER_STUDENT": str(args.gpus_per_student),
-    })
+    deployment = render_template(
+        template,
+        {
+            "STUDENT_DEPLOYMENT_NAME": student_deployment_name,
+            "STUDENT_CONFIGMAP_NAME": student_configmap_name,
+            "STUDENT_NAME": student_name,
+            "RESEARCH_TAG": tag,
+            "STUDENT_IMAGE": args.student_image,
+            "ADVISOR_BRANCH": args.advisor_branch,
+            "PVC_CLAIM_NAME": args.pvc_claim_name,
+            "PVC_MOUNT_PATH": args.pvc_mount_path,
+            "LAUNCH_SECRET_NAME": secret_name,
+            "STUDENT_CPU": str(student_cpu),
+            "STUDENT_MEMORY": f"{student_memory_gi}Gi",
+            "GPUS_PER_STUDENT": str(args.gpus_per_student),
+            "POD_CONFIG_HASH": pod_template_hash(configmap, launch_secret),
+        },
+    )
     return configmap + "\n---\n" + deployment
 
 
-def render_advisor(template: str, tag: str, student_list: list[str], secret_name: str, args: Args) -> str:
+def render_advisor(
+    template: str,
+    tag: str,
+    student_list: list[str],
+    secret_name: str,
+    launch_secret: str,
+    args: Args,
+) -> str:
     advisor_configmap_name = f"senpai-config-advisor-{tag}"
     advisor_deployment_name = f"senpai-advisor-{tag}"
     data = {
         "REPO_URL": args.repo_url,
-        "REPO_BRANCH": args.repo_branch,
+        "REPO_REVISION": args.repo_revision,
         "TARGET_REPO_URL": args.target_repo_url,
         "TARGET_REPO_BRANCH": args.target_repo_branch,
         "GH_REPO": target_repo_slug(args.target_repo_url),
@@ -209,9 +240,6 @@ def render_advisor(template: str, tag: str, student_list: list[str], secret_name
         "SENPAI_POLL_INTERVAL_S": str(args.poll_interval_s),
         "SENPAI_POLL_JITTER_S": str(args.poll_jitter_s),
         "SENPAI_STALE_WIP_SECONDS": str(args.stale_wip_seconds),
-        "ADVISOR_CLAUDE_WATCHDOG_INTERVAL_S": str(args.advisor_claude_watchdog_interval_s),
-        "ADVISOR_CLAUDE_MIN_RUNTIME_S": str(args.advisor_claude_min_runtime_s),
-        "ADVISOR_CLAUDE_STALE_LOG_S": str(args.advisor_claude_stale_log_s),
         "PROBLEM_DIR": args.problem_dir,
         "PVC_MOUNT_PATH": args.pvc_mount_path,
         "SENPAI_START_GATE_PATH": args.start_gate_path,
@@ -222,33 +250,65 @@ def render_advisor(template: str, tag: str, student_list: list[str], secret_name
         labels={"app": "senpai", "role": "advisor", "research-tag": tag},
         data=data,
     )
-    deployment = render_template(template, {
-        "ADVISOR_DEPLOYMENT_NAME": advisor_deployment_name,
-        "ADVISOR_CONFIGMAP_NAME": advisor_configmap_name,
-        "RESEARCH_TAG": tag,
-        "IMAGE": args.image,
-        "PVC_CLAIM_NAME": args.pvc_claim_name,
-        "PVC_MOUNT_PATH": args.pvc_mount_path,
-        "LAUNCH_SECRET_NAME": secret_name,
-    })
+    deployment = render_template(
+        template,
+        {
+            "ADVISOR_DEPLOYMENT_NAME": advisor_deployment_name,
+            "ADVISOR_CONFIGMAP_NAME": advisor_configmap_name,
+            "RESEARCH_TAG": tag,
+            "ADVISOR_IMAGE": args.advisor_image,
+            "PVC_CLAIM_NAME": args.pvc_claim_name,
+            "PVC_MOUNT_PATH": args.pvc_mount_path,
+            "LAUNCH_SECRET_NAME": secret_name,
+            "POD_CONFIG_HASH": pod_template_hash(configmap, launch_secret),
+        },
+    )
     return configmap + "\n---\n" + deployment
 
 
 def main():
     args = sp.parse(Args, config_path=str(SENPAI_CONFIG))
     if min(args.gpus_per_student, args.cpu_per_gpu, args.memory_gi_per_gpu) < 1:
-        sys.exit("ERROR: --gpus_per_student, --cpu_per_gpu, and --memory_gi_per_gpu must all be at least 1")
+        sys.exit(
+            "ERROR: --gpus_per_student, --cpu_per_gpu, and --memory_gi_per_gpu must all be at least 1"
+        )
     validate_timing_args(args)
+    if not args.preflight_only:
+        for role, image in (
+            ("advisor", args.advisor_image),
+            ("student", args.student_image),
+        ):
+            if not is_immutable_image_reference(image):
+                sys.exit(
+                    f"ERROR: --{role}_image must be an immutable digest or "
+                    "a :sha-<40-character-commit> tag"
+                )
+        try:
+            advisor_revision = source_revision_for_image(
+                args.advisor_image, args.repo_revision
+            )
+            student_revision = source_revision_for_image(
+                args.student_image, args.repo_revision
+            )
+        except ValueError as error:
+            sys.exit(f"ERROR: {error}")
+        if advisor_revision != student_revision:
+            sys.exit(
+                "ERROR: --advisor_image and --student_image must use the "
+                "same source revision"
+            )
+        args.repo_revision = advisor_revision
     if args.gh_history_scope not in {"branch", "repo", "fresh"}:
         sys.exit("ERROR: --gh_history_scope must be one of: branch, repo, fresh")
     if target_repo_slug(args.target_repo_url) == target_repo_slug(args.repo_url):
         sys.exit("ERROR: --target_repo_url must be a different repo from --repo_url")
 
-    github_token = anthropic_api_key = exa_api_key = ""
+    github_token = anthropic_api_key = exa_api_key = wandb_api_key = ""
     if not args.dry_run or args.preflight_only:
         github_token = resolve_github_token(DOTENV_PATH)
         anthropic_api_key = resolve_anthropic_api_key(DOTENV_PATH)
         exa_api_key = resolve_exa_api_key(DOTENV_PATH)
+        wandb_api_key = resolve_wandb_api_key(DOTENV_PATH)
         preflight_check_target_repo_access(args.target_repo_url, github_token)
         args.target_repo_branch = preflight_check_target_repo_branch(
             args.target_repo_url,
@@ -257,6 +317,7 @@ def main():
         )
         preflight_check_anthropic_api_key(anthropic_api_key)
         preflight_check_exa_api_key(exa_api_key)
+        preflight_check_wandb_api_key(wandb_api_key)
         if args.preflight_only:
             print("Preflight OK — credentials and target repo access verified.")
             return
@@ -276,33 +337,41 @@ def main():
             args.target_repo_branch,
             args.advisor_branch,
         )
-        ensure_target_repo_labels(args.target_repo_url, github_token, routing_labels(args.advisor_branch, student_list))
+        ensure_target_repo_labels(
+            args.target_repo_url,
+            github_token,
+            routing_labels(args.advisor_branch, student_list),
+        )
 
     student_template = STUDENT_TEMPLATE.read_text()
     advisor_template = ADVISOR_TEMPLATE.read_text()
     secret_name = f"senpai-launch-secrets-{args.tag}"
+    launch_secret = render_launch_secret(
+        args.tag,
+        github_token if not args.dry_run else "<REDACTED_GITHUB_TOKEN>",
+        (anthropic_api_key if not args.dry_run else "<REDACTED_ANTHROPIC_API_KEY>"),
+        exa_api_key if not args.dry_run else "<REDACTED_EXA_API_KEY>",
+        wandb_api_key if not args.dry_run else "<REDACTED_WANDB_API_KEY>",
+    )
 
-    # --- Apply per-launch token secret first (pods reference it on startup) ---
+    # --- Apply per-launch secret first (pods reference it on startup) ---
     if args.dry_run:
         print(f"--- Secret: {secret_name} ---")
-        print(
-            render_launch_secret(
-                args.tag,
-                "<REDACTED_GITHUB_TOKEN>",
-                "<REDACTED_ANTHROPIC_API_KEY>",
-                "<REDACTED_EXA_API_KEY>",
-            )
-        )
+        print(launch_secret)
         print()
     else:
-        kubectl_apply(
-            render_launch_secret(args.tag, github_token, anthropic_api_key, exa_api_key),
-            f"secret {secret_name}",
-        )
+        kubectl_apply(launch_secret, f"secret {secret_name}")
 
     # --- Deploy students ---
     for name in student_list:
-        manifest = render_student(student_template, name, args.tag, secret_name, args)
+        manifest = render_student(
+            student_template,
+            name,
+            args.tag,
+            secret_name,
+            launch_secret,
+            args,
+        )
         if args.dry_run:
             print(f"--- Student: {name} ---")
             print(manifest)
@@ -312,11 +381,20 @@ def main():
 
     advisor_student_list = student_list
     if args.advisor and not args.dry_run:
-        advisor_student_list = list(dict.fromkeys(existing_student_names(args.tag) + student_list))
+        advisor_student_list = list(
+            dict.fromkeys(existing_student_names(args.tag) + student_list)
+        )
 
     # --- Deploy advisor ---
     if args.advisor:
-        manifest = render_advisor(advisor_template, args.tag, advisor_student_list, secret_name, args)
+        manifest = render_advisor(
+            advisor_template,
+            args.tag,
+            advisor_student_list,
+            secret_name,
+            launch_secret,
+            args,
+        )
         if args.dry_run:
             print("--- Advisor ---")
             print(manifest)
@@ -335,7 +413,10 @@ def main():
         if student_list:
             print(f"  kubectl logs -f deployment/senpai-{args.tag}-{student_list[0]}")
         print("\nStop:")
-        print(f"  kubectl delete deployments,configmaps,secrets -l research-tag={args.tag}")
+        print(
+            "  kubectl delete deployments,configmaps,secrets "
+            f"-l research-tag={args.tag}"
+        )
 
 
 if __name__ == "__main__":

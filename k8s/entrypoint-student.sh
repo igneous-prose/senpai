@@ -13,11 +13,10 @@ TARGET_REPO_BRANCH="${TARGET_REPO_BRANCH:-}"
 export SENPAI_ROLE="student"
 export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
 export SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
-export SENPAI_OPENHANDS_ROLE_FILE="$WORKDIR/CLAUDE.md"
-GIT_CREDENTIAL_FILE="$WORKDIR/.git-credentials"
+GIT_ASKPASS_FILE="/tmp/senpai-git-askpass"
 
 echo "=== Senpai Student: $STUDENT_NAME ==="
-echo "Runner repo:  $REPO_URL (branch: $REPO_BRANCH)"
+echo "Runner repo:  $REPO_URL (revision: $REPO_REVISION)"
 echo "Target repo:  $TARGET_REPO_URL (base branch: ${TARGET_REPO_BRANCH:-<default>}; advisor branch: $ADVISOR_BRANCH)"
 echo "Problem dir:  $PROBLEM_DIR"
 echo "GitHub history: $GH_HISTORY_SCOPE"
@@ -28,8 +27,8 @@ wait_for_senpai_start_gate
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
-source "$SENPAI_PLUGIN/scripts/senpai-gh.sh"
-install_senpai_git_guard "$WORKDIR" "$TARGET_WORKDIR" "$GIT_CREDENTIAL_FILE"
+source "$SENPAI_PLUGIN/scripts/git-guard.sh"
+install_senpai_git_guard "$WORKDIR" "$TARGET_WORKDIR" "$GIT_ASKPASS_FILE"
 
 clone_target_repo() {
     local depth=()
@@ -53,151 +52,37 @@ cd "$WORKDIR/$PROBLEM_DIR"
 git config user.name "senpai-$STUDENT_NAME"
 git config user.email "senpai-$STUDENT_NAME@senpai"
 gh repo set-default "$GH_REPO"
-git config credential.helper "store --file=$GIT_CREDENTIAL_FILE"
 install_senpai_target_git_guard "$TARGET_WORKDIR"
 if [ "$GH_HISTORY_SCOPE" != "repo" ]; then
     git remote set-branches origin "$ADVISOR_BRANCH"
     git config remote.origin.tagOpt --no-tags
 fi
 
-# --- Install checked-in agent skills and config into user scope ---
-mkdir -p "$HOME/.agents" "$HOME/.claude"
+# --- Install checked-in agents and skills into OpenHands user scope ---
+mkdir -p "$HOME/.agents/skills"
 cp -a "$WORKDIR/.agents/." "$HOME/.agents/"
-cp -a "$WORKDIR/.claude/." "$HOME/.claude/"
+cp -a "$SENPAI_PLUGIN/skills/." "$HOME/.agents/skills/"
 
 echo "=== Agent config installed ==="
-ls "$HOME/.agents/skills/wandb-primary/SKILL.md" "$HOME/.claude/agents/researcher-agent.md"
+ls \
+    "$HOME/.agents/agents/researcher-agent.md" \
+    "$HOME/.agents/skills/survey-prs/SKILL.md" \
+    "$HOME/.agents/skills/wandb-primary/SKILL.md"
 
-# --- Start Hivemind (streams CC session logs to hivemind.wandb.tools) ---
-source "$WORKDIR/k8s/start-hivemind.sh"
-start_hivemind
+# --- Hivemind is intentionally disabled pending its OpenHands rewrite. ---
+# source "$WORKDIR/k8s/start-hivemind.sh"
+# start_hivemind
 
-# --- Load CC run command helper function ---
-source "$WORKDIR/k8s/run-senpai-claude.sh"
-source "$WORKDIR/k8s/student-claude-watchdog.sh"
-
-# $GH_REPO comes from the ConfigMap (set by launch.py = owner/repo of the
-# problem-package repo). The gh CLI honours it natively, so every `gh`
-# command and `gh api` call targets the problem-package repo, not senpai,
-# regardless of the agent's cwd.
-
-# --- Build task prompt (the runner injects CLAUDE.md as system instructions) ---
-TASK_INSTRUCTIONS="$(envsubst < "$WORKDIR/$PROBLEM_DIR/instructions/prompt-student.md" | sed '/^<!--$/,/^-->$/d')"
-PROMPT="${TASK_INSTRUCTIONS}"
-
-if [ -n "${EXTRA_INSTRUCTIONS_B64:-}" ]; then
-    PROMPT="${PROMPT}"$'\n\n# Finally, some additional instructions\n\n'"$(printf '%s' "$EXTRA_INSTRUCTIONS_B64" | base64 -d)"
-fi
-
-KEY_INFO=$'\n\nKey information:\n\nStudent: '"$STUDENT_NAME"' | GPUs per Student: '"$GPUS_PER_STUDENT"' | Target repo: '"$GH_REPO"' | Target base branch: '"${TARGET_REPO_BRANCH:-<default>}"' | Advisor Branch: '"$ADVISOR_BRANCH"' | W&B entity/project: '"$WANDB_ENTITY"'/'"$WANDB_PROJECT"$'\n'
-FULL_PROMPT="${PROMPT}"$'\n\n'"${KEY_INFO}"
-
-HEARTBEAT_PROMPT="Continue your student loop using the assigned PRs and GitHub issues listed in the Student research state below. The entrypoint owns assignment polling; do not start persistent GitHub polling monitors. For active training, use sparse wakeups plus training_log_status; do not stream per-epoch logs into Monitor."
-
-# --- Launch OpenHands Loop ---
 export IS_SANDBOX=1
 
-LOGDIR="$WORKDIR/student_logs"
+LOGDIR="/var/lib/senpai"
 mkdir -p "$LOGDIR"
-SLEEP_TIME_S="${SENPAI_STUDENT_POLL_INTERVAL_S:-${SENPAI_POLL_INTERVAL_S:-600}}"
-POLL_JITTER_S="${SENPAI_STUDENT_POLL_JITTER_S:-${SENPAI_POLL_JITTER_S:-120}}"
-MAX_TURNS=100000
-
-ITERATION=0
-while true; do
-    ITERATION=$((ITERATION + 1))
-    LOGFILE="$LOGDIR/iteration_${ITERATION}_$(date +%Y%m%d_%H%M%S).log"
-    echo "=== Student Heartbeat iteration $ITERATION ($(date)) ==="
-
-    # Return to latest advisor branch so student starts from the current baseline
-    cd "$WORKDIR/$PROBLEM_DIR"
-    git checkout "$ADVISOR_BRANCH" 2>/dev/null || true
-    git pull --ff-only origin "$ADVISOR_BRANCH" 2>/dev/null || true
-
-    # Overwrite CLAUDE.md with the student role instructions — git checkout/pull clobbers it with the developer copy.
-    # Whitelist vars so envsubst substitutes pod env vars but leaves Claude Code runtime vars
-    # like ${CLAUDE_PLUGIN_ROOT} alone (those get expanded by the agent's shell at call time).
-    envsubst '$PROBLEM_DIR $TARGET_REPO_URL $GH_REPO $ADVISOR_BRANCH $RESEARCH_TAG $STUDENT_NAME $GPUS_PER_STUDENT $WANDB_ENTITY $WANDB_PROJECT' \
-        < "$WORKDIR/system_instructions/CLAUDE-STUDENT.md" \
-        | sed '/^<!--$/,/^-->$/d' \
-        > "$WORKDIR/CLAUDE.md"
-
-    echo "=== Git HEAD: $(git rev-parse --short HEAD) on $(git branch --show-current) in $PROBLEM_DIR ==="
-    echo "=== GPU: $(nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null) ==="
-
-    # --- Check for work before invoking CC ---
-    ASSIGNED_JSON=$(student_poll_for_work "$STUDENT_NAME" || printf '[]')
-    ASSIGNED_COUNT=$(printf '%s' "$ASSIGNED_JSON" | json_len)
-    ISSUE_JSON=$(check_gh_issues "student:$STUDENT_NAME" || printf '[]')
-    ISSUE_COUNT=$(printf '%s' "$ISSUE_JSON" | json_len)
-
-    if [ "$ASSIGNED_COUNT" -eq 1 ]; then
-        ASSIGNED_HEAD=$(printf '%s' "$ASSIGNED_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["headRefName"])')
-        git fetch origin "$ASSIGNED_HEAD"
-        git checkout -B "$ASSIGNED_HEAD" FETCH_HEAD
-    fi
-
-    # --- Build triage info ---
-    TRIAGE_INFO="## Student research state"
-    if [ "$ASSIGNED_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ]; then
-        TRIAGE_INFO+=$'\n'"- No assigned PRs or issues."
-    else
-        [ "$ASSIGNED_COUNT" -gt 0 ] && TRIAGE_INFO+=$'\n'"- **Assigned PRs ($ASSIGNED_COUNT):** $(printf '%s' "$ASSIGNED_JSON" | json_numbers)"
-        [ "$ISSUE_COUNT" -gt 0 ]    && TRIAGE_INFO+=$'\n'"- **GitHub issues ($ISSUE_COUNT):** $(printf '%s' "$ISSUE_JSON" | json_numbers)"
-    fi
-    echo "$TRIAGE_INFO"
-
-    # --- Log triage and invoke CC ---
-    echo "=== Log: $LOGFILE ==="
-    echo "$TRIAGE_INFO" > "$LOGFILE"
-
-    if [ "$ASSIGNED_COUNT" -gt 1 ]; then
-        DUPLICATE_NUMBERS=$(printf '%s' "$ASSIGNED_JSON" | json_numbers)
-        DUPLICATE_MARKER="STUDENT-DUPLICATE-ASSIGNMENT"
-        DUPLICATE_BODY="${DUPLICATE_MARKER}: student:${STUDENT_NAME} has ${ASSIGNED_COUNT} active status:wip PRs (${DUPLICATE_NUMBERS}) on ${ADVISOR_BRANCH}. The student loop is skipping work until the advisor leaves exactly one active assignment."
-        echo "ERROR: ${DUPLICATE_BODY}"
-        printf '%s' "$ASSIGNED_JSON" | python3 -c 'import json,sys; print("\n".join(str(pr["number"]) for pr in json.loads(sys.stdin.read())))' |
-        while IFS= read -r num; do
-            [ -z "$num" ] && continue
-            if ! pr_issue_comments "$num" | grep -q "$DUPLICATE_MARKER"; then
-                comment_on_pr "$num" "$DUPLICATE_BODY"
-            fi
-        done
-        senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
-        continue
-    fi
-
-    # The shell loop is the source of truth for assignment polling. If there
-    # is no work, do not enter Claude Code; idle model sessions tend to invent
-    # their own polling loops and can miss the label-based assignment contract.
-    if [ "$ASSIGNED_COUNT" -eq 0 ] && [ "$ISSUE_COUNT" -eq 0 ]; then
-        echo "=== No work assigned, sleeping $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter without invoking Claude ==="
-        senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
-        continue
-    fi
-
-    START_TS=$(date +%s)
-    EXIT_CODE=0
-    if [ "$ITERATION" -eq 1 ]; then
-        echo "=== Iteration $ITERATION: Using FULL prompt + triage ==="
-        echo "$FULL_PROMPT"
-        echo "$TRIAGE_INFO"
-        run_student_claude_with_watchdog "$ASSIGNED_JSON" \
-            $MAX_TURNS "${FULL_PROMPT}"$'\n\n'"${TRIAGE_INFO}" || EXIT_CODE=$?
-    else
-        echo "=== Iteration $ITERATION: Using heartbeat prompt ==="
-        echo "$HEARTBEAT_PROMPT"
-        echo "$TRIAGE_INFO"
-        # Student should start fresh each iteration (no -c) — experiments are self-contained
-        run_student_claude_with_watchdog "$ASSIGNED_JSON" \
-            $MAX_TURNS "${FULL_PROMPT}"$'\n\n'"${HEARTBEAT_PROMPT}"$'\n\n'"${TRIAGE_INFO}" || EXIT_CODE=$?
-    fi
-    DURATION=$(( $(date +%s) - START_TS ))
-
-    echo "=== Claude exited code=$EXIT_CODE after ${DURATION}s at $(date), next check in $SLEEP_TIME_S seconds + up to ${POLL_JITTER_S}s jitter ==="
-    if [ "$EXIT_CODE" -eq 124 ]; then
-        echo "=== Claude watchdog fired; re-polling immediately ==="
-        continue
-    fi
-    senpai_sleep_with_jitter "$SLEEP_TIME_S" "$POLL_JITTER_S"
-done
+export SENPAI_OPENHANDS_STATE_DIR="$LOGDIR/openhands_state"
+export SENPAI_OPENHANDS_ROLE_FILE="$LOGDIR/SENPAI-STUDENT.md"
+envsubst '$PROBLEM_DIR $TARGET_REPO_URL $GH_REPO $ADVISOR_BRANCH $RESEARCH_TAG $STUDENT_NAME $GPUS_PER_STUDENT $WANDB_ENTITY $WANDB_PROJECT' \
+    < "$WORKDIR/system_instructions/SENPAI-STUDENT.md" \
+    > "$SENPAI_OPENHANDS_ROLE_FILE"
+export SENPAI_OPENHANDS_WORKSPACE="$TARGET_WORKDIR"
+export SENPAI_OPENHANDS_HARNESS_FILE="$WORKDIR/system_instructions/SENPAI-HARNESS.md"
+export SENPAI_OPENHANDS_TIMEOUT_SECONDS="${SENPAI_OPENHANDS_TIMEOUT_SECONDS:-3600}"
+exec python -m senpai_agent.supervisor student
