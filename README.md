@@ -266,6 +266,9 @@ role images. It creates no Service, event token, ServiceAccount, or RBAC. A
 deterministic ConfigMap/Secret hash rolls pods when effective configuration
 changes.
 
+`EXA_API_KEY` powers the researcher agent's direct Exa publication-search tool
+through the official `exa-py` library. No Exa MCP server is configured.
+
 ```bash
 kubectl get deployments -l research-tag=july29
 kubectl logs -f deployment/senpai-july29-frieren

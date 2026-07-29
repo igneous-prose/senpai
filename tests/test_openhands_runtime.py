@@ -763,7 +763,7 @@ def test_researcher_agent_uses_native_profile_tools_and_progressive_skills(
         "survey-prs",
         "list-experiments",
         "wandb-primary",
-        "web-search-advanced-research-paper",
+        "exa-publication-search",
         "alphaxiv-paper-lookup",
     ]
     assert set(definition.tools) == {
