@@ -110,6 +110,7 @@ def test_python_deps_and_icml_target_import(test_pod):
     cmd = (
         "python - <<'PY'\n"
         "import numpy\n"
+        "import exa_py\n"
         "import torch\n"
         "import torch_geometric\n"
         "import yaml\n"

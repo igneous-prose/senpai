@@ -175,6 +175,9 @@ The published runner image is `ghcr.io/wandb/senpai:latest`. It is built by `.gi
 | `ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` | shell env -> `.env` |
 | `EXA_API_KEY` | `EXA_API_KEY` | shell env -> `.env` |
 
+`EXA_API_KEY` powers the researcher agent's direct Exa publication-search tool
+through the official `exa-py` library. No Exa MCP server is configured.
+
 Use `example.env` for local setup:
 
 ```bash
