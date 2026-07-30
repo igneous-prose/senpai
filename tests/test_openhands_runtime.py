@@ -174,7 +174,7 @@ def test_provider_specific_prompt_cache_configuration(model, expected):
     assert prompt_cache_configuration(model) == expected
 
 
-def test_openai_uses_responses_with_the_most_detailed_reasoning_summary():
+def test_openai_uses_stored_responses_with_provider_compaction():
     configuration = openai_responses_configuration("openai/gpt-5.4")
     llm = LLM(
         model="openai/gpt-5.4",
@@ -186,6 +186,10 @@ def test_openai_uses_responses_with_the_most_detailed_reasoning_summary():
     assert configuration == {
         "api_mode": "responses",
         "reasoning_summary": "auto",
+        "reasoning_context": "all_turns",
+        "responses_store": True,
+        "responses_use_previous_response_id": True,
+        "responses_compact_threshold": 200_000,
     }
     assert llm.uses_responses_api() is True
 
@@ -195,16 +199,21 @@ def test_openai_uses_responses_with_the_most_detailed_reasoning_summary():
         ],
         tools=[],
         include=None,
-        store=False,
+        store=None,
         add_security_risk_prediction=False,
         kwargs={},
     )[3]
 
+    assert call_kwargs["store"] is True
     assert call_kwargs["reasoning"] == {
         "effort": "xhigh",
         "summary": "auto",
+        "context": "all_turns",
     }
-    assert "reasoning.encrypted_content" in call_kwargs["include"]
+    assert call_kwargs["context_management"] == [
+        {"type": "compaction", "compact_threshold": 200_000}
+    ]
+    assert "include" not in call_kwargs
 
 
 def test_non_openai_models_do_not_force_the_responses_api():

@@ -183,18 +183,25 @@ deployed harness or role and injects the current text once without rotating the
 conversation UUID.
 
 The project pins both OpenHands SDK packages to commit
-`29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032` in
+`91620be1ea0898891e2315165cac31ea309724a0` in
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk).
 That fork tracks OpenHands SDK 1.39.1 and adds a typed Anthropic
-`prompt_cache_ttl="1h"` option. OpenAI continues to use its native
-`prompt_cache_retention="24h"` option; Senpai does not send Anthropic TTL
-arguments to OpenAI.
+`prompt_cache_ttl="1h"` option plus durable OpenAI Responses continuation.
+OpenAI continues to use its native `prompt_cache_retention="24h"` option;
+Senpai does not send Anthropic TTL arguments to OpenAI.
 
 For direct `openai/*` models, Senpai explicitly selects OpenHands' Responses
-API path for both agent inference and context condensation. It opts into
-`reasoning_summary="auto"`, which requests the most detailed reasoning summary
-available from the selected model, while retaining encrypted reasoning state
-for stateless continuation.
+API path, stores each response, and passes the latest `previous_response_id`
+with only the new user or tool inputs. The response ID already lives in the
+durable OpenHands event log, so a restarted controller resumes the same
+server-side chain. System instructions and tools are still sent on every call.
+
+Senpai requests `reasoning_context="all_turns"` and
+`reasoning_summary="auto"`. This allows supported OpenAI models to reuse
+private reasoning from earlier turns while returning the most detailed
+available reasoning summary. OpenAI's automatic Responses compaction starts at
+200,000 rendered tokens. The OpenHands condenser is disabled for this stored
+chain so the two context managers cannot produce conflicting histories.
 
 ## Images
 
@@ -316,7 +323,8 @@ Deliberate deferrals:
 
 - Skill-declared child model/reasoning semantics remain in skill frontmatter
   pending native OpenHands support.
-- The high-quality default OpenHands condenser remains enabled.
+- The high-quality default OpenHands condenser remains enabled for providers
+  that are not using stored OpenAI Responses continuation.
 - Hivemind startup is commented out pending its separate rewrite.
 - Senpai imposes no token/cost budget or conversation-retention policy.
 

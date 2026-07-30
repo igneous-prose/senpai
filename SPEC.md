@@ -177,7 +177,7 @@ intact pending native OpenHands support for skill-declared child configuration.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032`, based on OpenHands SDK
+at commit `91620be1ea0898891e2315165cac31ea309724a0`, based on OpenHands SDK
 1.39.1.
 
 `prompt_cache_configuration()` sets:
@@ -191,10 +191,17 @@ caching is active. Its tests prove the five-minute wire form remains unchanged,
 the one-hour TTL is forwarded, and OpenAI retention continues to work without
 receiving an Anthropic TTL parameter.
 
-Direct `openai/*` models use the Responses API for both agent inference and
-context condensation. Senpai sets `reasoning_summary="auto"` to request the
-most detailed summary available from the model and keeps encrypted reasoning
-state available for stateless continuation.
+Direct `openai/*` models use a stored Responses API chain. The active branch's
+latest `resp_*` ID is recovered from the durable OpenHands event log after
+every process restart, passed as `previous_response_id`, and paired only with
+inputs created after that response. System instructions and tools remain
+explicit on every request.
+
+Senpai sets `reasoning_context="all_turns"` and `reasoning_summary="auto"` so
+supported models can reuse server-side private reasoning and return the most
+detailed available summary. It enables automatic OpenAI compaction at 200,000
+rendered tokens and disables the OpenHands condenser for that chain. Other
+providers retain the high-quality OpenHands condenser.
 
 ## Typed tools
 
@@ -390,7 +397,7 @@ Retained intentionally:
 
 - Agent skills and their model/effort metadata under `.agents`;
 - OpenHands Browser, task tracker, Think, and the high-quality default
-  condenser;
+  condenser for providers not using stored OpenAI Responses continuation;
 - the pinned `weave-openhands` agent, LLM, and tool tracing integration; and
 - only a small bootstrap shell path for clone, identity, and Git push guards.
 

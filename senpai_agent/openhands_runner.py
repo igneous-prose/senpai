@@ -436,13 +436,17 @@ def prompt_cache_configuration(model: str) -> dict[str, str]:
     return {}
 
 
-def openai_responses_configuration(model: str) -> dict[str, str]:
+def openai_responses_configuration(model: str) -> dict[str, str | bool | int]:
     if model.split("/", 1)[0].lower() != "openai":
         return {}
     return {
         "api_mode": "responses",
         # OpenAI defines "auto" as the most detailed summarizer available.
         "reasoning_summary": "auto",
+        "reasoning_context": "all_turns",
+        "responses_store": True,
+        "responses_use_previous_response_id": True,
+        "responses_compact_threshold": 200_000,
     }
 
 
@@ -679,7 +683,16 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 harness_instructions,
                 role_instructions,
             )
+            if llm.responses_use_previous_response_id:
+                agent = agent.model_copy(update={"condenser": None})
         else:
+            condenser = (
+                None
+                if llm.responses_use_previous_response_id
+                else get_default_condenser(
+                    llm.model_copy(update={"usage_id": "senpai-condenser"})
+                )
+            )
             agent = Agent(
                 llm=llm,
                 tools=build_main_tools(config),
@@ -688,9 +701,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                     role_instructions,
                 ),
                 system_prompt_kwargs={"cli_mode": True},
-                condenser=get_default_condenser(
-                    llm.model_copy(update={"usage_id": "senpai-condenser"})
-                ),
+                condenser=condenser,
             )
         conversation = Conversation(
             agent=agent,
