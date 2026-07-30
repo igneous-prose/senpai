@@ -10,7 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "k8s"))
 
 import launch_helpers
+import launch
 from launch_helpers import (
+    existing_student_names,
     is_immutable_image_reference,
     kubectl_apply,
     pod_template_hash,
@@ -435,3 +437,146 @@ def test_kubectl_apply_fails_the_launch_on_an_apply_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="advisor service.*forbidden"):
         kubectl_apply("kind: Service", "advisor service")
+
+
+def test_kubectl_helpers_scope_commands_to_context_and_namespace(monkeypatch):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=0,
+            stdout=("fern\nfrieren\n" if "get" in argv else "applied\n"),
+            stderr="",
+        )
+
+    monkeypatch.setattr(launch_helpers.subprocess, "run", run)
+
+    names = existing_student_names(
+        "track-a",
+        kube_context="gpu-cluster",
+        namespace="research",
+    )
+    kubectl_apply(
+        "kind: ConfigMap",
+        "track config",
+        kube_context="gpu-cluster",
+        namespace="research",
+    )
+
+    assert names == ["fern", "frieren"]
+    assert calls[0][0] == [
+        "kubectl",
+        "--context",
+        "gpu-cluster",
+        "--namespace",
+        "research",
+        "get",
+        "deployments",
+        "-l",
+        "app=senpai,role=student,research-tag=track-a",
+        "-o",
+        'jsonpath={range .items[*]}{.metadata.labels.student}{"\\n"}{end}',
+    ]
+    assert calls[1][0] == [
+        "kubectl",
+        "--context",
+        "gpu-cluster",
+        "--namespace",
+        "research",
+        "apply",
+        "-f",
+        "-",
+    ]
+    assert calls[1][1]["input"] == "kind: ConfigMap"
+
+
+def test_kubectl_default_scope_omits_an_empty_context(monkeypatch):
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=0,
+            stdout="applied\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(launch_helpers.subprocess, "run", run)
+
+    kubectl_apply("kind: ConfigMap", "track config")
+
+    assert captured["argv"] == [
+        "kubectl",
+        "--namespace",
+        "default",
+        "apply",
+        "-f",
+        "-",
+    ]
+
+
+def test_launch_uses_one_kubernetes_scope_for_apply_discovery_and_handoff_commands(
+    monkeypatch,
+    capsys,
+):
+    revision = "a" * 40
+    args = launch.Args(
+        tag="scope-test",
+        target_repo_url="https://github.com/example/problem.git",
+        names="fern",
+        advisor=True,
+        advisor_image=f"ghcr.io/wandb/senpai-advisor:sha-{revision}",
+        student_image=f"ghcr.io/wandb/senpai-student:sha-{revision}",
+        kube_context="gpu-cluster",
+        namespace="research",
+    )
+    monkeypatch.setattr(launch.sp, "parse", lambda *_args, **_kwargs: args)
+    monkeypatch.setattr(launch, "resolve_github_token", lambda _path: "github")
+    monkeypatch.setattr(launch, "resolve_anthropic_api_key", lambda _path: "anthropic")
+    monkeypatch.setattr(launch, "resolve_exa_api_key", lambda _path: "exa")
+    monkeypatch.setattr(launch, "resolve_wandb_api_key", lambda _path: "wandb")
+    monkeypatch.setattr(launch, "preflight_check_target_repo_access", lambda *_: None)
+    monkeypatch.setattr(
+        launch,
+        "preflight_check_target_repo_branch",
+        lambda *_: "main",
+    )
+    monkeypatch.setattr(launch, "preflight_check_anthropic_api_key", lambda *_: None)
+    monkeypatch.setattr(launch, "preflight_check_exa_api_key", lambda *_: None)
+    monkeypatch.setattr(launch, "preflight_check_wandb_api_key", lambda *_: None)
+    monkeypatch.setattr(launch, "ensure_advisor_branch", lambda *_: None)
+    monkeypatch.setattr(launch, "ensure_target_repo_labels", lambda *_: None)
+    discovery = []
+
+    def existing(tag, *, kube_context, namespace):
+        discovery.append((tag, kube_context, namespace))
+        return []
+
+    monkeypatch.setattr(launch, "existing_student_names", existing)
+    applies = []
+
+    def apply(manifest, name, *, kube_context, namespace):
+        applies.append((name, kube_context, namespace))
+
+    monkeypatch.setattr(launch, "kubectl_apply", apply)
+
+    launch.main()
+
+    assert discovery == [("scope-test", "gpu-cluster", "research")]
+    assert applies == [
+        ("secret senpai-launch-secrets-scope-test", "gpu-cluster", "research"),
+        ("student fern", "gpu-cluster", "research"),
+        ("advisor", "gpu-cluster", "research"),
+    ]
+    output = capsys.readouterr().out
+    prefix = "kubectl --context gpu-cluster --namespace research"
+    assert f"{prefix} get deployments -l research-tag=scope-test" in output
+    assert f"{prefix} get deployment senpai-advisor-scope-test" in output
+    assert f"{prefix} logs -f deployment/senpai-scope-test-fern" in output
+    assert (
+        f"{prefix} delete deployments,configmaps,secrets "
+        "-l research-tag=scope-test"
+    ) in output

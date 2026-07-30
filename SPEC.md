@@ -404,8 +404,11 @@ The advisor and advisor children never receive training tools.
 ## Hooks, deadlines, and shutdown
 
 The native plugin declares OpenHands `PreToolUse`, `Stop`, and `SessionEnd`
-hooks. Hooks give early model-visible feedback. `senpai_terminal` evaluates the
-same pure policy in-process and fails closed if policy evaluation fails.
+hooks. Its pre-tool hook covers both `senpai_terminal` and the raw `terminal`
+used by file-defined children, so delegation cannot bypass workflow or training
+boundaries. Hooks give early model-visible feedback. `senpai_terminal` also
+evaluates the same pure policy in-process and fails closed if policy evaluation
+fails.
 
 Denied patterns include raw GitHub mutations, raw `git push`, direct training
 launches, sleeps, polling loops, `watch`, and `tail -f`, including nested shell

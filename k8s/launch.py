@@ -8,6 +8,7 @@
 
 import base64
 import posixpath
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from launch_helpers import (
     expand_student_names,
     is_immutable_image_reference,
     kubectl_apply,
+    kubectl_command,
     pod_template_hash,
     preflight_check_anthropic_api_key,
     preflight_check_exa_api_key,
@@ -66,6 +68,8 @@ class Args:
     )
     advisor_image: str = ""  # advisor source-SHA tag or image digest — REQUIRED
     student_image: str = ""  # student source-SHA tag or image digest — REQUIRED
+    kube_context: str = ""  # kubectl context; empty uses the current context
+    namespace: str = "default"  # Kubernetes namespace for all launch resources
     wandb_entity: str = "wandb-applied-ai-team"  # W&B entity (team or username)
     wandb_project: str = "senpai-v1"  # W&B project name
     human_issues: bool = (
@@ -375,7 +379,12 @@ def main():
         print(launch_secret)
         print()
     else:
-        kubectl_apply(launch_secret, f"secret {secret_name}")
+        kubectl_apply(
+            launch_secret,
+            f"secret {secret_name}",
+            kube_context=args.kube_context,
+            namespace=args.namespace,
+        )
 
     # --- Deploy students ---
     for name in student_list:
@@ -392,12 +401,24 @@ def main():
             print(manifest)
             print()
         else:
-            kubectl_apply(manifest, f"student {name}")
+            kubectl_apply(
+                manifest,
+                f"student {name}",
+                kube_context=args.kube_context,
+                namespace=args.namespace,
+            )
 
     advisor_student_list = student_list
     if args.advisor and not args.dry_run:
         advisor_student_list = list(
-            dict.fromkeys(existing_student_names(args.tag) + student_list)
+            dict.fromkeys(
+                existing_student_names(
+                    args.tag,
+                    kube_context=args.kube_context,
+                    namespace=args.namespace,
+                )
+                + student_list
+            )
         )
 
     # --- Deploy advisor ---
@@ -415,21 +436,35 @@ def main():
             print(manifest)
             print()
         else:
-            kubectl_apply(manifest, "advisor")
+            kubectl_apply(
+                manifest,
+                "advisor",
+                kube_context=args.kube_context,
+                namespace=args.namespace,
+            )
 
     if not args.dry_run:
         print(f"\nLaunched {len(student_list)} students: {', '.join(student_list)}")
         if args.advisor:
             print("Launched advisor pod")
+        kubectl = shlex.join(
+            kubectl_command(
+                kube_context=args.kube_context,
+                namespace=args.namespace,
+            )
+        )
         print("\nMonitor:")
-        print(f"  kubectl get deployments -l research-tag={args.tag}")
+        print(f"  {kubectl} get deployments -l research-tag={args.tag}")
         if args.advisor:
-            print(f"  kubectl get deployment senpai-advisor-{args.tag}")
+            print(f"  {kubectl} get deployment senpai-advisor-{args.tag}")
         if student_list:
-            print(f"  kubectl logs -f deployment/senpai-{args.tag}-{student_list[0]}")
+            print(
+                f"  {kubectl} logs -f "
+                f"deployment/senpai-{args.tag}-{student_list[0]}"
+            )
         print("\nStop:")
         print(
-            "  kubectl delete deployments,configmaps,secrets "
+            f"  {kubectl} delete deployments,configmaps,secrets "
             f"-l research-tag={args.tag}"
         )
 

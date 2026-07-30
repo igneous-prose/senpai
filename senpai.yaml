@@ -22,6 +22,10 @@ target_repo_branch: ""
 advisor_image: ""
 student_image: ""
 
+# Kubernetes target
+kube_context: ""
+namespace: default
+
 # dataset PVC mount
 pvc_claim_name: new-pvc
 pvc_mount_path: /mnt/new-pvc

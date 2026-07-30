@@ -80,14 +80,16 @@ def test_terminal_policy_allows_read_only_and_text_references(
     assert terminal_policy(command, "student", tmp_path).allowed is True
 
 
+@pytest.mark.parametrize("tool_name", ["senpai_terminal", "terminal"])
 def test_pre_tool_hook_emits_native_deny_json(
+    tool_name: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ):
     event = {
         "event_type": "PreToolUse",
-        "tool_name": "senpai_terminal",
+        "tool_name": tool_name,
         "tool_input": {"command": "git push origin experiment"},
         "working_dir": str(tmp_path),
     }
@@ -118,7 +120,10 @@ def test_plugin_registers_only_safety_and_lifecycle_hooks():
     assert plugin.hooks.stop
     assert plugin.hooks.session_end
     hooks = json.loads((PLUGIN_DIR / "hooks" / "hooks.json").read_text())
-    assert hooks["PreToolUse"][0]["matcher"] == "senpai_terminal"
+    assert {hook["matcher"] for hook in hooks["PreToolUse"]} == {
+        "senpai_terminal",
+        "terminal",
+    }
     assert not (PLUGIN_DIR / "scripts" / "check-notifications.sh").exists()
 
 

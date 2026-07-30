@@ -160,17 +160,35 @@ def source_revision_for_image(image: str, explicit_revision: str = "") -> str:
     raise ValueError("digest-pinned images require an explicit repo_revision")
 
 
-def existing_student_names(tag: str) -> list[str]:
+def kubectl_command(
+    *arguments: str,
+    kube_context: str = "",
+    namespace: str = "default",
+) -> list[str]:
+    command = ["kubectl"]
+    if kube_context:
+        command.extend(("--context", kube_context))
+    command.extend(("--namespace", namespace, *arguments))
+    return command
+
+
+def existing_student_names(
+    tag: str,
+    *,
+    kube_context: str = "",
+    namespace: str = "default",
+) -> list[str]:
     result = subprocess.run(
-        [
-            "kubectl",
+        kubectl_command(
             "get",
             "deployments",
             "-l",
             f"app=senpai,role=student,research-tag={tag}",
             "-o",
             'jsonpath={range .items[*]}{.metadata.labels.student}{"\\n"}{end}',
-        ],
+            kube_context=kube_context,
+            namespace=namespace,
+        ),
         capture_output=True,
         text=True,
         check=True,
@@ -607,11 +625,23 @@ def ensure_target_repo_labels(
             raise
 
 
-def kubectl_apply(manifest: str, name: str) -> None:
+def kubectl_apply(
+    manifest: str,
+    name: str,
+    *,
+    kube_context: str = "",
+    namespace: str = "default",
+) -> None:
     """Apply a manifest via kubectl."""
     print(f"Launching: {name}")
     result = subprocess.run(
-        ["kubectl", "apply", "-f", "-"],
+        kubectl_command(
+            "apply",
+            "-f",
+            "-",
+            kube_context=kube_context,
+            namespace=namespace,
+        ),
         input=manifest,
         text=True,
         capture_output=True,

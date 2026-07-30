@@ -95,7 +95,8 @@ and compact report contract.
   terminal behind a fail-closed policy that denies raw GitHub mutations,
   direct training launches, polling loops, sleeps, and log streams owned by
   typed controller tools. File-defined subagents receive only the raw OpenHands
-  tools declared by their Markdown definition; Bash Runner is terminal-only.
+  tools declared by their Markdown definition; their terminal is subject to
+  the same plugin policy, and Bash Runner is terminal-only.
   They receive no GitHub credential or GitHub read/write tools: report any
   requested workflow transition to the parent, which owns the typed operation.
 - Never print, persist, embed, or return secret values. Tools receive

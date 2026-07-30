@@ -9,6 +9,16 @@
           "timeout": 10
         }
       ]
+    },
+    {
+      "matcher": "terminal",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python -m senpai_agent.hooks pre-tool-use",
+          "timeout": 10
+        }
+      ]
     }
   ],
   "Stop": [

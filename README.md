@@ -68,7 +68,7 @@ OpenHands retains its Browser, task tracker, Think, terminal, and file-editing f
 - `run_training` and `get_training_status`: start and inspect a supervised process without streaming raw progress through model history.
 - `monitor_training`: records the W&B metric, direction, gates, staleness policy, terminal states, and current conversation UUID to monitor.
 
-The main advisor and student terminal denies raw GitHub mutations, `git push`, direct training launches, sleeps, polling loops, and log streams. Hooks provide early feedback and the in-process wrapper enforces the same policy.
+The main advisor and student terminal denies raw GitHub mutations, `git push`, direct training launches, sleeps, polling loops, and log streams. The plugin applies the same hook policy to file-defined subagents' raw terminal, while the main terminal also enforces it in process.
 
 File-defined subagents receive only the tools declared by their definition. Bash Runner is terminal-only; General Purpose, Explore, and Search also receive the file editor where their work requires it. They receive no GitHub credential or GitHub mutation tools. Their findings return to the parent, which owns workflow transitions.
 
@@ -148,6 +148,7 @@ Preflight verifies repository push access, the target branch, image provenance w
 Common launch controls:
 
 - `--names frieren,fern` selects stable student identities; otherwise `--n_students` and `--student_prefix` generate them.
+- `--kube_context` selects a kubectl context; `--namespace` scopes every apply, discovery, monitor, and stop command (default: `default`).
 - `--gpus_per_student`, `--cpu_per_gpu`, and `--memory_gi_per_gpu` size each student independently.
 - `--timeout_minutes` and `--max_epochs` are hard limits on each training process.
 - `--poll_interval_s` and `--poll_jitter_s` control the outer loop without teaching agents to poll.
