@@ -183,12 +183,13 @@ deployed harness or role and injects the current text once without rotating the
 conversation UUID.
 
 The project pins both OpenHands SDK packages to commit
-`91620be1ea0898891e2315165cac31ea309724a0` in
+`2fccbe83a19332b4ce1dba8bd18fc505dabac053` in
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk).
 That fork tracks OpenHands SDK 1.39.1 and adds a typed Anthropic
 `prompt_cache_ttl="1h"` option plus durable OpenAI Responses continuation.
-OpenAI continues to use its native `prompt_cache_retention="24h"` option;
-Senpai does not send Anthropic TTL arguments to OpenAI.
+GPT-5.6 uses its current `prompt_cache_options.ttl="30m"` API; older compatible
+OpenAI models retain `prompt_cache_retention="24h"`. Senpai does not send
+Anthropic TTL arguments to OpenAI.
 
 For direct `openai/*` models, Senpai explicitly selects OpenHands' Responses
 API path, stores each response, and passes the latest `previous_response_id`
@@ -199,7 +200,9 @@ server-side chain. System instructions and tools are still sent on every call.
 Senpai requests `reasoning_context="all_turns"` and
 `reasoning_summary="auto"`. This allows supported OpenAI models to reuse
 private reasoning from earlier turns while returning the most detailed
-available reasoning summary. OpenAI's automatic Responses compaction starts at
+available reasoning summary. The default `max` setting maps to GPT-5.6's
+highest reasoning effort and to `xhigh` on providers and models whose highest
+supported value is `xhigh`. OpenAI's automatic Responses compaction starts at
 200,000 rendered tokens. The OpenHands condenser is disabled for this stored
 chain so the two context managers cannot produce conflicting histories.
 

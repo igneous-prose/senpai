@@ -70,12 +70,21 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
     return RunnerConfig(**values)
 
 
-@pytest.mark.parametrize("effort", ["max", "ultra"])
-def test_simple_parsing_accepts_extended_reasoning_effort(effort):
+@pytest.mark.parametrize(
+    ("effort", "model", "expected"),
+    [
+        ("max", "anthropic/claude-opus-4-8", "xhigh"),
+        ("ultra", "openai/gpt-5.6", "max"),
+        ("max", "openai/gpt-5.6-sol", "max"),
+        ("max", "openai/gpt-5.4", "xhigh"),
+        ("high", "openai/gpt-5.6", "high"),
+    ],
+)
+def test_reasoning_effort_uses_highest_supported_value(effort, model, expected):
     args = parse_runner_args(["--max-turns", "1", "--reasoning-effort", effort])
 
     assert args.reasoning_effort == effort
-    assert openhands_reasoning_effort(args.reasoning_effort) == "xhigh"
+    assert openhands_reasoning_effort(args.reasoning_effort, model) == expected
 
 
 def test_browser_is_enabled_by_default_and_can_be_disabled():
@@ -167,6 +176,15 @@ def test_role_is_system_context_loaded_before_project_skills():
             ),
         ),
         ("openai/gpt-5.4", {"prompt_cache_retention": "24h"}),
+        (
+            "openai/gpt-5.6",
+            {
+                "prompt_cache_retention": None,
+                "litellm_extra_body": {
+                    "prompt_cache_options": {"ttl": "30m"},
+                },
+            },
+        ),
         ("gemini/gemini-3-pro", {}),
     ],
 )

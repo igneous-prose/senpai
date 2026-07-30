@@ -177,13 +177,14 @@ intact pending native OpenHands support for skill-declared child configuration.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `91620be1ea0898891e2315165cac31ea309724a0`, based on OpenHands SDK
+at commit `2fccbe83a19332b4ce1dba8bd18fc505dabac053`, based on OpenHands SDK
 1.39.1.
 
 `prompt_cache_configuration()` sets:
 
 - Anthropic: `prompt_cache_ttl="1h"`;
-- OpenAI: `prompt_cache_retention="24h"`; and
+- GPT-5.6: `prompt_cache_options.ttl="30m"`;
+- older compatible OpenAI models: `prompt_cache_retention="24h"`; and
 - other providers: no provider-specific cache option.
 
 The fork emits an Anthropic cache-control `ttl` only when explicit Anthropic
@@ -199,9 +200,11 @@ explicit on every request.
 
 Senpai sets `reasoning_context="all_turns"` and `reasoning_summary="auto"` so
 supported models can reuse server-side private reasoning and return the most
-detailed available summary. It enables automatic OpenAI compaction at 200,000
-rendered tokens and disables the OpenHands condenser for that chain. Other
-providers retain the high-quality OpenHands condenser.
+detailed available summary. Its default `max` effort maps to GPT-5.6's native
+maximum and to `xhigh` for models and providers whose scale ends there. It
+enables automatic OpenAI compaction at 200,000 rendered tokens and disables the
+OpenHands condenser for that chain. Other providers retain the high-quality
+OpenHands condenser.
 
 ## Typed tools
 

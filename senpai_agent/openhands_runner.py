@@ -61,7 +61,7 @@ from senpai_agent.tools import (
 
 DEFAULT_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
-DEFAULT_REASONING_EFFORT = "xhigh"
+DEFAULT_REASONING_EFFORT = "max"
 REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra", "none")
 SENPAI_CONTINUATION_FILE = "current_conversation_id"
 COMMAND_SECRET_ENV_NAMES = (
@@ -132,10 +132,13 @@ def parse_runner_args(argv: Sequence[str] | None = None) -> RunnerArgs:
     return parser.parse_args(argv).args
 
 
-def openhands_reasoning_effort(reasoning_effort: str) -> str:
-    if reasoning_effort in {"max", "ultra"}:
+def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
+    provider, _, model_name = model.lower().partition("/")
+    if reasoning_effort in {"max", "ultra"} and (
+        provider != "openai" or not model_name.startswith("gpt-5.6")
+    ):
         return "xhigh"
-    return reasoning_effort
+    return "max" if reasoning_effort == "ultra" else reasoning_effort
 
 
 def env_value(
@@ -427,11 +430,16 @@ def build_main_agent_context(
     )
 
 
-def prompt_cache_configuration(model: str) -> dict[str, str]:
-    provider = model.split("/", 1)[0].lower()
+def prompt_cache_configuration(model: str) -> dict[str, object]:
+    provider, _, model_name = model.lower().partition("/")
     if provider == "anthropic" and "prompt_cache_ttl" in LLM.model_fields:
         return {"prompt_cache_ttl": "1h"}
     if provider == "openai":
+        if model_name.startswith("gpt-5.6"):
+            return {
+                "prompt_cache_retention": None,
+                "litellm_extra_body": {"prompt_cache_options": {"ttl": "30m"}},
+            }
         return {"prompt_cache_retention": "24h"}
     return {}
 
@@ -633,7 +641,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 ),
                 "reasoning_effort": config.reasoning_effort,
                 "openhands_reasoning_effort": openhands_reasoning_effort(
-                    config.reasoning_effort
+                    config.reasoning_effort, config.model
                 ),
                 "agent": config.agent_name,
                 "enable_browser": config.enable_browser,
@@ -668,7 +676,9 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         llm = LLM(
             model=config.model,
             api_key=config.api_key,
-            reasoning_effort=openhands_reasoning_effort(config.reasoning_effort),
+            reasoning_effort=openhands_reasoning_effort(
+                config.reasoning_effort, config.model
+            ),
             usage_id="senpai",
             **prompt_cache_configuration(config.model),
             **openai_responses_configuration(config.model),
