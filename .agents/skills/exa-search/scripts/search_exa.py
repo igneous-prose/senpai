@@ -4,22 +4,25 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: senpai
 
-"""Search Exa's publication index and emit compact, agent-ready Markdown."""
+"""Search Exa's web or publication index and emit compact Markdown."""
 
 # ruff: noqa: RUF009 - simple_parsing stores CLI metadata in dataclass fields.
 
 import os
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
+from urllib.parse import quote
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from exa_py import Exa
 from simple_parsing import ArgumentParser, DashVariant
 from simple_parsing.helpers import field
 
-DEFAULT_NUM_RESULTS = 30
-DEFAULT_HIGHLIGHTS_MAX_CHARACTERS = 2000
+GENERAL_WEB_NUM_RESULTS = 10
+PUBLICATION_NUM_RESULTS = 30
+PUBLICATION_HIGHLIGHTS_MAX_CHARACTERS = 2000
+SearchMode = Literal["general-web", "research-publications"]
 SearchType = Literal[
     "auto",
     "fast",
@@ -36,22 +39,37 @@ MARKDOWN_ESCAPES = str.maketrans(
 
 @dataclass
 class SearchArguments:
-    """Search Exa's dedicated scholarly publication index."""
+    """Search Exa in one explicit mode."""
+
+    mode: SearchMode = field(
+        positional=True,
+        help="general-web or research-publications",
+    )
 
     query: str = field(
         positional=True,
         metavar="QUERY",
-        help="natural-language publication search query",
+        help="natural-language search query",
     )
-    num_results: int = field(
-        default=DEFAULT_NUM_RESULTS,
+    num_results: int | None = field(
+        default=None,
+        nargs=None,
         alias="-n",
         metavar="N",
-        help="number of publications to return (1-100)",
+        help="results to return (default: 10 web, 30 publications)",
     )
-    search_type: SearchType = field(
-        default="deep",
-        help="Exa search quality/latency mode",
+    search_type: str | None = field(
+        default=None,
+        nargs=None,
+        choices=[
+            "auto",
+            "fast",
+            "instant",
+            "deep-lite",
+            "deep",
+            "deep-reasoning",
+        ],
+        help="Exa search type (default: auto web, deep publications)",
     )
     start_published_date: str | None = field(
         default=None,
@@ -70,6 +88,17 @@ class SearchArguments:
         metavar="DOMAIN [DOMAIN ...]",
         help="exclude these domains",
     )
+    include_domains: list[str] = field(
+        default_factory=list,
+        metavar="DOMAIN [DOMAIN ...]",
+        help="restrict results to these domains",
+    )
+    max_age_hours: int | None = field(
+        default=None,
+        nargs=None,
+        metavar="HOURS",
+        help="content cache age; 0 always live-crawls, -1 uses cache only",
+    )
     include_text: str | None = field(
         default=None,
         nargs=None,
@@ -87,10 +116,11 @@ class SearchArguments:
         metavar="QUERY [QUERY ...]",
         help="additional queries for deep search",
     )
-    highlights_max_characters: int = field(
-        default=DEFAULT_HIGHLIGHTS_MAX_CHARACTERS,
+    highlights_max_characters: int | None = field(
+        default=None,
+        nargs=None,
         metavar="N",
-        help="maximum highlight characters per publication (1-10000)",
+        help="optional per-result highlight budget (1-10000)",
     )
     summary_query: str | None = field(
         default=None,
@@ -98,18 +128,49 @@ class SearchArguments:
         metavar="QUESTION",
         help="request a per-result summary focused on this question",
     )
-    no_highlights: bool = field(
+    no_content: bool = field(
         default=False,
         action="store_true",
-        help="return publication metadata without query highlights",
+        help="return metadata only",
     )
 
+    @property
+    def resolved_num_results(self) -> int:
+        if self.num_results is not None:
+            return self.num_results
+        if self.mode == "general-web":
+            return GENERAL_WEB_NUM_RESULTS
+        return PUBLICATION_NUM_RESULTS
+
+    @property
+    def resolved_search_type(self) -> SearchType:
+        if self.search_type is not None:
+            return cast(SearchType, self.search_type)
+        if self.mode == "general-web":
+            return "auto"
+        return "deep"
+
     def validate(self) -> None:
-        if not 1 <= self.num_results <= 100:
+        if not 1 <= self.resolved_num_results <= 100:
             raise ValueError("--num-results must be between 1 and 100")
-        if not 1 <= self.highlights_max_characters <= 10_000:
+        if self.highlights_max_characters is not None and not (
+            1 <= self.highlights_max_characters <= 10_000
+        ):
             raise ValueError("--highlights-max-characters must be between 1 and 10000")
-        if self.additional_queries and self.search_type not in DEEP_SEARCH_TYPES:
+        if self.max_age_hours is not None and self.max_age_hours < -1:
+            raise ValueError("--max-age-hours must be -1 or greater")
+        if self.no_content and (
+            self.summary_query
+            or self.highlights_max_characters is not None
+            or self.max_age_hours is not None
+        ):
+            raise ValueError("--no-content cannot be combined with content options")
+        if self.mode == "research-publications" and self.include_domains:
+            raise ValueError("--include-domains is only supported for general-web")
+        if (
+            self.additional_queries
+            and self.resolved_search_type not in DEEP_SEARCH_TYPES
+        ):
             raise ValueError("--additional-queries requires a deep search type")
         if len(self.additional_queries) > 10:
             raise ValueError("--additional-queries accepts at most 10 queries")
@@ -118,7 +179,7 @@ class SearchArguments:
 def parse_args(argv: Sequence[str] | None = None) -> SearchArguments:
     parser = ArgumentParser(
         add_option_string_dash_variants=DashVariant.DASH,
-        description="Search Exa's dedicated scholarly publication index.",
+        description="Search Exa's general web or publication index.",
     )
     parser.add_arguments(SearchArguments, dest="options")
     args: SearchArguments = parser.parse_args(argv).options
@@ -131,12 +192,20 @@ def parse_args(argv: Sequence[str] | None = None) -> SearchArguments:
 
 def build_contents(args: SearchArguments) -> dict[str, Any] | bool:
     contents: dict[str, Any] = {}
-    if not args.no_highlights:
-        contents["highlights"] = {
-            "max_characters": args.highlights_max_characters,
-        }
+    if not args.no_content:
+        if args.mode == "general-web" and args.highlights_max_characters is None:
+            contents["highlights"] = True
+        else:
+            contents["highlights"] = {
+                "max_characters": (
+                    args.highlights_max_characters
+                    or PUBLICATION_HIGHLIGHTS_MAX_CHARACTERS
+                ),
+            }
     if args.summary_query:
         contents["summary"] = {"query": args.summary_query}
+    if args.max_age_hours is not None:
+        contents["max_age_hours"] = args.max_age_hours
     return contents or False
 
 
@@ -159,8 +228,9 @@ def markdown_text(value: Any) -> str:
 
 
 def markdown_url(value: Any) -> str:
-    return (
-        str(value).strip().replace("<", "%3C").replace(">", "%3E").replace(" ", "%20")
+    return quote(
+        str(value).strip(),
+        safe="/:?#[]@!$&'()*+,;=%",
     )
 
 
@@ -194,17 +264,24 @@ def render_summary(value: Any) -> list[str]:
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
+    publications = payload["mode"] == "research-publications"
     lines = [
-        "# Exa Publication Search",
+        "# Exa Publication Search" if publications else "# Exa Web Search",
         "",
         f"- **Query:** {markdown_text(payload['query'])}",
-        f"- **Category:** {markdown_text(payload['category'])}",
-        f"- **Search type:** {markdown_text(payload['search_type'])}",
-        (
-            f"- **Results:** {payload['result_count']} returned / "
-            f"{payload['requested_results']} requested"
-        ),
+        f"- **Mode:** {markdown_text(payload['mode'])}",
     ]
+    if "category" in payload:
+        lines.append(f"- **Category:** {markdown_text(payload['category'])}")
+    lines.extend(
+        [
+            f"- **Search type:** {markdown_text(payload['search_type'])}",
+            (
+                f"- **Results:** {payload['result_count']} returned / "
+                f"{payload['requested_results']} requested"
+            ),
+        ]
+    )
     if "search_time_ms" in payload:
         lines.append(f"- **Search time:** {payload['search_time_ms']} ms")
     if cost := payload.get("cost_dollars"):
@@ -213,7 +290,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
     results = payload.get("results", [])
     for result in results:
-        title = markdown_text(result.get("title") or "Untitled publication")
+        fallback_title = "Untitled publication" if publications else "Untitled result"
+        title = markdown_text(result.get("title") or fallback_title)
         lines.extend(["", f"## {result['rank']}. {title}", ""])
         if url := result.get("url"):
             lines.append(f"- **URL:** <{markdown_url(url)}>")
@@ -232,12 +310,17 @@ def render_markdown(payload: dict[str, Any]) -> str:
             lines.extend(f"  - {markdown_text(highlight)}" for highlight in highlights)
 
     if not results:
-        lines.extend(["", "No publications were returned."])
+        empty = (
+            "No publications were returned."
+            if publications
+            else "No web results were returned."
+        )
+        lines.extend(["", empty])
     return "\n".join(lines)
 
 
 def create_exa_client() -> Exa:
-    load_dotenv()
+    load_dotenv(dotenv_path=find_dotenv(usecwd=True), override=False)
     api_key = os.environ.get("EXA_API_KEY")
     if not api_key:
         raise RuntimeError("EXA_API_KEY is not set; add it to .env or the environment")
@@ -260,21 +343,23 @@ def serialize_result(rank: int, result: Any) -> dict[str, Any]:
     )
 
 
-def search_publications(
+def search_exa(
     args: SearchArguments,
     client: Exa | None = None,
 ) -> dict[str, Any]:
     exa = client if client is not None else create_exa_client()
     options: dict[str, Any] = {
-        "category": "publication",
-        "num_results": args.num_results,
-        "type": args.search_type,
+        "num_results": args.resolved_num_results,
+        "type": args.resolved_search_type,
         "contents": build_contents(args),
     }
+    if args.mode == "research-publications":
+        options["category"] = "publication"
     optional = {
         "start_published_date": args.start_published_date,
         "end_published_date": args.end_published_date,
         "exclude_domains": args.exclude_domains,
+        "include_domains": args.include_domains,
         "include_text": [args.include_text] if args.include_text else None,
         "exclude_text": [args.exclude_text] if args.exclude_text else None,
         "additional_queries": args.additional_queries,
@@ -285,9 +370,12 @@ def search_publications(
     return without_empty(
         {
             "query": args.query,
-            "category": "publication",
-            "search_type": args.search_type,
-            "requested_results": args.num_results,
+            "mode": args.mode,
+            "category": (
+                "publication" if args.mode == "research-publications" else None
+            ),
+            "search_type": args.resolved_search_type,
+            "requested_results": args.resolved_num_results,
             "result_count": len(response.results),
             "search_time_ms": response.search_time,
             "cost_dollars": response.cost_dollars,
@@ -300,7 +388,7 @@ def search_publications(
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    payload = search_publications(parse_args(argv))
+    payload = search_exa(parse_args(argv))
     print(render_markdown(payload))
 
 

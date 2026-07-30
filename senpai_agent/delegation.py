@@ -382,8 +382,8 @@ class DelegateAgentAction(Action):
     search_mode: SearchMode | None = Field(
         default=None,
         description=(
-            "Required when agent=search: general-web uses browser/web sources; "
-            "research-publications uses the Exa publications skill and primary papers."
+            "Required when agent=search: general-web uses Exa's general index; "
+            "research-publications uses Exa's publication index and primary papers."
         ),
     )
 

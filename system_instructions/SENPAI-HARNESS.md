@@ -25,37 +25,43 @@ This document only defines Senpai's additional control-plane contract.
   needed, prefer a context-free fast Explore child with a precise search
   question. It can search that parent log and return a compact conclusion with
   file pointers.
+- If you are a file-defined child, your agent definition and delegated task
+  define your scope. The inherited advisor or student role explains the
+  programme around your task; do not independently execute the parent's
+  workflow or call tools absent from your schema.
 
 ## Senpai tools
 
-Prefer typed Senpai tools over shell commands:
+Prefer typed Senpai tools over shell commands. Each capability below applies
+only when its named tool is present in your schema:
 
-- `delegate_agent` is the only subagent launch API. It starts one registered
-  file-defined agent in a separate process. Use `background=false` to wait for
-  its answer or `background=true` to continue while its result is delivered as
-  a durable local event. Up to eight calls emitted together can run in
-  parallel.
-- Select `model=fast` for mechanical `rg`/grep searches, narrow extraction, and
-  straightforward inspection. Select `model=smart` for code review, ambiguous
-  synthesis, literature research, or decisions where missing a subtlety is
-  costly.
-- Use `agent=explore` to inspect code, data, PR artifacts, or conversation
-  history. Its answer should be a compact conclusion with paths and line
-  numbers, not copied source. Use `agent=search` with exactly one of
-  `general-web` or `research-publications`. The publications mode uses the Exa
-  publications skill and primary papers.
-- `get_prs` returns complete Markdown for a bounded PR set. Its
+- When present, `delegate_agent` is the only subagent launch API. It starts one
+  registered file-defined agent in a separate process. Use `background=false`
+  to wait for its answer or `background=true` to continue while its result is
+  delivered as a durable local event. Up to eight calls emitted together can
+  run in parallel.
+- For `delegate_agent` calls, select `model=fast` for mechanical `rg`/grep
+  searches, narrow extraction, and straightforward inspection. Select
+  `model=smart` for code review, ambiguous synthesis, literature research, or
+  decisions where missing a subtlety is costly.
+- When `delegate_agent` is present, use `agent=explore` to inspect code, data,
+  PR artifacts, or conversation history. Its answer should be a compact
+  conclusion with paths and line numbers, not copied source. Use `agent=search`
+  with exactly one of `general-web` or `research-publications`. Both modes use
+  Exa with mode-appropriate parameters; publication research should follow
+  results into primary papers.
+- When present, `get_prs` returns complete Markdown for a bounded PR set. Its
   `max_inline_prs` default is five. Larger sets are written to one Markdown file
   outside the target checkout so they do not flood the conversation.
-- `run_training` supervises a training process, timeout, log, terminal state,
-  and discovered W&B run IDs. `get_training_status` returns its typed status.
-  `monitor_training` records metric gates, staleness policy, terminal states,
-  and the current student conversation UUID so the controller can monitor
-  without model polling.
-- `github_transition` owns assignment creation, lease-guarded branch pushes,
-  comments, desired labels, revision requests, authenticated result submission,
-  closing, and merging. Do not reproduce these transactions with `gh`, raw REST
-  calls, or `git push`.
+- When present, `run_training` supervises a training process, timeout, log,
+  terminal state, and discovered W&B run IDs. `get_training_status` returns its
+  typed status. `monitor_training` records metric gates, staleness policy,
+  terminal states, and the current student conversation UUID so the controller
+  can monitor without model polling.
+- When present, `github_transition` owns assignment creation, lease-guarded
+  branch pushes, comments, desired labels, revision requests, authenticated
+  result submission, closing, and merging. Do not reproduce these transactions
+  with `gh`, raw REST calls, or `git push`.
 
 The tools actually present in your schema are the source of truth. If a
 required typed operation is unavailable, report the missing capability and
@@ -68,11 +74,11 @@ controller polls that durable state and appends new events at a safe
 conversation boundary. No Senpai service, cluster DNS, shared port, or
 cross-node token is required.
 
-When a new item benefits from parallel attention, emit up to eight independent
-`delegate_agent` calls in one response. Use foreground calls when you need all
-results before reasoning further. Use background calls only when unrelated
-work can continue. Every task needs a precise deliverable and compact report
-contract.
+When `delegate_agent` is present and a new item benefits from parallel
+attention, emit up to eight independent calls in one response. Use foreground
+calls when you need all results before reasoning further. Use background calls
+only when unrelated work can continue. Every task needs a precise deliverable
+and compact report contract.
 
 ## Runtime boundaries
 

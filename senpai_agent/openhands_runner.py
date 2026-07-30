@@ -52,6 +52,7 @@ from openhands.sdk.subagent import (
 from openhands.tools.preset.default import (
     get_default_condenser,
     get_default_tools,
+    register_default_tools,
 )
 from pydantic import SecretStr
 from simple_parsing import ArgumentParser, field
@@ -688,6 +689,7 @@ def final_agent_result(conversation: object) -> str:
 def run_openhands(prompt: str, config: RunnerConfig) -> int:
     harness_instructions = read_role_instructions(config.harness_file)
     role_instructions = read_role_instructions(config.role_file)
+    register_default_tools(enable_browser=config.enable_browser)
     register_senpai_tools()
     file_agents = discover_agents(config.workspace)
     register_file_agents(config.workspace)

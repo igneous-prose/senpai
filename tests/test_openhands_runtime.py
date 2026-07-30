@@ -1,5 +1,9 @@
 import os
+import shutil
 import signal
+import subprocess
+import sys
+import textwrap
 import threading
 import uuid
 from io import StringIO
@@ -985,6 +989,81 @@ def test_openhands_loads_the_native_senpai_plugin():
     assert not (PLUGIN_DIR / ".mcp.json").exists()
 
 
+def test_markdown_agents_register_and_construct_through_native_openhands_loader(
+    tmp_path,
+):
+    home = tmp_path / "home"
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    shutil.copytree(REPO_ROOT / ".agents", home / ".agents")
+    program = textwrap.dedent(
+        """
+        import os
+        from pathlib import Path
+
+        from openhands.sdk import LLM
+        from openhands.sdk.subagent import (
+            agent_definition_to_factory,
+            get_registered_agent_definitions,
+            register_file_agents,
+        )
+        from pydantic import SecretStr
+
+        import openhands.tools
+        from senpai_agent.tools import register_senpai_tools
+
+        register_senpai_tools()
+        workspace = Path(os.environ["SENPAI_TEST_WORKSPACE"])
+        registered = register_file_agents(workspace)
+        assert set(registered) == {"general-purpose", "explore", "search"}
+        definitions = {
+            definition.name: definition
+            for definition in get_registered_agent_definitions()
+        }
+        assert set(definitions) == set(registered)
+
+        llm = LLM(
+            model="anthropic/claude-opus-4-8",
+            api_key=SecretStr("test-key"),
+            reasoning_effort="low",
+        )
+        agents = {
+            name: agent_definition_to_factory(
+                definition,
+                work_dir=workspace,
+            )(llm)
+            for name, definition in definitions.items()
+        }
+        assert {tool.name for tool in agents["search"].tools} == {
+            "terminal",
+            "file_editor",
+        }
+        assert agents["search"].llm.reasoning_effort == "xhigh"
+        assert agents["explore"].llm.reasoning_effort == "low"
+        print("native-file-agents-ok")
+        """
+    )
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "OPENHANDS_SUPPRESS_BANNER": "1",
+        "SENPAI_TEST_WORKSPACE": str(workspace),
+    }
+
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "native-file-agents-ok" in result.stdout
+
+
 def test_search_agent_applies_reasoning_effort_and_progressive_skills(
     monkeypatch,
 ):
@@ -996,7 +1075,7 @@ def test_search_agent_applies_reasoning_effort_and_progressive_skills(
         [REPO_ROOT / ".agents" / "skills", PLUGIN_DIR / "skills"],
     )
     monkeypatch.setenv("SENPAI_ROLE", "advisor")
-    register_default_tools(enable_browser=True)
+    register_default_tools(enable_browser=False)
     register_senpai_tools()
     definition = AgentDefinition.load(SEARCH_AGENT)
     agent = agent_definition_to_factory(definition, work_dir=REPO_ROOT)(
@@ -1011,15 +1090,16 @@ def test_search_agent_applies_reasoning_effort_and_progressive_skills(
     assert definition.reasoning_effort == "xhigh"
     assert agent.llm.reasoning_effort == "xhigh"
     assert definition.skills == [
-        "exa-publication-search",
+        "exa-search",
         "alphaxiv-paper-lookup",
     ]
     assert set(definition.tools) == {
         "terminal",
-        "browser_tool_set",
         "file_editor",
-        "delegate_agent",
     }
+    assert {"browser_tool_set", "get_prs", "delegate_agent"}.isdisjoint(
+        definition.tools
+    )
     assert {skill.name for skill in agent.agent_context.skills} == set(
         definition.skills
     )
@@ -1030,6 +1110,30 @@ def test_search_agent_applies_reasoning_effort_and_progressive_skills(
     )
     assert "# Referenced skills" not in agent.agent_context.system_message_suffix
     assert not definition.mcp_config
+
+
+@pytest.mark.parametrize(
+    "role_file",
+    [
+        REPO_ROOT / "system_instructions" / "SENPAI-ADVISOR.md",
+        REPO_ROOT / "system_instructions" / "SENPAI-STUDENT.md",
+    ],
+)
+def test_inherited_role_context_does_not_direct_search_to_absent_tools(role_file):
+    harness = (REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md").read_text(
+        encoding="utf-8"
+    )
+    role = role_file.read_text(encoding="utf-8")
+    suffix = runner.compose_system_instructions(harness, role)
+    compact_suffix = " ".join(suffix.split())
+
+    assert "do not independently execute the parent's workflow" in compact_suffix
+    assert "only when its named tool is present in your schema" in compact_suffix
+    assert "when `delegate_agent` is present" in compact_suffix
+    assert (
+        "On the main advisor" in compact_suffix
+        or "On the main student" in compact_suffix
+    )
 
 
 def test_explore_agent_is_a_concise_low_effort_file_agent():
@@ -1053,6 +1157,17 @@ def test_delegated_agents_have_no_github_credentials_or_mutation_tools():
 
         assert "get_prs" not in definition.tools
         assert "github_transition" not in definition.tools
+
+
+@pytest.mark.parametrize("role", ["advisor", "student"])
+def test_entrypoint_installs_every_markdown_agent_definition(role):
+    entrypoint = (REPO_ROOT / "k8s" / f"entrypoint-{role}.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"$HOME/.agents/agents/general-purpose.md"' in entrypoint
+    assert '"$HOME/.agents/agents/explore.md"' in entrypoint
+    assert '"$HOME/.agents/agents/search.md"' in entrypoint
 
 
 @pytest.mark.parametrize("role", ["advisor", "student"])

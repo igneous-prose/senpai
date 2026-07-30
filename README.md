@@ -324,8 +324,9 @@ If a cluster cutoff job releases a gated launch, `--start_gate_path` and the
 cutoff's `--start-gate-path` must name the same absolute normalized file
 beneath `--pvc_mount_path`. Both CLIs reject pod-local or relative paths.
 
-`EXA_API_KEY` powers the researcher agent's direct Exa publication-search tool
-through the official `exa-py` library. No Exa MCP server is configured.
+`EXA_API_KEY` powers the Search agent's direct two-mode Exa tool for general
+web and scholarly publication search through the official `exa-py` library. No
+Exa MCP server is configured.
 
 ```bash
 kubectl get deployments -l research-tag=july29

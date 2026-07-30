@@ -1,4 +1,4 @@
-"""Tests for the Exa publication-search skill tool."""
+"""Executable contract for the two-mode Exa search skill."""
 
 from __future__ import annotations
 
@@ -13,14 +13,14 @@ SCRIPT = (
     Path(__file__).parents[1]
     / ".agents"
     / "skills"
-    / "exa-publication-search"
+    / "exa-search"
     / "scripts"
-    / "search_publications.py"
+    / "search_exa.py"
 )
-SPEC = importlib.util.spec_from_file_location("search_publications", SCRIPT)
+SPEC = importlib.util.spec_from_file_location("exa_search", SCRIPT)
 assert SPEC and SPEC.loader
-search_publications = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(search_publications)
+exa_search = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(exa_search)
 
 
 @dataclasses.dataclass
@@ -42,7 +42,7 @@ class FakeClient:
 
 def test_installed_sdk_accepts_publication_category(monkeypatch):
     captured_request = {}
-    client = search_publications.Exa("test-key")
+    client = exa_search.Exa("test-key")
 
     def fake_request(path, options):
         captured_request.update(path=path, options=options)
@@ -56,8 +56,134 @@ def test_installed_sdk_accepts_publication_category(monkeypatch):
     assert captured_request["options"]["category"] == "publication"
 
 
+def test_installed_sdk_serializes_general_web_without_a_category(monkeypatch):
+    captured_request = {}
+    client = exa_search.Exa("test-key")
+
+    def fake_request(path, options):
+        captured_request.update(path=path, options=options)
+        return {"results": []}
+
+    monkeypatch.setattr(client, "request", fake_request)
+
+    client.search(
+        "OpenHands SDK documentation",
+        type="auto",
+        num_results=10,
+        contents={"highlights": True},
+    )
+
+    assert captured_request == {
+        "path": "/search",
+        "options": {
+            "query": "OpenHands SDK documentation",
+            "type": "auto",
+            "numResults": 10,
+            "contents": {"highlights": True},
+        },
+    }
+
+
+def test_installed_sdk_serializes_general_web_scope_and_freshness(monkeypatch):
+    captured_request = {}
+    client = exa_search.Exa("test-key")
+
+    def fake_request(path, options):
+        captured_request.update(path=path, options=options)
+        return {"results": []}
+
+    monkeypatch.setattr(client, "request", fake_request)
+
+    client.search(
+        "OpenHands SDK documentation",
+        type="auto",
+        include_domains=["docs.openhands.dev"],
+        contents={"highlights": True, "max_age_hours": 0},
+    )
+
+    assert captured_request["options"]["includeDomains"] == ["docs.openhands.dev"]
+    assert captured_request["options"]["contents"] == {
+        "highlights": True,
+        "maxAgeHours": 0,
+    }
+
+
+def test_general_web_uses_exas_agent_recommended_defaults():
+    args = exa_search.parse_args(["general-web", "current OpenHands SDK release"])
+    response = SimpleNamespace(
+        results=[
+            SimpleNamespace(
+                title="OpenHands SDK",
+                url="https://docs.openhands.dev/sdk",
+                id="https://docs.openhands.dev/sdk",
+                published_date="2026-07-29",
+                author="OpenHands",
+                score=None,
+                highlights=["The SDK supports file-based agents."],
+                summary=None,
+                text=None,
+            )
+        ],
+        search_time=87,
+        cost_dollars=None,
+    )
+    client = FakeClient(response)
+
+    payload = exa_search.search_exa(args, client)
+
+    assert client.calls == [
+        (
+            "current OpenHands SDK release",
+            {
+                "num_results": 10,
+                "type": "auto",
+                "contents": {"highlights": True},
+            },
+        )
+    ]
+    assert payload["mode"] == "general-web"
+    assert "category" not in payload
+    assert payload["results"][0]["highlights"] == [
+        "The SDK supports file-based agents."
+    ]
+    output = exa_search.render_markdown(payload)
+    assert output.startswith("# Exa Web Search\n")
+    assert "- **Mode:** general-web" in output
+    assert "https://docs.openhands.dev/sdk" in output
+
+
+def test_general_web_forwards_domain_scope_and_content_freshness():
+    args = exa_search.parse_args(
+        [
+            "general-web",
+            "OpenHands SDK documentation",
+            "--include-domains",
+            "docs.openhands.dev",
+            "--max-age-hours",
+            "0",
+        ]
+    )
+    client = FakeClient(
+        SimpleNamespace(results=[], search_time=None, cost_dollars=None)
+    )
+
+    exa_search.search_exa(args, client)
+
+    assert client.calls == [
+        (
+            "OpenHands SDK documentation",
+            {
+                "num_results": 10,
+                "type": "auto",
+                "contents": {"highlights": True, "max_age_hours": 0},
+                "include_domains": ["docs.openhands.dev"],
+            },
+        )
+    ]
+
+
 def test_default_search_uses_publication_index_and_compact_highlights():
-    args = search_publications.parse_args(["neural operators for PDEs"])
+    args = exa_search.parse_args(["research-publications", "neural operators for PDEs"])
     response = SimpleNamespace(
         results=[
             SimpleNamespace(
@@ -77,7 +203,7 @@ def test_default_search_uses_publication_index_and_compact_highlights():
     )
     client = FakeClient(response)
 
-    payload = search_publications.search_publications(args, client)
+    payload = exa_search.search_exa(args, client)
 
     assert client.calls == [
         (
@@ -102,11 +228,12 @@ def test_default_search_uses_publication_index_and_compact_highlights():
         "search": {"neural": 0.007},
     }
     assert (
-        search_publications.render_markdown(payload)
+        exa_search.render_markdown(payload)
         == """\
 # Exa Publication Search
 
 - **Query:** neural operators for PDEs
+- **Mode:** research-publications
 - **Category:** publication
 - **Search type:** deep
 - **Results:** 1 returned / 30 requested
@@ -131,9 +258,11 @@ def test_main_prints_markdown_not_json(monkeypatch, capsys):
     client = FakeClient(
         SimpleNamespace(results=[], search_time=None, cost_dollars=None)
     )
-    monkeypatch.setattr(search_publications, "create_exa_client", lambda: client)
+    monkeypatch.setattr(exa_search, "create_exa_client", lambda: client)
 
-    search_publications.main(["attention alternatives", "--num-results", "2"])
+    exa_search.main(
+        ["research-publications", "attention alternatives", "--num-results", "2"]
+    )
 
     output = capsys.readouterr().out
     assert output.startswith("# Exa Publication Search\n")
@@ -143,7 +272,7 @@ def test_main_prints_markdown_not_json(monkeypatch, capsys):
 
 
 def test_summary_lists_become_nested_markdown_bullets():
-    assert search_publications.render_summary(
+    assert exa_search.render_summary(
         "Mechanism: - Commutes with *rotations*. - # Preserves [tensor] structure."
     ) == [
         "- **Summary:** Mechanism:",
@@ -153,9 +282,10 @@ def test_summary_lists_become_nested_markdown_bullets():
 
 
 def test_markdown_normalizes_missing_title_and_redundant_summary_label():
-    output = search_publications.render_markdown(
+    output = exa_search.render_markdown(
         {
             "query": "geometry transfer",
+            "mode": "research-publications",
             "category": "publication",
             "search_type": "deep",
             "requested_results": 1,
@@ -175,9 +305,17 @@ def test_markdown_normalizes_missing_title_and_redundant_summary_label():
     assert "**Summary:** Summary:" not in output
 
 
+def test_markdown_url_percent_encodes_control_characters():
+    assert (
+        exa_search.markdown_url("https://example.com/good\n- injected")
+        == "https://example.com/good%0A-%20injected"
+    )
+
+
 def test_search_options_are_forwarded_without_changing_publication_category():
-    args = search_publications.parse_args(
+    args = exa_search.parse_args(
         [
+            "research-publications",
             "equivariant CFD surrogates",
             "--num-results",
             "50",
@@ -189,6 +327,8 @@ def test_search_options_are_forwarded_without_changing_publication_category():
             "2026-01-01",
             "--exclude-domains",
             "example.com",
+            "--max-age-hours",
+            "0",
             "--include-text",
             "equivariant",
             "--exclude-text",
@@ -205,7 +345,7 @@ def test_search_options_are_forwarded_without_changing_publication_category():
         SimpleNamespace(results=[], search_time=None, cost_dollars=None)
     )
 
-    search_publications.search_publications(args, client)
+    exa_search.search_exa(args, client)
 
     assert client.calls == [
         (
@@ -217,6 +357,7 @@ def test_search_options_are_forwarded_without_changing_publication_category():
                 "contents": {
                     "highlights": {"max_characters": 1800},
                     "summary": {"query": "What mechanism improves generalization?"},
+                    "max_age_hours": 0,
                 },
                 "start_published_date": "2023-01-01",
                 "end_published_date": "2026-01-01",
@@ -229,30 +370,87 @@ def test_search_options_are_forwarded_without_changing_publication_category():
     ]
 
 
-def test_no_highlights_requests_metadata_only():
-    args = search_publications.parse_args(["attention alternatives", "--no-highlights"])
+def test_publication_search_rejects_include_domains(capsys):
+    with pytest.raises(SystemExit):
+        exa_search.parse_args(
+            [
+                "research-publications",
+                "neural operators",
+                "--include-domains",
+                "arxiv.org",
+            ]
+        )
+
+    assert "--include-domains is only supported for general-web" in (
+        capsys.readouterr().err
+    )
+
+
+def test_no_content_requests_metadata_only():
+    args = exa_search.parse_args(
+        ["general-web", "attention alternatives", "--no-content"]
+    )
     client = FakeClient(
         SimpleNamespace(results=[], search_time=None, cost_dollars=None)
     )
 
-    search_publications.search_publications(args, client)
+    exa_search.search_exa(args, client)
 
     assert client.calls[0][1]["contents"] is False
 
 
+@pytest.mark.parametrize(
+    "content_options",
+    [
+        ["--summary-query", "Summarize it"],
+        ["--highlights-max-characters", "100"],
+        ["--max-age-hours", "0"],
+    ],
+)
+def test_no_content_rejects_content_options(content_options, capsys):
+    with pytest.raises(SystemExit):
+        exa_search.parse_args(
+            [
+                "general-web",
+                "attention alternatives",
+                "--no-content",
+                *content_options,
+            ]
+        )
+
+    assert "--no-content cannot be combined with content options" in (
+        capsys.readouterr().err
+    )
+
+
 def test_argument_validation_is_reported_as_cli_usage(capsys):
     with pytest.raises(SystemExit):
-        search_publications.parse_args(
-            ["attention alternatives", "--num-results", "101"]
+        exa_search.parse_args(
+            ["general-web", "attention alternatives", "--num-results", "101"]
         )
 
     assert "--num-results must be between 1 and 100" in capsys.readouterr().err
 
 
+def test_max_age_hours_rejects_values_below_cache_only_sentinel(capsys):
+    with pytest.raises(SystemExit):
+        exa_search.parse_args(
+            [
+                "general-web",
+                "attention alternatives",
+                "--max-age-hours",
+                "-2",
+            ]
+        )
+
+    assert "--max-age-hours must be -1 or greater" in capsys.readouterr().err
+
+
 def test_additional_queries_require_deep_search(capsys):
     with pytest.raises(SystemExit):
-        search_publications.parse_args(
+        exa_search.parse_args(
             [
+                "general-web",
                 "attention alternatives",
                 "--search-type",
                 "auto",
@@ -270,8 +468,12 @@ def test_exa_client_loads_dotenv_before_reading_api_key(monkeypatch):
     events = []
     client = object()
 
-    def fake_load_dotenv():
-        events.append("load_dotenv")
+    def fake_find_dotenv(*, usecwd):
+        events.append(("find_dotenv", usecwd))
+        return "/target/.env"
+
+    def fake_load_dotenv(*, dotenv_path, override):
+        events.append(("load_dotenv", dotenv_path, override))
         monkeypatch.setenv("EXA_API_KEY", "test-key")
 
     def fake_exa(api_key):
@@ -279,11 +481,16 @@ def test_exa_client_loads_dotenv_before_reading_api_key(monkeypatch):
         return client
 
     monkeypatch.delenv("EXA_API_KEY", raising=False)
-    monkeypatch.setattr(search_publications, "load_dotenv", fake_load_dotenv)
-    monkeypatch.setattr(search_publications, "Exa", fake_exa)
+    monkeypatch.setattr(exa_search, "find_dotenv", fake_find_dotenv)
+    monkeypatch.setattr(exa_search, "load_dotenv", fake_load_dotenv)
+    monkeypatch.setattr(exa_search, "Exa", fake_exa)
 
-    assert search_publications.create_exa_client() is client
-    assert events == ["load_dotenv", ("Exa", "test-key")]
+    assert exa_search.create_exa_client() is client
+    assert events == [
+        ("find_dotenv", True),
+        ("load_dotenv", "/target/.env", False),
+        ("Exa", "test-key"),
+    ]
 
 
 def test_skill_is_installed_only_in_openhands_agent_scope():

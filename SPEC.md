@@ -316,18 +316,20 @@ effort independently.
 
 `explore` searches code, data, PR artifacts, and durable history and returns
 concise conclusions with paths and line numbers. `search` requires exactly one
-mode: `general-web` uses browser/web sources, while `research-publications`
-uses the Exa publications skill and primary papers. `general-purpose` handles
-mixed investigation, editing, tests, and typed Senpai operations.
+mode: `general-web` uses Exa's general index with agent-oriented defaults,
+while `research-publications` uses Exa's publication index and primary papers.
+`general-purpose` handles mixed investigation, editing, tests, and typed Senpai
+operations.
 
 With `include_context=false`, the child receives the merged system prompt and
 task and may search the parent's durable history path. With
 `include_context=true`, it also receives the complete model-visible parent
 history, including progressively disclosed skill content.
 
-Children receive the raw OpenHands terminal, file editor, the
-`delegate_agent` tool, and progressively disclosed skills. They receive neither GitHub
-credentials nor GitHub read/write tools; the parent prepares any large PR
+Children receive the raw OpenHands terminal, file editor, and progressively
+disclosed skills. General-purpose and Explore children can also delegate
+foreground work; Search cannot. Children receive neither GitHub credentials
+nor GitHub read/write tools; the parent prepares any large PR
 Markdown artifact and owns every typed GitHub operation. They do not receive
 training tools. Background nesting is rejected because a child may exit before
 a grandchild's durable result can be consumed.

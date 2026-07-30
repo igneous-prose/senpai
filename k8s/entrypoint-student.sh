@@ -66,6 +66,7 @@ cp -a "$SENPAI_PLUGIN/skills/." "$HOME/.agents/skills/"
 
 echo "=== Agent config installed ==="
 ls \
+    "$HOME/.agents/agents/general-purpose.md" \
     "$HOME/.agents/agents/explore.md" \
     "$HOME/.agents/agents/search.md" \
     "$HOME/.agents/skills/survey-prs/SKILL.md" \
