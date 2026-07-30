@@ -13,7 +13,6 @@ permission_mode: never_confirm
 tools:
   - terminal
   - file_editor
-  - get_prs
   - delegate_agent
 ---
 

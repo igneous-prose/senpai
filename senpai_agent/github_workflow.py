@@ -286,7 +286,7 @@ class GitHubWorkflow:
             raise ReconciliationError(
                 "GitHub contains multiple PRs for the assignment branch"
             )
-        active = self._active_assignment_numbers(assignment)
+        active = self._active_student_assignment_numbers(assignment.student)
         current_number = matches[0].number if matches else None
         conflicts = tuple(number for number in active if number != current_number)
         if conflicts:
@@ -977,17 +977,16 @@ class GitHubWorkflow:
             for item in response.json_body
         )
 
-    def _active_assignment_numbers(
+    def _active_student_assignment_numbers(
         self,
-        assignment: AssignmentRecord,
+        student: str,
     ) -> tuple[int, ...]:
         query = urlencode(
             {
                 "state": "open",
                 "labels": ",".join(
                     (
-                        assignment.base_ref,
-                        f"student:{assignment.student}",
+                        f"student:{student}",
                         "status:wip",
                     )
                 ),

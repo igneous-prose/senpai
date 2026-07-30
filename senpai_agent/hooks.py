@@ -77,20 +77,35 @@ def _gh_policy(tokens: list[str], index: int) -> PolicyDecision:
     remaining = arguments[noun_index + 1 :]
     if noun == "api":
         method = "GET"
+        has_body = False
         for position, value in enumerate(remaining):
             if value in {"-X", "--method"} and position + 1 < len(remaining):
                 method = remaining[position + 1].upper()
+            elif value.startswith("-X") and len(value) > 2:
+                method = value[2:].upper()
             elif value.startswith("--method="):
                 method = value.partition("=")[2].upper()
+            elif value.startswith("--method") and len(value) > len("--method"):
+                method = value.removeprefix("--method").upper()
             elif value in {
                 "-f",
                 "-F",
                 "--field",
                 "--raw-field",
                 "--input",
-            } or value.startswith(("-f=", "-F=", "--field=", "--raw-field=")):
-                method = "POST"
-        if method != "GET":
+            } or value.startswith(
+                (
+                    "-f=",
+                    "-F=",
+                    "-f",
+                    "-F",
+                    "--field=",
+                    "--raw-field=",
+                    "--input=",
+                )
+            ):
+                has_body = True
+        if method != "GET" or has_body:
             return PolicyDecision(
                 False,
                 "Use a typed Senpai GitHub tool for mutating GitHub API calls.",
@@ -150,7 +165,7 @@ def _shell_command(arguments: list[str]) -> str | None:
 
 def _curl_policy(tokens: list[str], index: int) -> PolicyDecision:
     arguments = tokens[index + 1 :]
-    if not any("api.github.com" in value for value in arguments):
+    if not any("api.github.com" in value.casefold() for value in arguments):
         return PolicyDecision(True)
 
     method = "GET"
@@ -204,6 +219,22 @@ def _python_launches_training(tokens: list[str], index: int) -> bool:
     return bool(_TRAIN_SCRIPT.fullmatch(Path(script).name))
 
 
+def _timeout_command(arguments: list[str]) -> list[str]:
+    position = 0
+    while position < len(arguments) and arguments[position].startswith("-"):
+        option = arguments[position]
+        if option == "--":
+            position += 1
+            break
+        if option in {"-k", "--kill-after", "-s", "--signal"}:
+            position += 2
+        else:
+            position += 1
+    if position >= len(arguments):
+        return []
+    return arguments[position + 1 :]
+
+
 def _segment_policy(tokens: list[str]) -> PolicyDecision:
     index = _program_index(tokens)
     if index is None:
@@ -215,6 +246,12 @@ def _segment_policy(tokens: list[str]) -> PolicyDecision:
         command = _env_command(arguments)
         return _segment_policy(command) if command else PolicyDecision(True)
     if program in {"command", "exec", "nohup"}:
+        command = _wrapper_command(arguments)
+        return _segment_policy(command) if command else PolicyDecision(True)
+    if program == "timeout":
+        command = _timeout_command(arguments)
+        return _segment_policy(command) if command else PolicyDecision(True)
+    if program == "setsid":
         command = _wrapper_command(arguments)
         return _segment_policy(command) if command else PolicyDecision(True)
     if program in {"bash", "dash", "sh", "zsh"}:
@@ -245,7 +282,7 @@ def _segment_policy(tokens: list[str]) -> PolicyDecision:
             "Use run_training so timeouts, logs, status, and W&B IDs are supervised.",
         )
 
-    if program in {"sleep", "watch", "while", "until"}:
+    if program in {"for", "sleep", "watch", "while", "until"}:
         return PolicyDecision(
             False,
             "Do not run foreground polling loops; use Senpai events or status tools.",

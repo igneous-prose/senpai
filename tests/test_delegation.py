@@ -58,7 +58,6 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "api_key_env": "ANTHROPIC_API_KEY",
         "api_key": "model-secret",
         "github_repo": "acme/widgets",
-        "github_token": "github-secret",
         "github_trusted_actor": None,
         "smart_reasoning_effort": "xhigh",
         "fast_reasoning_effort": "low",
@@ -157,29 +156,25 @@ def test_child_command_selects_agent_model_and_effort(tmp_path: Path):
     assert fast.environment["SENPAI_OPENHANDS_FAST_MODEL"] == config.fast_model
 
 
-def test_child_hands_github_token_over_one_use_file(
+def test_child_process_never_receives_the_github_write_token(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     request = delegation_request()
     config = delegation_config(tmp_path)
-    observed = {}
+    monkeypatch.setenv("GITHUB_TOKEN", "ambient-write-token")
 
     def fake_run(argv, *, input_text, env, timeout_seconds, **kwargs):
-        token_path = Path(env["SENPAI_GITHUB_TOKEN_FILE"])
-        observed["mode"] = token_path.stat().st_mode & 0o777
-        observed["token"] = token_path.read_text()
-        token_path.unlink()
-        observed["environment"] = env
+        assert "GITHUB_TOKEN" not in env
+        assert "GH_TOKEN" not in env
+        assert "SENPAI_GITHUB_TOKEN_FILE" not in env
+        assert "ambient-write-token" not in repr(env)
+        assert not list(config.state_dir.rglob(".github-token-*"))
         return 'OPENHANDS_RESULT {"status":"finished","result":"done"}'
 
     monkeypatch.setattr("senpai_agent.delegation.run_child_process", fake_run)
 
     assert OpenHandsChildProcess(config, request).run("inspect", None) == "done"
-    assert observed["mode"] == 0o600
-    assert observed["token"] == "github-secret"
-    assert "GITHUB_TOKEN" not in observed["environment"]
-    assert "GH_TOKEN" not in observed["environment"]
 
 
 def test_child_result_parser_uses_only_terminal_result_record():

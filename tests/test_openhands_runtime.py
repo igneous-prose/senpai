@@ -1,3 +1,4 @@
+import os
 import signal
 import threading
 import uuid
@@ -496,6 +497,45 @@ def test_config_consumes_private_one_use_github_token_file(tmp_path):
     assert not token_file.exists()
 
 
+def test_github_token_can_be_consumed_from_an_inherited_pipe():
+    read_fd, write_fd = os.pipe()
+    try:
+        os.write(write_fd, b"pipe-token")
+    finally:
+        os.close(write_fd)
+
+    assert runner.github_token({"SENPAI_GITHUB_TOKEN_FD": str(read_fd)}) == SecretStr(
+        "pipe-token"
+    )
+
+
+def test_delegated_agent_configuration_requires_no_github_credential(tmp_path):
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    role_file = tmp_path / "SENPAI-STUDENT.md"
+    role_file.write_text("student role", encoding="utf-8")
+    harness_file = tmp_path / "SENPAI-HARNESS.md"
+    harness_file.write_text("harness instructions", encoding="utf-8")
+    env = {
+        "ANTHROPIC_API_KEY": "anthropic-key",
+        "GH_REPO": "acme/widgets",
+        "SENPAI_ROLE": "student",
+        "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+        "SENPAI_OPENHANDS_STATE_DIR": str(tmp_path / "state"),
+        "SENPAI_OPENHANDS_ROLE_FILE": str(role_file),
+        "SENPAI_OPENHANDS_HARNESS_FILE": str(harness_file),
+        "SENPAI_PLUGIN": str(PLUGIN_DIR),
+    }
+
+    config = resolve_config(
+        parse_runner_args(["--max-turns", "1", "--child", "--agent", "explore"]),
+        env,
+    )
+
+    assert config.child is True
+    assert config.github_token is None
+
+
 def test_advisor_reuses_one_conversation_without_continue_flag(tmp_path):
     workspace = tmp_path / "target"
     workspace.mkdir()
@@ -978,7 +1018,6 @@ def test_search_agent_applies_reasoning_effort_and_progressive_skills(
         "terminal",
         "browser_tool_set",
         "file_editor",
-        "get_prs",
         "delegate_agent",
     }
     assert {skill.name for skill in agent.agent_context.skills} == set(
@@ -999,11 +1038,21 @@ def test_explore_agent_is_a_concise_low_effort_file_agent():
     assert definition.name == "explore"
     assert definition.model == "inherit"
     assert definition.reasoning_effort == "low"
-    assert {"terminal", "file_editor", "get_prs", "delegate_agent"} == set(
-        definition.tools
-    )
+    assert {"terminal", "file_editor", "delegate_agent"} == set(definition.tools)
     assert "line numbers" in definition.system_prompt
     assert "Large files and conversation logs" in definition.system_prompt
+
+
+def test_delegated_agents_have_no_github_credentials_or_mutation_tools():
+    for path in (
+        EXPLORE_AGENT,
+        SEARCH_AGENT,
+        REPO_ROOT / ".agents/agents/general-purpose.md",
+    ):
+        definition = AgentDefinition.load(path)
+
+        assert "get_prs" not in definition.tools
+        assert "github_transition" not in definition.tools
 
 
 @pytest.mark.parametrize("role", ["advisor", "student"])

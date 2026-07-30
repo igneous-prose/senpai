@@ -580,6 +580,35 @@ def test_create_assignment_reconciles_one_draft_pr_and_replays():
     }
 
 
+def test_create_assignment_rejects_a_same_student_wip_on_another_base():
+    assignment = AssignmentRecord(
+        repo=REPO,
+        assignment_id="assignment-8",
+        revision_id="revision-1",
+        student="student-one",
+        base_ref="schmidhuber",
+        base_sha="b" * 40,
+        head_ref="student-one/new-candidate",
+        head_sha="c" * 40,
+    )
+    fake = FakeGitHub(
+        pull_request(
+            labels={"other-base", "student:student-one", "status:wip"},
+            base_ref="other-base",
+            head_ref="student-one/other-candidate",
+        )
+    )
+
+    with pytest.raises(WorkflowPreconditionError, match="already has active"):
+        workflow(fake).create_assignment(
+            assignment,
+            title="Try another candidate",
+            body="Run one bounded comparison.",
+        )
+
+    assert fake.mutations == []
+
+
 def test_client_rejects_ambiguous_configuration_before_any_request():
     with pytest.raises(ValueError, match="owner/name"):
         GitHubWorkflow("widgets", SecretStr("token"))

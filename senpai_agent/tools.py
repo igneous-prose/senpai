@@ -846,11 +846,13 @@ class _GitHubTransitionExecutor(
         role: str,
         workspace: Path,
         git_token: SecretStr | None = None,
+        advisor_branch: str | None = None,
     ):
         self.workflow = workflow
         self.role = role
         self.workspace = workspace
         self.git_token = git_token
+        self.advisor_branch = advisor_branch
 
     def __call__(
         self,
@@ -884,6 +886,11 @@ class _GitHubTransitionExecutor(
             )
         elif isinstance(transition, PushBranchTransition):
             self._require_role("advisor")
+            if transition.branch != self.advisor_branch:
+                raise PermissionError(
+                    "push_branch is limited to the configured advisor branch "
+                    f"{self.advisor_branch!r}"
+                )
             pushed = push_assignment_branch(
                 self.workspace,
                 branch=transition.branch,
@@ -909,12 +916,9 @@ class _GitHubTransitionExecutor(
                 self.workspace,
                 branch=transition.branch,
                 expected_remote_sha=transition.expected_remote_sha,
+                expected_local_sha=transition.expected_head_sha,
                 token=self.git_token,
             )
-            if pushed.head_sha != transition.expected_head_sha:
-                raise ValueError(
-                    "expected_head_sha must match the local commit being submitted"
-                )
             result = self.workflow.submit_result(
                 transition.pr_number,
                 expected_head_sha=transition.expected_head_sha,
@@ -995,10 +999,12 @@ class GitHubTransitionTool(
         *,
         role: str | None = None,
         workspace: str | Path | None = None,
+        advisor_branch: str | None = None,
     ) -> Sequence[Self]:
         role = role or os.environ.get("SENPAI_ROLE")
         if role not in {"advisor", "student"}:
             raise ValueError("role must be advisor or student")
+        advisor_branch = advisor_branch or os.environ.get("ADVISOR_BRANCH")
         git_token: SecretStr | None = None
         if workflow is None:
             credentials = _GITHUB_CREDENTIALS
@@ -1041,6 +1047,7 @@ class GitHubTransitionTool(
                     role,
                     Path(workspace),
                     git_token,
+                    advisor_branch,
                 ),
             )
         ]
@@ -1118,6 +1125,7 @@ def create_senpai_tools(
     max_agent_runtime_seconds: float | None = None,
     pr_artifact_dir: str | Path | None = None,
     workspace: str | Path | None = None,
+    advisor_branch: str | None = None,
 ) -> tuple[ToolDefinition, ...]:
     """Create the compact Senpai tool set with all external boundaries injected."""
 
@@ -1139,6 +1147,8 @@ def create_senpai_tools(
         *GitHubTransitionTool.create(
             workflow=github_workflow,
             role=role,
+            workspace=workspace,
+            advisor_branch=advisor_branch,
         ),
         *DelegateAgentTool.create(
             child_runner_factory=child_runner_factory,

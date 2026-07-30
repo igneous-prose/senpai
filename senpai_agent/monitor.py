@@ -3,31 +3,30 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Literal, Protocol, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
+from senpai_agent.models import Contract
 from senpai_agent.training import TrainingResult, TrainingState
 
 
-class MetricGate(BaseModel):
+class MetricGate(Contract):
     """One threshold or change that should be surfaced to the student."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
     operator: Literal["lte", "gte", "improved_by", "regressed_by"]
     threshold: float
 
 
-class TrainingMonitorSpec(BaseModel):
+class TrainingMonitorSpec(Contract):
     """Durable monitoring policy for one training process and conversation."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
     training_id: str = Field(min_length=1)
     conversation_id: UUID
@@ -58,25 +57,26 @@ class TrainingMonitorSpec(BaseModel):
             raise ValueError("change gates require metric direction")
 
 
-class MetricSample(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
+class MetricSample(Contract):
     value: float
     observed_at: datetime
 
 
-class MonitorSignal(BaseModel):
+class MonitorSignal(Contract):
     """Compact event handed to the monitor triage child."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: Literal["metric_gate", "metric_stale", "training_status"]
+    kind: Literal[
+        "metric_gate",
+        "metric_stale",
+        "monitor_error",
+        "training_status",
+    ]
     dedupe_key: str
     training_id: str
     metric: str | None = None
     value: float | None = None
-    state: TrainingState
-    detail: str
+    state: TrainingState | None
+    detail: str = Field(min_length=1, max_length=1_000)
     hard_failure: bool = False
 
     def to_prompt(self) -> str:
@@ -87,9 +87,7 @@ class MonitorSignal(BaseModel):
         )
 
 
-class MonitorEvaluation(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
+class MonitorEvaluation(Contract):
     signals: tuple[MonitorSignal, ...] = ()
 
     @property
@@ -97,10 +95,8 @@ class MonitorEvaluation(BaseModel):
         return tuple(signal.dedupe_key for signal in self.signals)
 
 
-class MonitorDecision(BaseModel):
+class MonitorDecision(Contract):
     """Strict result expected from the no-context monitor triage child."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
     wake_main: bool
     summary: str = Field(min_length=1, max_length=2_000)
@@ -239,6 +235,7 @@ class MonitorStore:
         self.marker_dir = path.parent / "monitors"
         self.marker_dir.mkdir(exist_ok=True)
         self.connection = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.Lock()
         self.connection.execute(
             """
             CREATE TABLE IF NOT EXISTS monitors (
@@ -272,17 +269,57 @@ class MonitorStore:
         self.connection.commit()
 
     def register(self, spec: TrainingMonitorSpec) -> bool:
-        cursor = self.connection.execute(
-            """
-            INSERT OR IGNORE INTO monitors (training_id, spec_json)
-            VALUES (?, ?)
-            """,
-            (spec.training_id, spec.model_dump_json()),
-        )
-        self.connection.commit()
+        with self._lock:
+            row = self.connection.execute(
+                """
+                SELECT spec_json, active FROM monitors
+                WHERE training_id = ?
+                """,
+                (spec.training_id,),
+            ).fetchone()
+            existing = (
+                TrainingMonitorSpec.model_validate_json(row[0])
+                if row is not None
+                else None
+            )
+            unchanged = (
+                existing is not None
+                and bool(row[1])
+                and _same_monitor_policy(existing, spec)
+            )
+            effective = existing if unchanged else spec
+            if not unchanged:
+                with self.connection:
+                    self.connection.execute(
+                        """
+                        INSERT INTO monitors (
+                            training_id,
+                            spec_json,
+                            active,
+                            previous_sample_json,
+                            next_poll_at
+                        )
+                        VALUES (?, ?, 1, NULL, 0)
+                        ON CONFLICT(training_id) DO UPDATE SET
+                            spec_json = excluded.spec_json,
+                            active = 1,
+                            previous_sample_json = NULL,
+                            next_poll_at = 0
+                        """,
+                        (spec.training_id, spec.model_dump_json()),
+                    )
+                    self.connection.execute(
+                        "DELETE FROM monitor_signals WHERE training_id = ?",
+                        (spec.training_id,),
+                    )
+            self._write_marker(effective)
+            return not unchanged
+
+    def _write_marker(self, spec: TrainingMonitorSpec) -> None:
         marker = self.marker_dir / f"{spec.training_id}.json"
-        marker.write_text(spec.model_dump_json(indent=2), encoding="utf-8")
-        return cursor.rowcount == 1
+        temporary = marker.with_suffix(".tmp")
+        temporary.write_text(spec.model_dump_json(indent=2), encoding="utf-8")
+        temporary.replace(marker)
 
     def active(self) -> list[TrainingMonitorSpec]:
         rows = self.connection.execute(
@@ -369,6 +406,54 @@ class MonitorStore:
             ),
         )
         self.connection.commit()
+
+    def record_poll_error(
+        self,
+        spec: TrainingMonitorSpec,
+        error: Exception,
+        *,
+        state: TrainingState | None,
+        clear_previous_sample: bool = False,
+        now: datetime | None = None,
+    ) -> MonitorSignal | None:
+        now = now or datetime.now(UTC)
+        signal = MonitorSignal(
+            kind="monitor_error",
+            dedupe_key=(f"{spec.training_id}:monitor_error:{type(error).__name__}"),
+            training_id=spec.training_id,
+            metric=spec.metric,
+            state=state,
+            detail=_monitor_error_detail(error),
+            hard_failure=True,
+        )
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT OR IGNORE INTO monitor_signals
+                (dedupe_key, training_id, signal_json)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    signal.dedupe_key,
+                    spec.training_id,
+                    signal.model_dump_json(),
+                ),
+            )
+            self.connection.execute(
+                """
+                UPDATE monitors
+                SET previous_sample_json = CASE WHEN ? THEN NULL
+                                               ELSE previous_sample_json END,
+                    next_poll_at = ?
+                WHERE training_id = ?
+                """,
+                (
+                    clear_previous_sample,
+                    now.timestamp() + spec.poll_interval_seconds,
+                    spec.training_id,
+                ),
+            )
+        return signal if cursor.rowcount == 1 else None
 
     def pending_signals(self) -> list[MonitorSignal]:
         rows = self.connection.execute(
@@ -472,7 +557,10 @@ class WandbMetricSource:
             if timestamp is not None
             else datetime.now(UTC)
         )
-        return MetricSample(value=float(value), observed_at=observed_at)
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(f"{metric} returned non-finite value {value}")
+        return MetricSample(value=value, observed_at=observed_at)
 
 
 class TrainingMonitorEngine:
@@ -492,20 +580,72 @@ class TrainingMonitorEngine:
         now = now or datetime.now(UTC)
         produced: list[MonitorSignal] = []
         for spec in self.store.due(now):
-            result = self.training.get_training_status(spec.training_id)
+            try:
+                result = self.training.get_training_status(spec.training_id)
+            except Exception as error:  # noqa: BLE001
+                signal = self.store.record_poll_error(
+                    spec,
+                    error,
+                    state=None,
+                    now=now,
+                )
+                if signal is not None:
+                    produced.append(signal)
+                continue
             sample = None
-            if spec.metric and result.wandb_run_ids:
-                sample = self.metrics.latest(result.wandb_run_ids[-1], spec.metric)
-            evaluation, latest = evaluate_monitor(
-                spec,
-                result,
-                sample,
-                previous=self.store.previous_sample(spec.training_id),
-                emitted=self.store.emitted(spec.training_id),
-                now=now,
-            )
-            self.store.record_poll(spec, evaluation, latest, now=now)
+            try:
+                if spec.metric and result.wandb_run_ids:
+                    sample = self.metrics.latest(
+                        result.wandb_run_ids[-1],
+                        spec.metric,
+                    )
+            except Exception as error:  # noqa: BLE001
+                signal = self.store.record_poll_error(
+                    spec,
+                    error,
+                    state=result.state,
+                    now=now,
+                )
+                if signal is not None:
+                    produced.append(signal)
+                continue
+            try:
+                evaluation, latest = evaluate_monitor(
+                    spec,
+                    result,
+                    sample,
+                    previous=self.store.previous_sample(spec.training_id),
+                    emitted=self.store.emitted(spec.training_id),
+                    now=now,
+                )
+                self.store.record_poll(spec, evaluation, latest, now=now)
+                if result.state is not TrainingState.RUNNING:
+                    self.store.complete(spec.training_id)
+            except Exception as error:  # noqa: BLE001
+                signal = self.store.record_poll_error(
+                    spec,
+                    error,
+                    state=result.state,
+                    clear_previous_sample=True,
+                    now=now,
+                )
+                if signal is not None:
+                    produced.append(signal)
+                continue
             produced.extend(evaluation.signals)
-            if result.state is not TrainingState.RUNNING:
-                self.store.complete(spec.training_id)
         return tuple(produced)
+
+
+def _same_monitor_policy(
+    left: TrainingMonitorSpec,
+    right: TrainingMonitorSpec,
+) -> bool:
+    return left.model_dump(exclude={"registered_at"}) == right.model_dump(
+        exclude={"registered_at"}
+    )
+
+
+def _monitor_error_detail(error: Exception) -> str:
+    message = " ".join(str(error).split())
+    prefix = f"Monitor poll failed ({type(error).__name__})"
+    return f"{prefix}: {message}"[:1_000] if message else prefix

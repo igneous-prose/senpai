@@ -73,7 +73,6 @@ class DelegationConfig:
     api_key_env: str
     api_key: str
     github_repo: str
-    github_token: str
     github_trusted_actor: str | None
     smart_reasoning_effort: str
     fast_reasoning_effort: str
@@ -263,6 +262,7 @@ class OpenHandsChildProcess:
             "GITHUB_TOKEN",
             "GH_TOKEN",
             "SENPAI_GITHUB_TOKEN_FILE",
+            "SENPAI_GITHUB_TOKEN_FD",
             "SENPAI_OPENHANDS_AGENT",
             "SENPAI_OPENHANDS_CONVERSATION_ID",
         ):
@@ -292,18 +292,6 @@ class OpenHandsChildProcess:
         if self._interrupted.is_set():
             raise InterruptedError("subagent was interrupted before startup")
         self.state_dir.parent.mkdir(parents=True, exist_ok=True)
-        token_path = self.state_dir.parent / f".github-token-{uuid.uuid4()}"
-        token_fd = os.open(
-            token_path,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
-        with os.fdopen(token_fd, "w", encoding="utf-8") as token_file:
-            token_file.write(self._config.github_token)
-        environment = {
-            **self.environment,
-            "SENPAI_GITHUB_TOKEN_FILE": str(token_path),
-        }
 
         def started(process: subprocess.Popen[str]) -> None:
             with self._lock:
@@ -320,14 +308,13 @@ class OpenHandsChildProcess:
             output = run_child_process(
                 self.command,
                 input_text=render_child_prompt(self._request, task),
-                env=environment,
+                env=self.environment,
                 timeout_seconds=timeout_seconds,
                 on_start=started,
                 on_finish=finished,
             )
             return self.parse_result(output)
         finally:
-            token_path.unlink(missing_ok=True)
             shutil.rmtree(self.state_dir, ignore_errors=True)
 
     def interrupt(self) -> None:

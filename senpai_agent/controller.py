@@ -596,20 +596,27 @@ class MonitorMailbox:
             spec = self.store.spec(monitor_signal.training_id)
             decision = self.store.decision(monitor_signal.dedupe_key)
             if decision is None:
-                try:
-                    decision = self.triage.decide(
-                        monitor_signal,
-                        spec.conversation_id,
-                    )
-                except Exception as error:  # noqa: BLE001
+                if monitor_signal.hard_failure:
                     decision = MonitorDecision(
                         wake_main=True,
                         summary=monitor_signal.detail,
-                        reason=(
-                            "Monitor triage failed; waking the student "
-                            f"conservatively ({type(error).__name__})."
-                        ),
+                        reason="Hard training failures always wake the student.",
                     )
+                else:
+                    try:
+                        decision = self.triage.decide(
+                            monitor_signal,
+                            spec.conversation_id,
+                        )
+                    except Exception as error:  # noqa: BLE001
+                        decision = MonitorDecision(
+                            wake_main=True,
+                            summary=monitor_signal.detail,
+                            reason=(
+                                "Monitor triage failed; waking the student "
+                                f"conservatively ({type(error).__name__})."
+                            ),
+                        )
                 self.store.record_decision(monitor_signal.dedupe_key, decision)
             if not decision.wake_main and not monitor_signal.hard_failure:
                 self.store.acknowledge(monitor_signal.dedupe_key)
@@ -641,7 +648,16 @@ class CompositeMailbox:
     def poll(self) -> tuple[ControllerEvent, ...]:
         by_key: dict[str, ControllerEvent] = {}
         for mailbox in self.mailboxes:
-            for event in mailbox.poll():
+            try:
+                events = mailbox.poll()
+            except Exception as error:  # noqa: BLE001
+                print(
+                    f"SENPAI_MAILBOX_ERROR {type(error).__name__}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            for event in events:
                 by_key.setdefault(event.dedupe_key, event)
         return tuple(by_key.values())
 
@@ -724,9 +740,15 @@ class LocalStudentMailbox:
 class OpenHandsMonitorTriage:
     """Run one context-free generic child for an actionable monitor signal."""
 
-    def __init__(self, child_config: object, timeout_seconds: float = 300):
+    def __init__(
+        self,
+        child_config: object,
+        timeout_seconds: float = 300,
+        progress: ProgressLease | None = None,
+    ):
         self.child_config = child_config
         self.timeout_seconds = timeout_seconds
+        self.progress = progress
 
     def decide(
         self,
@@ -757,6 +779,11 @@ class OpenHandsMonitorTriage:
             "finish should wake when the student must inspect or submit results.\n\n"
             f"{signal.to_prompt()}"
         )
+        if self.progress is not None:
+            self.progress.update(
+                "monitor-triage",
+                self.timeout_seconds + 30,
+            )
         return _parse_monitor_decision(child.run(task, self.timeout_seconds))
 
 
@@ -886,40 +913,40 @@ class OpenHandsTurnRunner:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationBatch:
+    conversation_id: UUID
+    events: tuple[ControllerEvent, ...]
+
+
 class StudentConversationSelector:
     def __init__(self, registry: AssignmentConversationRegistry):
         self.registry = registry
 
-    def __call__(self, events: Sequence[ControllerEvent]) -> UUID:
-        local_event_ids = {
-            UUID(str(event.payload["conversation_id"]))
-            for event in events
-            if event.kind == "local_events_pending"
-        }
-        if local_event_ids:
-            if len(local_event_ids) != 1:
-                raise RuntimeError("local events target multiple conversations")
-            return local_event_ids.pop()
-        monitor_ids = {
-            UUID(str(event.payload["conversation_id"]))
-            for event in events
-            if event.kind == "training_monitor"
-        }
-        if monitor_ids:
-            if len(monitor_ids) != 1:
-                raise RuntimeError("monitor events target multiple conversations")
-            return monitor_ids.pop()
-        assignments = [event for event in events if event.kind == "student_assignment"]
-        if assignments:
-            assignment = assignments[0]
+    def __call__(
+        self,
+        events: Sequence[ControllerEvent],
+    ) -> tuple[ConversationBatch, ...]:
+        grouped: dict[UUID, list[ControllerEvent]] = {}
+        for event in events:
+            conversation_id = self._conversation_for(event)
+            grouped.setdefault(conversation_id, []).append(event)
+        return tuple(
+            ConversationBatch(conversation_id, tuple(batch_events))
+            for conversation_id, batch_events in grouped.items()
+        )
+
+    def _conversation_for(self, event: ControllerEvent) -> UUID:
+        if event.kind in {"local_events_pending", "training_monitor"}:
+            return UUID(str(event.payload["conversation_id"]))
+        if event.kind == "student_assignment":
             return self.registry.for_assignment(
-                str(assignment.payload["assignment_id"]),
-                str(assignment.payload["revision_id"]),
+                str(event.payload["assignment_id"]),
+                str(event.payload["revision_id"]),
             )
-        issues = [event for event in events if event.kind == "human_issue"]
-        if issues:
+        if event.kind == "human_issue":
             return self.registry.for_assignment(
-                f"human-issue-{issues[0].payload['number']}",
+                f"human-issue-{event.payload['number']}",
                 "thread",
             )
         return self.registry.for_assignment("student-control", "current")
@@ -934,18 +961,63 @@ class StudentWorkspaceReconciler:
         if not assignments:
             return
         head_ref = str(assignments[0].payload["head_ref"])
+        expected_head = str(assignments[0].payload["head_sha"])
         subprocess.run(
             ["git", "fetch", "origin", head_ref],
             cwd=self.workspace,
             check=True,
             timeout=300,
         )
+        fetched_head = self._git("rev-parse", "FETCH_HEAD")
+        if fetched_head != expected_head:
+            raise RuntimeError(
+                f"assignment head moved: expected {expected_head}, fetched {fetched_head}"
+            )
+        local_ref = f"refs/heads/{head_ref}"
+        branch_exists = (
+            subprocess.run(
+                ["git", "show-ref", "--verify", "--quiet", local_ref],
+                cwd=self.workspace,
+                check=False,
+                timeout=30,
+            ).returncode
+            == 0
+        )
+        if not branch_exists:
+            subprocess.run(
+                ["git", "checkout", "-b", head_ref, "FETCH_HEAD"],
+                cwd=self.workspace,
+                check=True,
+                timeout=300,
+            )
+            return
+        local_head = self._git("rev-parse", local_ref)
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", fetched_head, local_head],
+            cwd=self.workspace,
+            check=False,
+            timeout=30,
+        ).returncode
+        if ancestor != 0:
+            raise RuntimeError(
+                f"local branch {head_ref} diverged from assignment head {fetched_head}"
+            )
         subprocess.run(
-            ["git", "checkout", "-B", head_ref, "FETCH_HEAD"],
+            ["git", "checkout", head_ref],
             cwd=self.workspace,
             check=True,
             timeout=300,
         )
+
+    def _git(self, *arguments: str) -> str:
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=self.workspace,
+            check=True,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        ).stdout.strip()
 
 
 class Controller:
@@ -963,18 +1035,22 @@ class Controller:
         system_context: str = "",
         system_context_ledger: SystemContextLedger | None = None,
         conversation_for_events: (
-            Callable[[Sequence[ControllerEvent]], UUID] | None
+            Callable[[Sequence[ControllerEvent]], Sequence[ConversationBatch]] | None
         ) = None,
         reconcile: Callable[[Sequence[ControllerEvent]], None] | None = None,
         progress: ProgressLease | None = None,
         operation_timeout_seconds: float = 300,
         turn_timeout_seconds: float = 3660,
+        start_gate_path: Path | None = None,
+        start_gate_poll_seconds: float = 30,
         sleep: Callable[[float], None] = time.sleep,
         poll_interval_seconds: float = 600,
         jitter_seconds: float = 120,
     ):
-        if poll_interval_seconds < 0 or jitter_seconds < 0:
+        if min(poll_interval_seconds, jitter_seconds) < 0:
             raise ValueError("poll and jitter intervals must not be negative")
+        if start_gate_poll_seconds <= 0:
+            raise ValueError("start-gate polling interval must be positive")
         if operation_timeout_seconds <= 0 or turn_timeout_seconds <= 0:
             raise ValueError("controller phase timeouts must be positive")
         self.role = role
@@ -986,6 +1062,8 @@ class Controller:
         self.progress = progress
         self.operation_timeout_seconds = operation_timeout_seconds
         self.turn_timeout_seconds = turn_timeout_seconds
+        self.start_gate_path = start_gate_path
+        self.start_gate_poll_seconds = start_gate_poll_seconds
         self.full_prompt = full_prompt.strip()
         self.conversation_ledger = conversation_ledger
         self.system_context = system_context.strip()
@@ -997,6 +1075,7 @@ class Controller:
         self._visible: set[str] = set()
 
     def run(self, *, max_cycles: int | None = None) -> None:
+        self._wait_for_start_gate()
         cycles = 0
         poll_failures = 0
         turn_failures = 0
@@ -1021,71 +1100,68 @@ class Controller:
                 continue
             turn_failed = False
             while events:
-                try:
-                    if self.reconcile is not None:
-                        self._publish_progress("reconcile")
-                        self.reconcile(events)
-                    conversation_id = (
-                        self.conversation_for_events(events)
-                        if self.conversation_for_events is not None
-                        else self.conversation_id
-                    )
-                    continuing = self._has_started(conversation_id)
-                    refresh_system_context = (
-                        continuing
-                        and self.system_context_ledger is not None
-                        and not self.system_context_ledger.is_current(
-                            conversation_id,
-                            self.system_context,
+                batches = self._event_batches(events)
+                events = ()
+                for batch in batches:
+                    batch_events = batch.events
+                    conversation_id = batch.conversation_id
+                    try:
+                        if self.reconcile is not None:
+                            self._publish_progress("reconcile")
+                            self.reconcile(batch_events)
+                        continuing = self._has_started(conversation_id)
+                        refresh_system_context = (
+                            continuing
+                            and self.system_context_ledger is not None
+                            and not self.system_context_ledger.is_current(
+                                conversation_id,
+                                self.system_context,
+                            )
                         )
-                    )
-                    prompt = self._prompt(
-                        events,
-                        continuing=continuing,
-                        refresh_system_context=refresh_system_context,
-                    )
-                    self._mark_started(conversation_id)
-                    self._publish_progress(
-                        "openhands-turn",
-                        self.turn_timeout_seconds,
-                    )
-                    result = self.turns.run(
-                        prompt,
-                        conversation_id=conversation_id,
-                        continue_session=continuing,
-                        event_keys=frozenset(event.dedupe_key for event in events),
-                    )
-                    if self.system_context_ledger is not None:
-                        self.system_context_ledger.mark(
-                            conversation_id,
-                            self.system_context,
+                        prompt = self._prompt(
+                            batch_events,
+                            continuing=continuing,
+                            refresh_system_context=refresh_system_context,
                         )
-                except Exception as error:  # noqa: BLE001
+                        self._publish_progress(
+                            "openhands-turn",
+                            self.turn_timeout_seconds,
+                        )
+                        result = self.turns.run(
+                            prompt,
+                            conversation_id=conversation_id,
+                            continue_session=continuing,
+                            event_keys=frozenset(
+                                event.dedupe_key for event in batch_events
+                            ),
+                        )
+                    except Exception as error:  # noqa: BLE001
+                        turn_failures += 1
+                        self._visible.difference_update(
+                            event.dedupe_key for event in batch_events
+                        )
+                        print(
+                            f"SENPAI_TURN_EXCEPTION {type(error).__name__}: {error}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        turn_failed = True
+                        continue
+                    if result.exit_code == 0:
+                        self._mark_started(conversation_id)
+                        if self.system_context_ledger is not None:
+                            self.system_context_ledger.mark(
+                                conversation_id,
+                                self.system_context,
+                            )
+                        self.mailbox.acknowledge(
+                            tuple(event.dedupe_key for event in batch_events)
+                        )
+                        self._visible.update(result.delivered_event_keys)
+                        continue
                     turn_failures += 1
                     self._visible.difference_update(
-                        event.dedupe_key for event in events
-                    )
-                    print(
-                        f"SENPAI_TURN_EXCEPTION {type(error).__name__}: {error}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    delay = min(
-                        self.poll_interval_seconds,
-                        2 ** min(turn_failures, 8),
-                    )
-                    self._sleep("turn-backoff", delay)
-                    turn_failed = True
-                    break
-                if result.exit_code == 0:
-                    turn_failures = 0
-                    self.mailbox.acknowledge(
-                        tuple(event.dedupe_key for event in events)
-                    )
-                else:
-                    turn_failures += 1
-                    self._visible.difference_update(
-                        event.dedupe_key for event in events
+                        event.dedupe_key for event in batch_events
                     )
                     print(
                         "SENPAI_TURN_ERROR "
@@ -1094,14 +1170,15 @@ class Controller:
                         file=sys.stderr,
                         flush=True,
                     )
+                    turn_failed = True
+                if turn_failed:
                     delay = min(
                         self.poll_interval_seconds,
                         2 ** min(turn_failures, 8),
                     )
                     self._sleep("turn-backoff", delay)
-                    turn_failed = True
                     break
-                self._visible.update(result.delivered_event_keys)
+                turn_failures = 0
                 # Post-turn reconciliation avoids waiting one heartbeat for work
                 # that appeared while OpenHands was reasoning.
                 try:
@@ -1123,6 +1200,22 @@ class Controller:
                 "sleep",
                 self.poll_interval_seconds + random.uniform(0, self.jitter_seconds),
             )
+
+    def _event_batches(
+        self,
+        events: Sequence[ControllerEvent],
+    ) -> tuple[ConversationBatch, ...]:
+        if self.conversation_for_events is not None:
+            return tuple(self.conversation_for_events(events))
+        return (ConversationBatch(self.conversation_id, tuple(events)),)
+
+    def _wait_for_start_gate(self) -> None:
+        while self.start_gate_path is not None and not self.start_gate_path.is_file():
+            self._publish_progress(
+                "start-gate",
+                self.start_gate_poll_seconds + self.operation_timeout_seconds,
+            )
+            self.sleep(self.start_gate_poll_seconds)
 
     def _publish_progress(
         self,
@@ -1268,6 +1361,8 @@ def controller_main(
         parse_runner_args(["--max-turns", str(max_turns)]),
         env,
     )
+    if runner_config.github_token is None:
+        raise RuntimeError("controller worker requires GitHub credentials")
     os.environ.pop(runner_config.api_key_env, None)
     github_mailbox = GitHubMailbox(
         repo=runner_config.github_repo,
@@ -1311,6 +1406,7 @@ def controller_main(
             timeout_seconds=float(
                 env.get("SENPAI_MONITOR_TRIAGE_TIMEOUT_SECONDS", "300")
             ),
+            progress=progress,
         )
         mailbox = CompositeMailbox(
             github_mailbox,
@@ -1356,6 +1452,12 @@ def controller_main(
             env.get("SENPAI_CONTROLLER_OPERATION_TIMEOUT_SECONDS", "300")
         ),
         turn_timeout_seconds=runner_config.timeout_seconds + 60,
+        start_gate_path=(
+            Path(env["SENPAI_START_GATE_PATH"])
+            if env.get("SENPAI_START_GATE_PATH")
+            else None
+        ),
+        start_gate_poll_seconds=float(env.get("SENPAI_START_GATE_POLL_SECONDS", "30")),
         full_prompt=_full_prompt(role, env),
         poll_interval_seconds=_role_interval(
             env,

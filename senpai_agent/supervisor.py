@@ -16,15 +16,19 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import psutil
+from pydantic import SecretStr
 
 LEASE_ENV = "SENPAI_CONTROLLER_LEASE_PATH"
+GITHUB_TOKEN_FILE_ENV = "SENPAI_GITHUB_TOKEN_FILE"
+GITHUB_TOKEN_FD_ENV = "SENPAI_GITHUB_TOKEN_FD"
+GITHUB_TOKEN_ENV_NAMES = ("GITHUB_TOKEN", "GH_TOKEN")
 
 
 @dataclass(frozen=True, slots=True)
 class SupervisorConfig:
     startup_timeout_seconds: float = 300
     check_interval_seconds: float = 5
-    terminate_grace_seconds: float = 15
+    terminate_grace_seconds: float = 60
     initial_backoff_seconds: float = 1
     max_backoff_seconds: float = 60
     stable_after_seconds: float = 600
@@ -98,6 +102,7 @@ class WorkerSupervisor:
         lease_path: Path,
         config: SupervisorConfig | None = None,
         environment: Mapping[str, str] | None = None,
+        github_token: SecretStr | None = None,
     ):
         if not command:
             raise ValueError("worker command must not be empty")
@@ -105,6 +110,13 @@ class WorkerSupervisor:
         self.lease_path = lease_path.resolve()
         self.config = config or SupervisorConfig()
         self.environment = dict(os.environ if environment is None else environment)
+        for name in (
+            *GITHUB_TOKEN_ENV_NAMES,
+            GITHUB_TOKEN_FILE_ENV,
+            GITHUB_TOKEN_FD_ENV,
+        ):
+            self.environment.pop(name, None)
+        self.github_token = github_token
 
     def run(self, stop: threading.Event | None = None) -> int:
         stop = stop or threading.Event()
@@ -115,15 +127,25 @@ class WorkerSupervisor:
                 **self.environment,
                 LEASE_ENV: str(self.lease_path),
             }
-            process = subprocess.Popen(
-                self.command,
-                env=environment,
-                start_new_session=os.name != "nt",
-            )
+            token_fd = self._open_github_token_pipe()
+            if token_fd is not None:
+                environment[GITHUB_TOKEN_FD_ENV] = str(token_fd)
+            try:
+                process = subprocess.Popen(
+                    self.command,
+                    env=environment,
+                    start_new_session=os.name != "nt",
+                    pass_fds=(token_fd,) if token_fd is not None else (),
+                )
+            finally:
+                if token_fd is not None:
+                    os.close(token_fd)
             started = time.monotonic()
             descendants: dict[int, float] = {}
-            reason = self._wait_for_worker(process, descendants, stop, started)
-            self._terminate_worker(process, descendants)
+            try:
+                reason = self._wait_for_worker(process, descendants, stop, started)
+            finally:
+                self._terminate_worker(process, descendants)
             if stop.is_set():
                 return 0
 
@@ -145,6 +167,24 @@ class WorkerSupervisor:
             )
             stop.wait(delay)
         return 0
+
+    def _open_github_token_pipe(self) -> int | None:
+        if self.github_token is None:
+            return None
+        if os.name == "nt":
+            raise RuntimeError("GitHub token pipes require a POSIX runtime")
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(
+                write_fd,
+                self.github_token.get_secret_value().encode(),
+            )
+        except BaseException:
+            os.close(read_fd)
+            raise
+        finally:
+            os.close(write_fd)
+        return read_fd
 
     def _wait_for_worker(
         self,
@@ -277,6 +317,7 @@ def supervisor_main(
         return 0 if lease_is_healthy(args.lease_path) else 1
 
     state_dir = Path(env["SENPAI_OPENHANDS_STATE_DIR"]).resolve()
+    github_token = _consume_github_token(env)
     stop = threading.Event()
 
     def request_stop(_signum: int, _frame: object) -> None:
@@ -296,10 +337,27 @@ def supervisor_main(
             ),
             lease_path=state_dir / "controller-lease.json",
             environment=env,
+            github_token=github_token,
         ).run(stop)
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
+
+
+def _consume_github_token(env: Mapping[str, str]) -> SecretStr:
+    value = env.get(GITHUB_TOKEN_FILE_ENV)
+    if not value:
+        raise RuntimeError(f"{GITHUB_TOKEN_FILE_ENV} is required")
+    path = Path(value).resolve()
+    try:
+        if not path.is_file() or path.stat().st_mode & 0o077:
+            raise RuntimeError("GitHub token handoff must be a private regular file")
+        token = path.read_text(encoding="utf-8").strip()
+    finally:
+        path.unlink(missing_ok=True)
+    if not token:
+        raise RuntimeError("GitHub token handoff is empty")
+    return SecretStr(token)
 
 
 if __name__ == "__main__":

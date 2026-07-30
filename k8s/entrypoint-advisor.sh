@@ -16,6 +16,10 @@ export SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
 GIT_ASKPASS_FILE="/tmp/senpai-git-askpass"
 LOGDIR="/var/lib/senpai/$RESEARCH_TAG/advisor"
 mkdir -p "$LOGDIR"
+if [ -z "${GITHUB_TOKEN:-}" ] && [ -n "${SENPAI_GITHUB_TOKEN_FILE:-}" ]; then
+    export GITHUB_TOKEN="$(<"$SENPAI_GITHUB_TOKEN_FILE")"
+fi
+: "${GITHUB_TOKEN:?GitHub bootstrap token is required}"
 export SENPAI_OPENHANDS_STATE_DIR="$LOGDIR/openhands_state"
 export SENPAI_OPENHANDS_ROLE_FILE="$LOGDIR/SENPAI-ADVISOR.md"
 envsubst '$PROBLEM_DIR $TARGET_REPO_URL $GH_REPO $ADVISOR_BRANCH $RESEARCH_TAG $GPUS_PER_STUDENT $WANDB_ENTITY $WANDB_PROJECT' \
@@ -29,9 +33,6 @@ echo "Problem dir:  $PROBLEM_DIR"
 echo "Tag:          $RESEARCH_TAG"
 echo "Students:     $STUDENT_NAMES"
 echo "GitHub history: $GH_HISTORY_SCOPE"
-
-source "$WORKDIR/k8s/wait-senpai-start-gate.sh"
-wait_for_senpai_start_gate
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
@@ -133,4 +134,11 @@ export IS_SANDBOX=1
 export SENPAI_OPENHANDS_WORKSPACE="$TARGET_WORKDIR"
 export SENPAI_OPENHANDS_HARNESS_FILE="$WORKDIR/system_instructions/SENPAI-HARNESS.md"
 export SENPAI_OPENHANDS_TIMEOUT_SECONDS="${SENPAI_OPENHANDS_TIMEOUT_SECONDS:-3600}"
+if [ -z "${SENPAI_GITHUB_TOKEN_FILE:-}" ]; then
+    export SENPAI_GITHUB_TOKEN_FILE="/tmp/senpai-supervisor-github-token"
+    umask 077
+    printf '%s' "$GITHUB_TOKEN" > "$SENPAI_GITHUB_TOKEN_FILE"
+fi
+unset GITHUB_TOKEN GH_TOKEN GIT_ASKPASS
+rm -f "$GIT_ASKPASS_FILE"
 exec python -m senpai_agent.supervisor advisor

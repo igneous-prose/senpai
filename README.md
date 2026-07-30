@@ -88,6 +88,7 @@ senpai/
 ├── k8s/                      # entrypoints, launcher, and manifests
 ├── Dockerfile.advisor        # Chromium; no training stack
 ├── Dockerfile.student        # CUDA/PyTorch + Chromium
+├── Dockerfile.cutoff         # minimal kubectl deadline job
 ├── senpai.yaml
 └── SPEC.md
 ```
@@ -134,7 +135,10 @@ The main advisor/student terminal denies raw GitHub mutations, `git push`,
 direct training launches, sleeps, polling loops, and log streams. Native
 OpenHands hooks provide early feedback; the in-process wrapper enforces the
 same policy if hooks are bypassed or fail. File-defined subagents receive the
-raw OpenHands terminal and file editor alongside applicable Senpai tools.
+raw OpenHands terminal and file editor, plus nested delegation where
+applicable. They receive no GitHub credential or GitHub tools. They return
+findings to the main advisor or student, which owns typed GitHub reads and
+transitions.
 
 ## Conversations and monitoring
 
@@ -155,6 +159,10 @@ compact signal. A fresh context-free child decides whether the signal warrants
 waking the main student; failures always wake conservatively. If it wakes, the
 controller resumes the same student UUID with the compact conclusion. The
 decision is persisted across retries, and the triage child omits browser tools.
+Invalid metrics and individual W&B or training-status failures become bounded
+hard-failure signals without blocking other monitors or event mailboxes.
+Monitor triage publishes its own progress lease so a normal triage cannot
+expire the controller's poll deadline.
 
 While an advisor turn is active, its GitHub watcher can append a new
 `review_ready` event through OpenHands' concurrent message path. The advisor is
@@ -237,12 +245,14 @@ The image workflow publishes:
 ```text
 ghcr.io/wandb/senpai-advisor:sha-<40-character-source-commit>
 ghcr.io/wandb/senpai-student:sha-<40-character-source-commit>
+ghcr.io/wandb/senpai-cutoff:sha-<40-character-source-commit>
 ```
 
-Both images are built from the exact same revision, install Chromium, and run
-a browser smoke test during the build. The advisor image excludes PyTorch,
-CUDA, and Kubernetes tooling. The student image validates CUDA/PyTorch and its
-supported architectures.
+All images are built from the exact same revision. Advisor and student install
+Chromium and run a browser smoke test during the build. The advisor image
+excludes PyTorch, CUDA, and Kubernetes tooling. The student image validates
+CUDA/PyTorch and its supported architectures. The cutoff image contains only
+the shell/Python runtime and a checksum-verified pinned `kubectl`.
 
 Build locally:
 
@@ -256,6 +266,10 @@ docker build \
   -f Dockerfile.student \
   --build-arg SENPAI_SOURCE_REVISION="$revision" \
   -t "senpai-student:sha-$revision" .
+docker build \
+  -f Dockerfile.cutoff \
+  --build-arg SENPAI_SOURCE_REVISION="$revision" \
+  -t "senpai-cutoff:sha-$revision" .
 ```
 
 The launcher accepts only matching full-SHA tags or immutable digests. GitHub
@@ -305,6 +319,10 @@ labels, writes one launch Secret and per-role ConfigMaps, and deploys the two
 role images. It creates no Service, event token, ServiceAccount, or RBAC. A
 deterministic ConfigMap/Secret hash rolls pods when effective configuration
 changes.
+
+If a cluster cutoff job releases a gated launch, `--start_gate_path` and the
+cutoff's `--start-gate-path` must name the same absolute normalized file
+beneath `--pvc_mount_path`. Both CLIs reject pod-local or relative paths.
 
 `EXA_API_KEY` powers the researcher agent's direct Exa publication-search tool
 through the official `exa-py` library. No Exa MCP server is configured.

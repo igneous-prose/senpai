@@ -65,16 +65,55 @@ install_senpai_target_git_guard() {
     mkdir -p "$target_workdir/.git/hooks"
     cat > "$target_workdir/.git/hooks/pre-push" <<'EOF'
 #!/bin/sh
-while read -r local_ref _ remote_ref _; do
-    [ "$remote_ref" = "refs/heads/$ADVISOR_BRANCH" ] || continue
-    [ "$SENPAI_ROLE" != "student" ] || {
-        echo "SENPAI-GIT-GUARD: students must not push $ADVISOR_BRANCH" >&2
-        exit 2
-    }
-    [ "$SENPAI_ROLE" != "advisor" ] || [ "$local_ref" = "refs/heads/$ADVISOR_BRANCH" ] || {
-        echo "SENPAI-GIT-GUARD: advisor must push $ADVISOR_BRANCH from local $ADVISOR_BRANCH, not ${local_ref:-<unknown>}" >&2
-        exit 2
-    }
+refuse_push() {
+    echo "SENPAI-GIT-GUARD: refusing $1" >&2
+    exit 2
+}
+
+advisor_owns_student_ref() {
+    candidate="$1"
+    previous_ifs="$IFS"
+    IFS=,
+    for student in ${STUDENT_NAMES:-}; do
+        case "$candidate" in
+            "refs/heads/$student/"*)
+                IFS="$previous_ifs"
+                return 0
+                ;;
+        esac
+    done
+    IFS="$previous_ifs"
+    return 1
+}
+
+source_is_branch_tip() {
+    local_ref="$1"
+    local_sha="$2"
+    branch_ref="$3"
+    [ "$local_ref" = "$branch_ref" ] && return 0
+    [ "$local_ref" = "$local_sha" ] || return 1
+    branch_sha="$(git rev-parse --verify "$branch_ref" 2>/dev/null)" || return 1
+    [ "$branch_sha" = "$local_sha" ]
+}
+
+while read -r local_ref local_sha remote_ref _; do
+    [ "$local_ref" != "(delete)" ] || refuse_push "branch deletion"
+    case "$SENPAI_ROLE:$remote_ref" in
+        "advisor:refs/heads/$ADVISOR_BRANCH")
+            source_is_branch_tip \
+                "$local_ref" "$local_sha" "refs/heads/$ADVISOR_BRANCH" ||
+                refuse_push "$ADVISOR_BRANCH from ${local_ref:-<unknown>}"
+            ;;
+        advisor:refs/heads/*)
+            advisor_owns_student_ref "$remote_ref" ||
+                refuse_push "advisor write to $remote_ref"
+            ;;
+        "student:refs/heads/$STUDENT_NAME/"*)
+            source_is_branch_tip "$local_ref" "$local_sha" "$remote_ref" ||
+                refuse_push "$remote_ref from ${local_ref:-<unknown>}"
+            ;;
+        *) refuse_push "$SENPAI_ROLE write to $remote_ref" ;;
+    esac
 done
 EOF
     chmod +x "$target_workdir/.git/hooks/pre-push"

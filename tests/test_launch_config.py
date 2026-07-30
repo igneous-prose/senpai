@@ -132,6 +132,44 @@ def test_launch_needs_no_cross_node_service_or_rbac():
     assert "serviceAccountName:" not in result.stdout
 
 
+@pytest.mark.parametrize("gate", ["relative/start-gate", "/tmp/start-gate"])
+def test_launch_rejects_start_gate_outside_the_shared_pvc(gate: str):
+    revision = "a" * 40
+
+    result = run_launch(
+        "--advisor_image",
+        f"ghcr.io/wandb/senpai-advisor:sha-{revision}",
+        "--student_image",
+        f"ghcr.io/wandb/senpai-student:sha-{revision}",
+        "--pvc_mount_path",
+        "/mnt/shared",
+        "--start_gate_path",
+        gate,
+    )
+
+    assert result.returncode != 0
+    assert "start_gate_path" in result.stderr
+    assert "shared PVC" in result.stderr
+
+
+def test_launch_accepts_start_gate_beneath_the_shared_pvc():
+    revision = "a" * 40
+
+    result = run_launch(
+        "--advisor_image",
+        f"ghcr.io/wandb/senpai-advisor:sha-{revision}",
+        "--student_image",
+        f"ghcr.io/wandb/senpai-student:sha-{revision}",
+        "--pvc_mount_path",
+        "/mnt/shared",
+        "--start_gate_path",
+        "/mnt/shared/gates/start",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert 'SENPAI_START_GATE_PATH: "/mnt/shared/gates/start"' in result.stdout
+
+
 def test_launch_secret_is_self_contained_and_both_roles_reference_it():
     revision = "a" * 40
 

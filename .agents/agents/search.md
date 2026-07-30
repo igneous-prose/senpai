@@ -14,7 +14,6 @@ tools:
   - terminal
   - file_editor
   - browser_tool_set
-  - get_prs
   - delegate_agent
 skills:
   - exa-publication-search

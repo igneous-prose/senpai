@@ -542,6 +542,60 @@ def test_student_cannot_use_the_standalone_push_transition(
         close_tools(tools)
 
 
+def test_advisor_push_transition_is_limited_to_the_configured_advisor_branch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    push_calls = []
+
+    def push(workspace, **kwargs):
+        push_calls.append((workspace, kwargs))
+        return PushResult(
+            changed=True,
+            branch=kwargs["branch"],
+            head_sha="b" * 40,
+        )
+
+    monkeypatch.setattr("senpai_agent.tools.push_assignment_branch", push)
+    tools = create_senpai_tools(
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=FakeGitHubWorkflow(),
+        role="advisor",
+        advisor_branch="schmidhuber",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+
+    try:
+        with pytest.raises(PermissionError, match="advisor branch"):
+            transition(
+                GitHubTransitionAction(
+                    transition=PushBranchTransition(
+                        operation="push_branch",
+                        branch="main",
+                        expected_remote_sha="a" * 40,
+                    )
+                )
+            )
+        assert push_calls == []
+
+        observation = transition(
+            GitHubTransitionAction(
+                transition=PushBranchTransition(
+                    operation="push_branch",
+                    branch="schmidhuber",
+                    expected_remote_sha="a" * 40,
+                )
+            )
+        )
+        assert observation.state == "branch_pushed"
+        assert push_calls[0][1]["branch"] == "schmidhuber"
+    finally:
+        close_tools(tools)
+
+
 def test_student_result_is_preflighted_before_its_branch_is_pushed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -596,6 +650,53 @@ def test_student_result_is_preflighted_before_its_branch_is_pushed(
             )
         ]
         assert push_calls == []
+    finally:
+        close_tools(tools)
+
+
+def test_student_result_validates_the_declared_local_head_before_push(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    github = FakeGitHubWorkflow()
+    push_calls = []
+
+    def push(workspace, **kwargs):
+        push_calls.append((workspace, kwargs))
+        return PushResult(
+            changed=True,
+            branch=kwargs["branch"],
+            head_sha=kwargs["expected_local_sha"],
+        )
+
+    monkeypatch.setattr("senpai_agent.tools.push_assignment_branch", push)
+    tools = create_senpai_tools(
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=github,
+        role="student",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+
+    try:
+        result = experiment_result()
+        observation = transition(
+            GitHubTransitionAction(
+                transition=SubmitResultTransition(
+                    operation="submit_result",
+                    pr_number=17,
+                    branch="student-one/candidate",
+                    expected_remote_sha="a" * 40,
+                    expected_head_sha="c" * 40,
+                    result=result,
+                )
+            )
+        )
+
+        assert observation.state == "result_submitted"
+        assert push_calls[0][1]["expected_local_sha"] == "c" * 40
     finally:
         close_tools(tools)
 

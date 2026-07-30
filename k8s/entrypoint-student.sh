@@ -14,6 +14,10 @@ export SENPAI_ROLE="student"
 export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
 export SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
 GIT_ASKPASS_FILE="/tmp/senpai-git-askpass"
+if [ -z "${GITHUB_TOKEN:-}" ] && [ -n "${SENPAI_GITHUB_TOKEN_FILE:-}" ]; then
+    export GITHUB_TOKEN="$(<"$SENPAI_GITHUB_TOKEN_FILE")"
+fi
+: "${GITHUB_TOKEN:?GitHub bootstrap token is required}"
 
 echo "=== Senpai Student: $STUDENT_NAME ==="
 echo "Runner repo:  $REPO_URL (revision: $REPO_REVISION)"
@@ -21,9 +25,6 @@ echo "Target repo:  $TARGET_REPO_URL (base branch: ${TARGET_REPO_BRANCH:-<defaul
 echo "Problem dir:  $PROBLEM_DIR"
 echo "GitHub history: $GH_HISTORY_SCOPE"
 echo "GPUs:         $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l) x $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
-
-source "$WORKDIR/k8s/wait-senpai-start-gate.sh"
-wait_for_senpai_start_gate
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
@@ -86,4 +87,11 @@ envsubst '$PROBLEM_DIR $TARGET_REPO_URL $GH_REPO $ADVISOR_BRANCH $RESEARCH_TAG $
 export SENPAI_OPENHANDS_WORKSPACE="$TARGET_WORKDIR"
 export SENPAI_OPENHANDS_HARNESS_FILE="$WORKDIR/system_instructions/SENPAI-HARNESS.md"
 export SENPAI_OPENHANDS_TIMEOUT_SECONDS="${SENPAI_OPENHANDS_TIMEOUT_SECONDS:-3600}"
+if [ -z "${SENPAI_GITHUB_TOKEN_FILE:-}" ]; then
+    export SENPAI_GITHUB_TOKEN_FILE="/tmp/senpai-supervisor-github-token"
+    umask 077
+    printf '%s' "$GITHUB_TOKEN" > "$SENPAI_GITHUB_TOKEN_FILE"
+fi
+unset GITHUB_TOKEN GH_TOKEN GIT_ASKPASS
+rm -f "$GIT_ASKPASS_FILE"
 exec python -m senpai_agent.supervisor student

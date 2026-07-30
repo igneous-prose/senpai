@@ -7,6 +7,7 @@
 """Launch senpai advisor and student agents as K8s resources."""
 
 import base64
+import posixpath
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -114,6 +115,20 @@ def validate_timing_args(args: Args) -> None:
     for name in non_negative:
         if getattr(args, name) < 0:
             sys.exit(f"ERROR: --{name} must be non-negative")
+    if args.start_gate_path:
+        gate = posixpath.normpath(args.start_gate_path)
+        mount = posixpath.normpath(args.pvc_mount_path)
+        inside_mount = gate.startswith(f"{mount.rstrip('/')}/")
+        if (
+            not posixpath.isabs(gate)
+            or gate != args.start_gate_path
+            or not posixpath.isabs(mount)
+            or not inside_mount
+        ):
+            sys.exit(
+                "ERROR: --start_gate_path must be an absolute normalized file "
+                "path beneath the shared PVC --pvc_mount_path"
+            )
 
 
 def load_extra_instructions(extra_instructions: str) -> str:

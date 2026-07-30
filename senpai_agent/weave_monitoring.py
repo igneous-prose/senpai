@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
+from threading import Lock
 
 from weave_openhands import finish as weave_finish
 from weave_openhands import init as weave_init
 
 _initialized = False
 _project_name: str | None = None
+_content_redactor: SecretRedactor | None = None
 TRACE_SECRET_ENV_NAMES = (
     "GITHUB_TOKEN",
     "GH_TOKEN",
@@ -43,9 +45,32 @@ def weave_agent_name(env: Mapping[str, str]) -> str:
     return role
 
 
-def secret_redactor(env: Mapping[str, str]) -> Callable[[str], str]:
+class SecretRedactor:
+    def __init__(self, values: set[str]):
+        self._lock = Lock()
+        self._values = self._sorted(values)
+
+    @staticmethod
+    def _sorted(values: set[str]) -> tuple[str, ...]:
+        return tuple(sorted(filter(None, values), key=len, reverse=True))
+
+    def register(self, value: str) -> None:
+        if not value:
+            return
+        with self._lock:
+            self._values = self._sorted({*self._values, value})
+
+    def __call__(self, content: str) -> str:
+        with self._lock:
+            values = self._values
+        for value in values:
+            content = content.replace(value, "<secret-hidden>")
+        return content
+
+
+def secret_redactor(env: Mapping[str, str]) -> SecretRedactor:
     configured_model_key = env.get("SENPAI_OPENHANDS_API_KEY_ENV")
-    secret_values = sorted(
+    return SecretRedactor(
         {
             value
             for name, value in env.items()
@@ -54,23 +79,19 @@ def secret_redactor(env: Mapping[str, str]) -> Callable[[str], str]:
                 _is_secret_env(name)
                 or (configured_model_key is not None and name == configured_model_key)
             )
-        },
-        key=len,
-        reverse=True,
+        }
     )
 
-    def redact(content: str) -> str:
-        for value in secret_values:
-            content = content.replace(value, "<secret-hidden>")
-        return content
 
-    return redact
+def register_trace_secret(value: str) -> None:
+    if _content_redactor is not None:
+        _content_redactor.register(value)
 
 
 def initialize_weave_monitoring(
     env: Mapping[str, str] = os.environ,
 ) -> str | None:
-    global _initialized, _project_name
+    global _content_redactor, _initialized, _project_name
     if _initialized:
         return _project_name
 
@@ -78,23 +99,26 @@ def initialize_weave_monitoring(
     if project_name is None:
         return None
 
+    redactor = secret_redactor(env)
     weave_init(
         project_name,
         agent_name=weave_agent_name(env),
         capture_content=True,
-        content_transform=secret_redactor(env),
+        content_transform=redactor,
     )
+    _content_redactor = redactor
     _initialized = True
     _project_name = project_name
     return project_name
 
 
 def finish_weave_monitoring() -> None:
-    global _initialized, _project_name
+    global _content_redactor, _initialized, _project_name
     if not _initialized:
         return
     try:
         weave_finish()
     finally:
+        _content_redactor = None
         _initialized = False
         _project_name = None

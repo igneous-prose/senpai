@@ -32,9 +32,21 @@ spec:
         research-tag: {{RESEARCH_TAG}}
     spec:
       terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: advisor
         image: {{ADVISOR_IMAGE}}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         command: ["/bin/bash", "-c"]
         args:
         - |
@@ -56,7 +68,13 @@ spec:
           git remote add origin "$REPO_URL"
           test "$(git rev-parse HEAD)" = "$REPO_REVISION"
           test "$SENPAI_IMAGE_REVISION" = "$REPO_REVISION"
-          bash k8s/entrypoint-advisor.sh
+          token_handoff=/tmp/senpai-supervisor-github-token
+          umask 077
+          printf '%s' "$GITHUB_TOKEN" > "$token_handoff"
+          export SENPAI_GITHUB_TOKEN_FILE="$token_handoff"
+          unset GITHUB_TOKEN GH_TOKEN
+          rm -f "$askpass"
+          exec bash k8s/entrypoint-advisor.sh
         envFrom:
         - configMapRef:
             name: {{ADVISOR_CONFIGMAP_NAME}}
@@ -106,7 +124,7 @@ spec:
           periodSeconds: 30
           timeoutSeconds: 5
           failureThreshold: 5
-          terminationGracePeriodSeconds: 20
+          terminationGracePeriodSeconds: 75
         volumeMounts:
         - name: dataset
           mountPath: {{PVC_MOUNT_PATH}}

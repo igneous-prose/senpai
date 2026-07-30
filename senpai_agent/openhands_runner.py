@@ -1,5 +1,6 @@
 """Run one bounded Senpai OpenHands turn for the Python controller."""
 
+# ruff: noqa: E402
 # OpenHands imports intentionally follow Weave initialization below.
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from senpai_agent.delegation import (
 from senpai_agent.weave_monitoring import (
     finish_weave_monitoring,
     initialize_weave_monitoring,
+    register_trace_secret,
 )
 
 WEAVE_PROJECT = initialize_weave_monitoring()
@@ -72,6 +74,7 @@ COMMAND_SECRET_ENV_NAMES = (
     "WANDB_API_KEY",
     "EXA_API_KEY",
 )
+GITHUB_TOKEN_FD_ENV = "SENPAI_GITHUB_TOKEN_FD"
 GITHUB_SECRET_ENV_NAMES = ("GITHUB_TOKEN", "GH_TOKEN")
 EVENT_TEXT_LIMIT = 20000
 
@@ -111,7 +114,7 @@ class RunnerConfig:
     api_key_env: str
     api_key: SecretStr
     github_repo: str
-    github_token: SecretStr
+    github_token: SecretStr | None
     github_trusted_actor: str | None
     command_secrets: Mapping[str, str]
     reasoning_effort: str
@@ -170,7 +173,23 @@ def command_secrets(env: Mapping[str, str]) -> dict[str, str]:
     }
 
 
-def github_token(env: Mapping[str, str]) -> SecretStr:
+def github_token(
+    env: Mapping[str, str],
+    *,
+    required: bool = True,
+) -> SecretStr | None:
+    token_fd = env.get(GITHUB_TOKEN_FD_ENV)
+    if token_fd:
+        try:
+            descriptor = int(token_fd)
+        except ValueError as error:
+            raise RuntimeError(f"{GITHUB_TOKEN_FD_ENV} must be an integer") from error
+        with os.fdopen(descriptor, encoding="utf-8") as token_stream:
+            value = token_stream.read().strip()
+        if not value:
+            raise RuntimeError(f"{GITHUB_TOKEN_FD_ENV} is empty")
+        return SecretStr(value)
+
     token_file = env.get("SENPAI_GITHUB_TOKEN_FILE")
     if token_file:
         path = Path(token_file)
@@ -193,7 +212,9 @@ def github_token(env: Mapping[str, str]) -> SecretStr:
         None,
     )
     if value is None:
-        raise RuntimeError("GITHUB_TOKEN or GH_TOKEN is required")
+        if required:
+            raise RuntimeError("GITHUB_TOKEN or GH_TOKEN is required")
+        return None
     return SecretStr(value.strip())
 
 
@@ -340,7 +361,7 @@ def resolve_config(
         api_key_env=api_key_env,
         api_key=resolve_api_key(env, api_key_env),
         github_repo=github_repo(env),
-        github_token=github_token(env),
+        github_token=github_token(env, required=not args.child),
         github_trusted_actor=env.get("SENPAI_GITHUB_ACTOR"),
         command_secrets=command_secrets(env),
         reasoning_effort=env_value(
@@ -509,6 +530,8 @@ def local_event_db_path(config: RunnerConfig) -> Path:
 def build_main_tools(config: RunnerConfig) -> list[Tool]:
     """Keep native reasoning tools while replacing unsafe control boundaries."""
 
+    if config.github_token is None:
+        raise RuntimeError("main agents require GitHub credentials")
     register_senpai_tools()
     tools = [
         tool
@@ -553,7 +576,6 @@ def delegation_config(config: RunnerConfig) -> DelegationConfig:
         api_key_env=config.api_key_env,
         api_key=config.api_key.get_secret_value(),
         github_repo=config.github_repo,
-        github_token=config.github_token.get_secret_value(),
         github_trusted_actor=config.github_trusted_actor,
         smart_reasoning_effort=config.reasoning_effort,
         fast_reasoning_effort=config.fast_reasoning_effort,
@@ -705,15 +727,18 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         flush=True,
     )
 
-    configure_github_credentials(
-        config.github_repo,
-        config.github_token,
-        trusted_actor=config.github_trusted_actor,
-    )
+    if config.github_token is not None:
+        register_trace_secret(config.github_token.get_secret_value())
+        configure_github_credentials(
+            config.github_repo,
+            config.github_token,
+            trusted_actor=config.github_trusted_actor,
+        )
     configure_delegation(delegation_config(config))
     for name in (
         *GITHUB_SECRET_ENV_NAMES,
         "SENPAI_GITHUB_TOKEN_FILE",
+        GITHUB_TOKEN_FD_ENV,
     ):
         os.environ.pop(name, None)
     conversation = None

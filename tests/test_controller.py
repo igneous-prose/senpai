@@ -1,3 +1,5 @@
+import subprocess
+import time
 from pathlib import Path
 from uuid import UUID
 
@@ -6,31 +8,43 @@ from pydantic import SecretStr
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.controller import (
     AssignmentConversationRegistry,
+    CompositeMailbox,
     Controller,
     ControllerEvent,
     ConversationLedger,
     GitHubMailbox,
     LocalStudentMailbox,
+    MonitorMailbox,
+    OpenHandsMonitorTriage,
     StudentConversationSelector,
+    StudentWorkspaceReconciler,
     SystemContextLedger,
     TurnResult,
     _full_prompt,
 )
 from senpai_agent.models import AssignmentRecord, render_assignment_marker
+from senpai_agent.monitor import (
+    MonitorEvaluation,
+    MonitorSignal,
+    MonitorStore,
+    TrainingMonitorSpec,
+)
 from senpai_agent.supervisor import ProgressLease, WorkerLease
+from senpai_agent.training import TrainingState
 
 
 class Mailbox:
     def __init__(self, polls):
         self.polls = list(polls)
         self.calls = 0
+        self.acknowledged = []
 
     def poll(self):
         self.calls += 1
         return self.polls.pop(0) if self.polls else ()
 
-    def acknowledge(self, _dedupe_keys):
-        pass
+    def acknowledge(self, dedupe_keys):
+        self.acknowledged.append(tuple(dedupe_keys))
 
 
 class Turns:
@@ -107,14 +121,15 @@ def test_late_student_child_result_wakes_its_exact_parent(tmp_path: Path):
         )
 
     events = LocalStudentMailbox(store_path).poll()
-    selected = StudentConversationSelector(
+    batches = StudentConversationSelector(
         AssignmentConversationRegistry(tmp_path / "students.json")
     )(events)
 
     assert len(events) == 1
     assert events[0].payload["count"] == 1
     assert events[0].payload["conversation_id"] == str(first_parent)
-    assert selected == first_parent
+    assert len(batches) == 1
+    assert batches[0].conversation_id == first_parent
 
 
 def test_controller_builds_first_turn_from_program_and_role_task(
@@ -223,7 +238,8 @@ def test_controller_retries_an_unacknowledged_event_after_turn_failure():
     controller.run(max_cycles=2)
 
     assert len(turns.calls) == 2
-    assert turns.calls[1][2] is True
+    assert turns.calls[1][2] is False
+    assert all("programme" in call[0] for call in turns.calls)
 
 
 def test_controller_retries_an_unacknowledged_event_after_sdk_exception():
@@ -247,7 +263,298 @@ def test_controller_retries_an_unacknowledged_event_after_sdk_exception():
     controller.run(max_cycles=2)
 
     assert len(turns.calls) == 1
-    assert turns.calls[0][2] is True
+    assert turns.calls[0][2] is False
+    assert "programme" in turns.calls[0][0]
+
+
+def test_student_events_are_delivered_and_acknowledged_per_conversation(
+    tmp_path: Path,
+):
+    first = UUID("00000000-0000-0000-0000-000000000081")
+    second = UUID("00000000-0000-0000-0000-000000000082")
+    first_event = ControllerEvent(
+        kind="training_monitor",
+        dedupe_key="monitor:first",
+        payload={"conversation_id": str(first), "summary": "first only"},
+    )
+    second_event = ControllerEvent(
+        kind="local_events_pending",
+        dedupe_key="child:second",
+        payload={"conversation_id": str(second), "summary": "second only"},
+    )
+    mailbox = Mailbox([(first_event, second_event), ()])
+    turns = Turns()
+    controller = Controller(
+        role="student",
+        mailbox=mailbox,
+        turns=turns,
+        conversation_id=first,
+        full_prompt="programme",
+        conversation_for_events=StudentConversationSelector(
+            AssignmentConversationRegistry(tmp_path / "students.json")
+        ),
+        sleep=lambda _seconds: None,
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+    )
+
+    controller.run(max_cycles=1)
+
+    assert [call[1] for call in turns.calls] == [first, second]
+    assert "first only" in turns.calls[0][0]
+    assert "second only" not in turns.calls[0][0]
+    assert "second only" in turns.calls[1][0]
+    assert "first only" not in turns.calls[1][0]
+    assert mailbox.acknowledged == [("monitor:first",), ("child:second",)]
+
+
+def test_one_student_conversation_failure_does_not_ack_or_starve_another(
+    tmp_path: Path,
+):
+    first = UUID("00000000-0000-0000-0000-000000000083")
+    second = UUID("00000000-0000-0000-0000-000000000084")
+    first_event = ControllerEvent(
+        kind="training_monitor",
+        dedupe_key="monitor:first",
+        payload={"conversation_id": str(first)},
+    )
+    second_event = ControllerEvent(
+        kind="training_monitor",
+        dedupe_key="monitor:second",
+        payload={"conversation_id": str(second)},
+    )
+    mailbox = Mailbox([(first_event, second_event)])
+    turns = SequencedTurns([1, 0])
+    controller = Controller(
+        role="student",
+        mailbox=mailbox,
+        turns=turns,
+        conversation_id=first,
+        full_prompt="programme",
+        conversation_for_events=StudentConversationSelector(
+            AssignmentConversationRegistry(tmp_path / "students.json")
+        ),
+        sleep=lambda _seconds: None,
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+    )
+
+    controller.run(max_cycles=1)
+
+    assert [call[1] for call in turns.calls] == [first, second]
+    assert mailbox.acknowledged == [("monitor:second",)]
+
+
+def test_composite_mailbox_keeps_healthy_events_when_a_peer_fails(capsys):
+    event = ControllerEvent(
+        kind="student_assignment",
+        dedupe_key="assignment:healthy",
+        payload={"assignment_id": "healthy"},
+    )
+
+    class BrokenMailbox:
+        def poll(self):
+            raise RuntimeError("monitor backend unavailable")
+
+        def acknowledge(self, _dedupe_keys):
+            return
+
+    mailbox = CompositeMailbox(BrokenMailbox(), Mailbox([(event,)]))
+
+    assert mailbox.poll() == (event,)
+    assert "SENPAI_MAILBOX_ERROR RuntimeError" in capsys.readouterr().err
+
+
+def test_hard_monitor_failure_wakes_without_model_triage(tmp_path: Path):
+    conversation_id = UUID("00000000-0000-0000-0000-000000000086")
+    signal = MonitorSignal(
+        kind="training_status",
+        dedupe_key="training:failed",
+        training_id="training-1",
+        state=TrainingState.FAILED,
+        detail="training failed",
+        hard_failure=True,
+    )
+    store = MonitorStore(tmp_path / "monitors.sqlite3")
+    spec = TrainingMonitorSpec(
+        training_id="training-1",
+        conversation_id=conversation_id,
+    )
+    store.register(spec)
+    store.record_poll(spec, MonitorEvaluation(signals=(signal,)), None)
+
+    class Engine:
+        def poll(self):
+            return ()
+
+    triage_calls = []
+
+    class Triage:
+        def decide(self, _signal, _conversation_id):
+            triage_calls.append((_signal, _conversation_id))
+            raise AssertionError("hard failures must not spend a model call")
+
+    events = MonitorMailbox(Engine(), store, Triage()).poll()
+
+    assert len(events) == 1
+    assert events[0].payload["conversation_id"] == str(conversation_id)
+    assert store.decision(signal.dedupe_key).wake_main is True
+    assert triage_calls == []
+    store.close()
+
+
+def test_monitor_triage_publishes_a_lease_beyond_its_child_timeout(
+    tmp_path: Path,
+    monkeypatch,
+):
+    lease_path = tmp_path / "controller-lease.json"
+    observed = []
+
+    class Child:
+        def __init__(self, _config, _request):
+            return
+
+        def run(self, _task, _timeout):
+            observed.append(WorkerLease.read(lease_path))
+            return '{"wake_main":true,"summary":"wake","reason":"test"}'
+
+    monkeypatch.setattr("senpai_agent.delegation.OpenHandsChildProcess", Child)
+    triage = OpenHandsMonitorTriage(
+        object(),
+        timeout_seconds=40,
+        progress=ProgressLease(lease_path),
+    )
+    signal = MonitorSignal(
+        kind="metric_stale",
+        dedupe_key="training:stale",
+        training_id="training-1",
+        metric="loss",
+        state=TrainingState.RUNNING,
+        detail="loss is stale",
+    )
+
+    decision = triage.decide(
+        signal,
+        UUID("00000000-0000-0000-0000-000000000087"),
+    )
+
+    assert decision.wake_main is True
+    assert observed[0].phase == "monitor-triage"
+    assert observed[0].deadline - time.monotonic() >= 60
+
+
+def test_controller_waits_behind_start_gate_while_refreshing_its_lease(
+    tmp_path: Path,
+):
+    gate = tmp_path / "start-gate"
+    lease_path = tmp_path / "controller-lease.json"
+    mailbox = Mailbox([()])
+    sleeps = []
+
+    def open_gate(seconds):
+        sleeps.append(seconds)
+        gate.write_text("open")
+
+    controller = Controller(
+        role="advisor",
+        mailbox=mailbox,
+        turns=Turns(),
+        conversation_id=UUID("00000000-0000-0000-0000-000000000085"),
+        full_prompt="programme",
+        progress=ProgressLease(lease_path),
+        start_gate_path=gate,
+        start_gate_poll_seconds=7,
+        sleep=open_gate,
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+    )
+
+    controller.run(max_cycles=1)
+
+    assert sleeps == [7]
+    assert mailbox.calls == 1
+    lease = WorkerLease.read(lease_path)
+    assert lease.phase == "poll"
+
+
+def test_assignment_reconciliation_preserves_unpushed_commits_on_restart(
+    tmp_path: Path,
+):
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    workspace = tmp_path / "student"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True)
+    subprocess.run(["git", "init", str(seed)], check=True)
+    subprocess.run(["git", "-C", str(seed), "config", "user.name", "test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(seed), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    (seed / "program.py").write_text("baseline\n")
+    subprocess.run(["git", "-C", str(seed), "add", "program.py"], check=True)
+    subprocess.run(["git", "-C", str(seed), "commit", "-m", "baseline"], check=True)
+    subprocess.run(
+        ["git", "-C", str(seed), "branch", "-M", "student/candidate"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(seed), "remote", "add", "origin", str(remote)],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(seed), "push", "origin", "student/candidate"],
+        check=True,
+    )
+    remote_head = subprocess.run(
+        ["git", "-C", str(seed), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "clone", "--branch", "student/candidate", str(remote), str(workspace)],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(workspace), "config", "user.name", "student"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(workspace), "config", "user.email", "student@example.com"],
+        check=True,
+    )
+    (workspace / "program.py").write_text("candidate\n")
+    subprocess.run(
+        ["git", "-C", str(workspace), "commit", "-am", "candidate"], check=True
+    )
+    local_head = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    (workspace / "notes.txt").write_text("dirty but recoverable\n")
+    event = ControllerEvent(
+        kind="student_assignment",
+        dedupe_key="assignment:restart",
+        payload={
+            "head_ref": "student/candidate",
+            "head_sha": remote_head,
+        },
+    )
+
+    StudentWorkspaceReconciler(workspace)((event,))
+
+    assert (
+        subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        == local_head
+    )
+    assert (workspace / "notes.txt").read_text() == "dirty but recoverable\n"
 
 
 def test_controller_continues_a_conversation_recorded_before_restart(

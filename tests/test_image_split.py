@@ -59,6 +59,30 @@ def test_both_images_include_gh_and_working_chromium():
         assert "senpai-browser-smoke-test &&" in dockerfile
 
 
+def test_both_role_images_run_as_the_same_explicit_non_root_user():
+    for role in ("advisor", "student"):
+        dockerfile = (ROOT / f"Dockerfile.{role}").read_text(encoding="utf-8")
+
+        assert "USER 10001:10001" in dockerfile
+        assert "HOME=/home/senpai" in dockerfile
+        assert "PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright" in dockerfile
+        assert "mkdir -p /workspace /workspaces /var/lib/senpai" in dockerfile
+        assert dockerfile.rindex("ENV HOME=/home/senpai") > dockerfile.index(
+            "senpai-browser-smoke-test &&"
+        )
+        assert dockerfile.rindex("ENV HOME=/home/senpai") < dockerfile.index(
+            "USER 10001:10001"
+        )
+
+
+def test_student_managed_python_is_accessible_to_the_runtime_user():
+    dockerfile = (ROOT / "Dockerfile.student").read_text(encoding="utf-8")
+
+    assert "UV_PYTHON_INSTALL_DIR=/opt/uv-python" in dockerfile
+    assert 'uv python install --install-dir "$UV_PYTHON_INSTALL_DIR"' in dockerfile
+    assert '/opt/senpai-venv "$UV_PYTHON_INSTALL_DIR"' in dockerfile
+
+
 def test_both_images_expose_the_controller_lease_as_their_healthcheck():
     for role in ("advisor", "student"):
         dockerfile = (ROOT / f"Dockerfile.{role}").read_text(encoding="utf-8")
@@ -87,7 +111,7 @@ def test_both_images_record_the_exact_source_revision():
         assert 'SENPAI_IMAGE_REVISION="${SENPAI_SOURCE_REVISION}"' in dockerfile
 
 
-def test_build_workflow_builds_both_images_from_the_exact_checked_out_commit():
+def test_build_workflow_builds_all_images_from_the_exact_checked_out_commit():
     source = (ROOT / ".github" / "workflows" / "build.yaml").read_text(encoding="utf-8")
     workflow = yaml.safe_load(source)
     events = yaml.load(source, Loader=yaml.BaseLoader)["on"]
@@ -95,7 +119,7 @@ def test_build_workflow_builds_both_images_from_the_exact_checked_out_commit():
     roles = build["strategy"]["matrix"]["role"]
     steps = {step["name"]: step for step in build["steps"]}
 
-    assert set(roles) == {"advisor", "student"}
+    assert set(roles) == {"advisor", "student", "cutoff"}
     assert events["pull_request"] == {}
     assert build["env"]["IMAGE_NAME"] == ("${{ github.repository }}-${{ matrix.role }}")
     assert steps["Checkout"]["with"]["ref"] == "${{ env.SOURCE_REVISION }}"
@@ -118,9 +142,7 @@ def test_runtime_workflow_uses_the_lockfile_uv_and_exa_versions():
     workflow = yaml.safe_load(
         (ROOT / ".github" / "workflows" / "test.yaml").read_text(encoding="utf-8")
     )
-    steps = {
-        step["name"]: step for step in workflow["jobs"]["runtime"]["steps"]
-    }
+    steps = {step["name"]: step for step in workflow["jobs"]["runtime"]["steps"]}
 
     assert steps["Install uv and Python"]["with"]["version"] == "0.10.9"
     install = steps["Install runtime test dependencies"]["run"]
@@ -156,6 +178,7 @@ def test_entrypoints_delegate_runtime_lifecycle_to_the_python_supervisor():
     assert "serve-events" not in entrypoint
     assert "SENPAI_ADVISOR_EVENT_TOKEN" not in entrypoint
     assert "exec python -m senpai_agent.supervisor" in entrypoint
+    assert "wait_for_senpai_start_gate" not in entrypoint
     assert "readinessProbe" not in container
     assert container["livenessProbe"]["exec"]["command"][:2] == [
         "/bin/sh",
@@ -177,6 +200,9 @@ def test_bootstrap_git_credentials_are_not_exposed_in_process_arguments():
         assert "${GITHUB_TOKEN}@github.com" not in bootstrap
         assert "GIT_ASKPASS" in bootstrap
         assert "mkdir -p /workspace" in bootstrap
+        assert "SENPAI_GITHUB_TOKEN_FILE" in bootstrap
+        assert "unset GITHUB_TOKEN GH_TOKEN" in bootstrap
+        assert "exec bash" in bootstrap
 
     for role in ("advisor", "student"):
         container = container_for(load_kubernetes_template(f"{role}-deployment.yaml"))
@@ -185,6 +211,31 @@ def test_bootstrap_git_credentials_are_not_exposed_in_process_arguments():
             in container["startupProbe"]["exec"]["command"][2]
         )
         assert container["startupProbe"]["failureThreshold"] == 60
+
+
+def test_role_pods_enforce_non_root_process_isolation():
+    for role in ("advisor", "student"):
+        deployment = load_kubernetes_template(f"{role}-deployment.yaml")
+        pod = deployment["spec"]["template"]["spec"]
+        container = container_for(deployment)
+
+        assert pod["securityContext"] == {
+            "runAsNonRoot": True,
+            "runAsUser": 10001,
+            "runAsGroup": 10001,
+            "fsGroup": 10001,
+            "fsGroupChangePolicy": "OnRootMismatch",
+            "seccompProfile": {"type": "RuntimeDefault"},
+        }
+        assert container["securityContext"] == {
+            "allowPrivilegeEscalation": False,
+            "capabilities": {"drop": ["ALL"]},
+        }
+        assert (
+            pod["terminationGracePeriodSeconds"]
+            > container["livenessProbe"]["terminationGracePeriodSeconds"]
+        )
+        assert container["livenessProbe"]["terminationGracePeriodSeconds"] >= 75
 
 
 def test_runtime_git_auth_uses_ephemeral_askpass_not_a_credential_store():
@@ -202,6 +253,10 @@ def test_runtime_git_auth_uses_ephemeral_askpass_not_a_credential_store():
             encoding="utf-8"
         )
         assert 'GIT_ASKPASS_FILE="/tmp/senpai-git-askpass"' in entrypoint
+        assert (
+            'SENPAI_GITHUB_TOKEN_FILE="/tmp/senpai-supervisor-github-token"'
+            in entrypoint
+        )
         assert ".git-credentials" not in entrypoint
         assert 'credential.helper "store' not in entrypoint
 

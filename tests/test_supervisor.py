@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from uuid import UUID
 
+from pydantic import SecretStr
+
 from senpai_agent.supervisor import SupervisorConfig, WorkerSupervisor
 
 
@@ -27,6 +29,87 @@ def run_supervisor(
     thread = threading.Thread(target=lambda: results.append(supervisor.run(stop)))
     thread.start()
     return thread, results
+
+
+def test_supervisor_default_grace_allows_controller_cleanup():
+    assert SupervisorConfig().terminate_grace_seconds == 60
+
+
+def test_restarted_workers_receive_github_token_without_environment_exposure(
+    tmp_path: Path,
+):
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        """
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+state = Path(sys.argv[1])
+count_path = state / "starts"
+count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+count_path.write_text(str(count))
+token_fd = int(os.environ["SENPAI_GITHUB_TOKEN_FD"])
+with os.fdopen(token_fd) as token_stream:
+    token = token_stream.read()
+with (state / "observations").open("a") as output:
+    output.write(json.dumps({
+        "token": token,
+        "github_env": os.environ.get("GITHUB_TOKEN"),
+        "gh_env": os.environ.get("GH_TOKEN"),
+        "token_file_env": os.environ.get("SENPAI_GITHUB_TOKEN_FILE"),
+    }) + "\\n")
+
+lease = Path(os.environ["SENPAI_CONTROLLER_LEASE_PATH"])
+lease.write_text(json.dumps({
+    "pid": os.getpid(),
+    "phase": "ready",
+    "deadline": time.monotonic() + 30,
+}))
+if count == 1:
+    raise SystemExit(19)
+(state / "ready").write_text("ready")
+while True:
+    time.sleep(1)
+""".strip()
+    )
+    stop = threading.Event()
+    supervisor = WorkerSupervisor(
+        command=(sys.executable, str(worker), str(tmp_path)),
+        lease_path=tmp_path / "controller-lease.json",
+        github_token=SecretStr("write-token-sentinel"),
+        environment={
+            **os.environ,
+            "GITHUB_TOKEN": "must-not-survive",
+            "GH_TOKEN": "must-not-survive",
+        },
+        config=SupervisorConfig(
+            startup_timeout_seconds=1,
+            check_interval_seconds=0.01,
+            terminate_grace_seconds=0.1,
+            initial_backoff_seconds=0.01,
+            max_backoff_seconds=0.01,
+        ),
+    )
+
+    thread, results = run_supervisor(supervisor, stop)
+    wait_for(tmp_path / "ready")
+    stop.set()
+    thread.join(5)
+
+    assert results == [0]
+    observations = [
+        json.loads(line)
+        for line in (tmp_path / "observations").read_text().splitlines()
+    ]
+    assert len(observations) == 2
+    assert all(item["token"] == "write-token-sentinel" for item in observations)
+    assert all(item["github_env"] is None for item in observations)
+    assert all(item["gh_env"] is None for item in observations)
+    assert all(item["token_file_env"] is None for item in observations)
+    assert not list(tmp_path.glob(".github-token-*"))
 
 
 def test_crashed_worker_restarts_with_the_same_durable_conversation(

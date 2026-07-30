@@ -59,6 +59,32 @@ def test_monitoring_requires_complete_wandb_project_configuration():
         monitoring.weave_project_name({"WANDB_ENTITY": "wandb-applied-ai-team"})
 
 
+def test_monitoring_redacts_a_secret_registered_after_initialization(monkeypatch):
+    calls = []
+    monkeypatch.setattr(monitoring, "_initialized", False)
+    monkeypatch.setattr(monitoring, "_project_name", None)
+    monkeypatch.setattr(
+        monitoring,
+        "weave_init",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(monitoring, "weave_finish", lambda: None)
+
+    monitoring.initialize_weave_monitoring(
+        {
+            "WANDB_ENTITY": "wandb-applied-ai-team",
+            "WANDB_PROJECT": "senpai-v1",
+        }
+    )
+    transform = calls[0][1]["content_transform"]
+    assert transform("late-write-token") == "late-write-token"
+
+    monitoring.register_trace_secret("late-write-token")
+
+    assert transform("late-write-token") == "<secret-hidden>"
+    monitoring.finish_weave_monitoring()
+
+
 def test_secret_redactor_replaces_overlapping_values_longest_first():
     redact = monitoring.secret_redactor(
         {

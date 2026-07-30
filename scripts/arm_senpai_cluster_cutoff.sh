@@ -20,7 +20,7 @@ BUDGET_HOURS="48"
 PVC_CLAIM_NAME="new-pvc"
 PVC_MOUNT_PATH="/mnt/new-pvc"
 PVC_LOG_ROOT="/mnt/new-pvc/senpai-conversation-logs"
-IMAGE="ghcr.io/wandb/senpai:latest"
+IMAGE=""
 START_GATE_PATH=""
 DRY_RUN="false"
 
@@ -38,7 +38,8 @@ Options:
   --pvc-claim NAME            PVC claim mounted into cutoff job (default: new-pvc)
   --pvc-mount-path PATH       Mount path inside cutoff job (default: /mnt/new-pvc)
   --pvc-log-root PATH         PVC cutoff-state root (default: /mnt/new-pvc/senpai-conversation-logs)
-  --image IMAGE               Image containing bash, python, and kubectl (default: ghcr.io/wandb/senpai:latest)
+  --image IMAGE               Immutable cutoff image digest or :sha-<commit> tag
+                              (default: this checkout's senpai-cutoff commit tag)
   --start-gate-path PATH      Write this file after all pods are Ready, releasing gated pods
   --dry-run                   Print manifests and helper script without applying
 USAGE
@@ -64,6 +65,39 @@ done
 
 if [ -z "$RUN_SLUG" ] || [ -z "$TAGS_CSV" ]; then
   usage >&2
+  exit 2
+fi
+
+if [ -z "$IMAGE" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SOURCE_REVISION="$(git -C "$SCRIPT_DIR/.." rev-parse --verify HEAD 2>/dev/null)" || {
+    echo "Unable to resolve the Senpai checkout revision; pass --image." >&2
+    exit 2
+  }
+  IMAGE="ghcr.io/wandb/senpai-cutoff:sha-${SOURCE_REVISION}"
+fi
+if [[ ! "$IMAGE" =~ @sha256:[0-9a-f]{64}$ && ! "$IMAGE" =~ :sha-[0-9a-f]{40}$ ]]; then
+  echo "--image must be an immutable digest or :sha-<40-character-commit> tag" >&2
+  exit 2
+fi
+if [ -n "$START_GATE_PATH" ] && ! python - "$START_GATE_PATH" "$PVC_MOUNT_PATH" <<'PY'
+import posixpath
+import sys
+
+gate, mount = map(posixpath.normpath, sys.argv[1:])
+valid = (
+    posixpath.isabs(gate)
+    and gate == sys.argv[1]
+    and posixpath.isabs(mount)
+    and gate.startswith(f"{mount.rstrip('/')}/")
+)
+if not valid:
+    raise SystemExit(
+        "ERROR: --start-gate-path must be an absolute normalized file path "
+        "beneath the shared PVC --pvc-mount-path"
+    )
+PY
+then
   exit 2
 fi
 

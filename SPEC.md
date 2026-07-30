@@ -143,6 +143,12 @@ OpenHands stores base state and individual events beneath that UUID. A killed
 worker resumes from the last persisted event. An in-flight response or tool
 call without a durable event is retried from the preceding event.
 
+The controller marks a conversation started, and records its current system
+context revision, only after the first OpenHands turn succeeds. A crash or
+nonzero first turn therefore retries the complete programme and assignment
+prompt instead of incorrectly continuing from instructions that were never
+delivered.
+
 Student state is ephemeral by default. Losing it is acceptable after the
 assignment ends because the PR, branch, typed result, W&B runs, and Weave trace
 are durable. The advisor state is persisted by the deployment.
@@ -319,10 +325,12 @@ task and may search the parent's durable history path. With
 `include_context=true`, it also receives the complete model-visible parent
 history, including progressively disclosed skill content.
 
-Children receive the raw OpenHands terminal, file editor, applicable Senpai
-tools, and the same `delegate_agent` function for nested foreground work. They
-do not receive training tools. Background nesting is rejected because a child
-may exit before a grandchild's durable result can be consumed.
+Children receive the raw OpenHands terminal, file editor, the
+`delegate_agent` tool, and progressively disclosed skills. They receive neither GitHub
+credentials nor GitHub read/write tools; the parent prepares any large PR
+Markdown artifact and owns every typed GitHub operation. They do not receive
+training tools. Background nesting is rejected because a child may exit before
+a grandchild's durable result can be consumed.
 
 When `review_ready` arrives during other advisor work, the role policy asks the
 advisor to launch a smart, full-context, background general-purpose review and
@@ -359,12 +367,25 @@ metric value from W&B, evaluates deterministic threshold/change/staleness and
 terminal-state rules, and persists deduplicated compact signals. Ordinary
 polls use no LLM tokens.
 
+Metric samples reject NaN and infinities. A failure in one monitor's training
+status or W&B lookup advances that monitor's schedule and emits one
+deduplicated `monitor_error` hard signal; it cannot block other monitors,
+GitHub events, child results, or an already-pending hard-failure wake. Repeating
+`monitor_training` with a changed policy replaces the stored policy and resets
+its derived samples and signals to match the new marker.
+
 A fresh no-context generic child triages each actionable signal. Hard failures
 always wake even if triage fails. A no-wake decision acknowledges the signal.
 A wake decision is persisted with the signal, so retrying an unacknowledged
 student turn does not pay for the triage child again. The triage child omits
-browser tools. A wake event carries the original student conversation UUID and
-a compact summary.
+browser tools. Triage publishes a distinct lease whose deadline includes the
+child's execution and shutdown grace. A wake event carries the original
+student conversation UUID and a compact summary.
+
+Controller events are partitioned by their exact conversation UUID before a
+turn. Each partition is acknowledged only after its own successful turn, so a
+child result for one assignment cannot consume or permanently block a training
+event for another.
 
 The Stop hook permits a running job only after its durable monitor marker
 exists, allowing the student turn to end while the controller supervises it.
@@ -390,14 +411,24 @@ exit.
 
 ## Secrets and Weave
 
-The GitHub write token is resolved before tool initialization and held in a
-typed in-process vault. It is absent from model-facing tool schemas and terminal
-secrets. Generic child processes receive it through a private mode-0600
-one-use file, consume and unlink that file, then re-vault the token.
+The entrypoint uses the GitHub write token only for bootstrap, writes it to a
+private mode-0600 file under the pod-local `/tmp`, removes the askpass helper,
+clears all raw token environment variables, and execs the supervisor. The
+supervisor consumes and unlinks that bootstrap file into typed in-process
+memory. Before each controller restart it creates a one-shot inherited pipe;
+the worker reads and closes that pipe before tool initialization. No raw token
+is written to conversation/dataset storage. The long-lived PID 1 environment,
+model-facing tool schemas, and agent terminal contain no GitHub token.
+
+Generic child processes receive no GitHub token and no GitHub tools. Main-role
+GitHub operations remain typed and lease/state guarded. Terminal and hook
+policies are behavioral guardrails, not a credential-containment boundary.
 
 Git operations use a temporary askpass helper rather than a persistent
 credential store. The runner repository cannot push, and a target pre-push hook
-enforces role/branch rules.
+enforces the exact role/branch matrix. Images run as an unprivileged user, and
+the Kubernetes containers drop every Linux capability, disallow privilege
+escalation, and use the runtime-default seccomp profile.
 
 Weave content capture applies a longest-first transform over all configured
 API keys, tokens, passwords, secrets, credentials, and the selected custom
@@ -408,15 +439,18 @@ OpenHands conversation ID.
 
 ## Images and launch acceptance
 
-Two images are built from the same exact source commit:
+Three images are built from the same exact source commit:
 
 - advisor: Python/OpenHands, GitHub CLI, and Chromium; no PyTorch, CUDA, or
   Kubernetes tooling;
-- student: the CUDA/PyTorch stack plus the same OpenHands and Chromium runtime.
+- student: the CUDA/PyTorch stack plus the same OpenHands and Chromium runtime;
+- cutoff: a minimal shell/Python runtime with one checksum-verified, pinned
+  `kubectl`.
 
-Both build Chromium and run a browser smoke test. The student image validates
-CUDA architecture support. The launcher accepts only matching full source-SHA
-tags or immutable digests and checks out that exact revision.
+Advisor and student build Chromium and run a browser smoke test. The student
+image validates CUDA architecture support. The launcher and cutoff arming
+script accept only matching full source-SHA tags or immutable digests and check
+out that exact revision.
 
 Launch preflight verifies:
 
@@ -433,8 +467,12 @@ The Kubernetes launcher creates one Secret, ConfigMaps, and Deployments. It
 creates no Service or RBAC. Docker and local hosts need no shared network for
 Senpai communication.
 
-Hivemind startup remains commented with a clear note. Cluster cutoff still
-waits for readiness/deadline and deletes launch resources; all conversation
+Hivemind startup remains commented with a clear note. The Python controller
+waits for the optional cluster start gate while continuously refreshing a
+`start-gate` lease; readiness therefore cannot deadlock gated launch. Cluster
+launch and cutoff CLIs accept a gate only when it is an absolute normalized
+file path beneath their shared PVC mount. Cluster cutoff still waits for
+readiness/deadline and deletes launch resources; all conversation
 harvest/archive code is removed.
 
 ## Removed code

@@ -4,7 +4,8 @@ ARG PLAYWRIGHT_VERSION=1.55.0
 ARG SENPAI_SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${SENPAI_SOURCE_REVISION}"
 
-ENV PATH="/opt/senpai-venv/bin:/root/.local/bin:${PATH}" \
+ENV PATH="/opt/senpai-venv/bin:/home/senpai/.local/bin:${PATH}" \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     SENPAI_IMAGE_REVISION="${SENPAI_SOURCE_REVISION}" \
     SENPAI_PYTHON=/opt/senpai-venv/bin/python \
     UV_PROJECT_ENVIRONMENT=/opt/senpai-venv \
@@ -15,6 +16,8 @@ ENV PATH="/opt/senpai-venv/bin:/root/.local/bin:${PATH}" \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates curl gettext-base git gnupg procps && \
+    groupadd --gid 10001 senpai && \
+    useradd --uid 10001 --gid 10001 --create-home senpai && \
     rm -rf /var/lib/apt/lists/*
 
 # Install gh from its architecture-neutral apt repository.
@@ -43,6 +46,7 @@ RUN cd /tmp/senpai && \
       > requirements.txt && \
     uv pip install --python "$SENPAI_PYTHON" -r requirements.txt && \
     python -c 'import importlib.metadata, importlib.util, openhands.sdk, sys; assert sys.version_info[:2] == (3, 13); assert importlib.util.find_spec("torch") is None; assert importlib.metadata.version("openhands-sdk") == "1.39.1"; assert importlib.metadata.version("weave-openhands") == "0.1.0"' && \
+    chown -R 10001:10001 /opt/senpai-venv && \
     rm -rf /root/.cache/uv
 
 COPY scripts/senpai-browser-smoke-test.py /usr/local/bin/senpai-browser-smoke-test
@@ -52,10 +56,16 @@ RUN uvx --from "playwright==${PLAYWRIGHT_VERSION}" \
       playwright install chromium --with-deps --no-shell && \
     chmod +x /usr/local/bin/senpai-browser-smoke-test && \
     senpai-browser-smoke-test && \
+    mkdir -p /workspace /workspaces /var/lib/senpai && \
+    chown -R 10001:10001 \
+      /opt/ms-playwright /workspace /workspaces /var/lib/senpai && \
     rm -rf /root/.cache/uv /root/.config/browseruse /var/lib/apt/lists/*
+
+ENV HOME=/home/senpai
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=5 \
     CMD python -m senpai_agent.supervisor health \
       "/var/lib/senpai/${RESEARCH_TAG}/advisor/openhands_state/controller-lease.json"
 
 WORKDIR /workspaces
+USER 10001:10001

@@ -27,10 +27,11 @@ def push_assignment_branch(
     *,
     branch: str,
     expected_remote_sha: str,
+    expected_local_sha: str | None = None,
     remote: str = "origin",
     token: SecretStr | None = None,
 ) -> PushResult:
-    """Push one clean assignment branch with an exact remote-head lease."""
+    """Push one clean assignment branch with exact local and remote head leases."""
 
     workspace = Path(workspace).resolve()
     _validate_token(token)
@@ -47,6 +48,10 @@ def push_assignment_branch(
         )
 
     local_sha = _git(workspace, "rev-parse", "HEAD")
+    if expected_local_sha is not None and local_sha != expected_local_sha:
+        raise GitWorkflowPreconditionError(
+            f"local head is {local_sha}, expected {expected_local_sha}"
+        )
     remote_sha = _remote_head(workspace, remote, branch, token=token)
     if remote_sha == local_sha:
         return PushResult(False, branch, local_sha)

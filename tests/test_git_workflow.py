@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
+import senpai_agent.git_workflow as git_workflow
 from senpai_agent.git_workflow import (
     GitWorkflowPreconditionError,
     create_assignment_branch,
@@ -64,6 +65,95 @@ def test_push_assignment_branch_is_guarded_verified_and_idempotent(tmp_path: Pat
     assert git(remote, "rev-parse", "refs/heads/experiment-7") == candidate_sha
 
 
+@pytest.mark.parametrize(
+    ("role", "branch"),
+    [
+        ("advisor", "experiment-7"),
+        ("student", "student-one/experiment-7"),
+    ],
+)
+def test_push_assignment_branch_uses_a_validated_ref_accepted_by_the_role_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    branch: str,
+):
+    workspace, remote, previous_sha = repository(tmp_path)
+    if branch != "experiment-7":
+        git(workspace, "branch", "-m", branch)
+        git(workspace, "push", "-u", "origin", branch)
+    guard = (
+        Path(__file__).parents[1] / "plugins" / "senpai" / "scripts" / "git-guard.sh"
+    )
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; install_senpai_target_git_guard "$2"',
+            "install-guard",
+            str(guard),
+            str(workspace),
+        ],
+        check=True,
+    )
+    monkeypatch.setenv("SENPAI_ROLE", role)
+    monkeypatch.setenv("ADVISOR_BRANCH", "experiment-7")
+    monkeypatch.setenv("STUDENT_NAME", "student-one")
+    monkeypatch.setenv("STUDENT_NAMES", "student-one")
+    (workspace / "model.py").write_text("baseline = 2\n")
+    git(workspace, "add", "model.py")
+    git(workspace, "commit", "-m", "candidate")
+
+    pushed = push_assignment_branch(
+        workspace,
+        branch=branch,
+        expected_remote_sha=previous_sha,
+    )
+
+    assert pushed.changed is True
+    assert git(remote, "rev-parse", f"refs/heads/{branch}") == pushed.head_sha
+
+
+def test_push_assignment_branch_publishes_only_the_validated_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace, remote, previous_sha = repository(tmp_path)
+    (workspace / "model.py").write_text("baseline = 2\n")
+    git(workspace, "add", "model.py")
+    git(workspace, "commit", "-m", "validated candidate")
+    validated_sha = git(workspace, "rev-parse", "HEAD")
+    real_remote_head = git_workflow._remote_head
+    remote_reads = 0
+
+    def advance_branch_after_remote_read(*args, **kwargs):
+        nonlocal remote_reads
+        remote_sha = real_remote_head(*args, **kwargs)
+        remote_reads += 1
+        if remote_reads == 1:
+            (workspace / "model.py").write_text("baseline = 3\n")
+            git(workspace, "add", "model.py")
+            git(workspace, "commit", "-m", "concurrent unvalidated candidate")
+        return remote_sha
+
+    monkeypatch.setattr(
+        git_workflow,
+        "_remote_head",
+        advance_branch_after_remote_read,
+    )
+
+    pushed = push_assignment_branch(
+        workspace,
+        branch="experiment-7",
+        expected_remote_sha=previous_sha,
+        expected_local_sha=validated_sha,
+    )
+
+    assert pushed.head_sha == validated_sha
+    assert git(workspace, "rev-parse", "HEAD") != validated_sha
+    assert git(remote, "rev-parse", "refs/heads/experiment-7") == validated_sha
+
+
 def test_push_assignment_branch_rejects_dirty_or_diverged_worktree(
     tmp_path: Path,
 ):
@@ -97,6 +187,25 @@ def test_push_assignment_branch_rejects_dirty_or_diverged_worktree(
             branch="experiment-7",
             expected_remote_sha=previous_sha,
         )
+
+
+def test_push_assignment_branch_rejects_the_wrong_local_head_before_publication(
+    tmp_path: Path,
+):
+    workspace, remote, previous_sha = repository(tmp_path)
+    (workspace / "model.py").write_text("baseline = 2\n")
+    git(workspace, "add", "model.py")
+    git(workspace, "commit", "-m", "candidate")
+
+    with pytest.raises(GitWorkflowPreconditionError, match="local head"):
+        push_assignment_branch(
+            workspace,
+            branch="experiment-7",
+            expected_remote_sha=previous_sha,
+            expected_local_sha="f" * 40,
+        )
+
+    assert git(remote, "rev-parse", "refs/heads/experiment-7") == previous_sha
 
 
 def test_create_assignment_branch_does_not_touch_the_advisor_worktree(

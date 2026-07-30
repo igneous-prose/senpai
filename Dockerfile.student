@@ -5,13 +5,17 @@ ARG PLAYWRIGHT_VERSION=1.55.0
 ARG SENPAI_SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${SENPAI_SOURCE_REVISION}"
 
-ENV PATH="/opt/senpai-venv/bin:/root/.local/bin:${PATH}" \
+ENV PATH="/opt/senpai-venv/bin:/home/senpai/.local/bin:${PATH}" \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python \
     SENPAI_IMAGE_REVISION="${SENPAI_SOURCE_REVISION}" \
     BROWSER_USE_DISABLE_EXTENSIONS=1
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates curl gettext-base git gnupg procps && \
+    groupadd --gid 10001 senpai && \
+    useradd --uid 10001 --gid 10001 --create-home senpai && \
     rm -rf /var/lib/apt/lists/*
 
 # Install gh from its architecture-neutral apt repository.
@@ -26,7 +30,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # The CoreWeave base currently ships Python 3.12. Use a pinned uv to install
 # CPython 3.13 and make it the image-wide python/python3 runtime.
 RUN python3 -m pip install --no-cache-dir "uv==0.10.9" && \
-    uv python install "$PYTHON_VERSION" && \
+    uv python install --install-dir "$UV_PYTHON_INSTALL_DIR" "$PYTHON_VERSION" && \
     uv venv --python "$PYTHON_VERSION" /opt/senpai-venv && \
     python --version
 
@@ -41,6 +45,7 @@ RUN cd /tmp/senpai && \
       --format requirements.txt > requirements.txt && \
     uv pip install --python "$SENPAI_PYTHON" --upgrade -r requirements.txt && \
     python -c 'import importlib.metadata, openhands.sdk, sys, torch; assert sys.version_info[:2] == (3, 13); assert torch.__version__.startswith("2.13."); assert torch.version.cuda and torch.version.cuda.startswith("13."); assert importlib.metadata.version("openhands-sdk") == "1.39.1"; assert importlib.metadata.version("weave-openhands") == "0.1.0"' && \
+    chown -R 10001:10001 /opt/senpai-venv "$UV_PYTHON_INSTALL_DIR" && \
     rm -rf /root/.cache/uv
 
 COPY scripts/senpai-browser-smoke-test.py /usr/local/bin/senpai-browser-smoke-test
@@ -49,6 +54,9 @@ RUN uvx --from "playwright==${PLAYWRIGHT_VERSION}" \
       playwright install chromium --with-deps --no-shell && \
     chmod +x /usr/local/bin/senpai-browser-smoke-test && \
     senpai-browser-smoke-test && \
+    mkdir -p /workspace /workspaces /var/lib/senpai && \
+    chown -R 10001:10001 \
+      /opt/ms-playwright /workspace /workspaces /var/lib/senpai && \
     rm -rf /root/.cache/uv /root/.config/browseruse /var/lib/apt/lists/*
 
 # Use the standard NVIDIA Container Toolkit contract on supported x86_64 hosts.
@@ -62,8 +70,11 @@ RUN chmod +x /usr/local/bin/senpai-gpu-smoke-test && \
     python -c 'import torch; required={"sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120"}; assert required <= set(torch.cuda.get_arch_list())' && \
     python -c 'from torch.utils.cpp_extension import _get_cuda_arch_flags; assert _get_cuda_arch_flags()'
 
+ENV HOME=/home/senpai
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=5 \
     CMD python -m senpai_agent.supervisor health \
       "/var/lib/senpai/openhands_state/controller-lease.json"
 
 WORKDIR /workspaces
+USER 10001:10001

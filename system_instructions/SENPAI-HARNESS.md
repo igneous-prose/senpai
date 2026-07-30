@@ -84,8 +84,9 @@ contract.
   terminal behind a fail-closed policy that denies raw GitHub mutations,
   direct training launches, polling loops, sleeps, and log streams owned by
   typed controller tools. File-defined subagents receive the raw OpenHands
-  terminal and file editor for normal investigation and development, but must
-  still use typed Senpai tools for GitHub workflow transitions.
+  terminal and file editor for normal investigation and development. They
+  receive no GitHub credential or GitHub read/write tools: report any requested
+  workflow transition to the parent, which owns the typed operation.
 - Never print, persist, embed, or return secret values. Tools receive
   credentials through narrow executor boundaries.
 - Conversation state lives outside the target checkout. Senpai does not prune
