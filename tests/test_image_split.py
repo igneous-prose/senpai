@@ -55,8 +55,7 @@ def test_both_images_include_gh_and_working_chromium():
 
         assert "apt-get install -y gh" in dockerfile
         assert "playwright install chromium" in dockerfile
-        assert "senpai-browser-smoke-test" in dockerfile
-        assert "senpai-browser-smoke-test &&" in dockerfile
+        assert "RUN senpai-browser-smoke-test" in dockerfile
 
 
 def test_both_role_images_run_as_the_same_explicit_non_root_user():
@@ -65,13 +64,16 @@ def test_both_role_images_run_as_the_same_explicit_non_root_user():
 
         assert "USER 10001:10001" in dockerfile
         assert "HOME=/home/senpai" in dockerfile
-        assert "PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright" in dockerfile
-        assert "mkdir -p /workspace /workspaces /var/lib/senpai" in dockerfile
-        assert dockerfile.rindex("ENV HOME=/home/senpai") > dockerfile.index(
-            "senpai-browser-smoke-test &&"
+        assert (
+            "PLAYWRIGHT_BROWSERS_PATH=/home/senpai/.cache/ms-playwright"
+            in dockerfile
         )
+        assert "mkdir -p /workspace /workspaces /var/lib/senpai" in dockerfile
         assert dockerfile.rindex("ENV HOME=/home/senpai") < dockerfile.index(
             "USER 10001:10001"
+        )
+        assert dockerfile.index("USER 10001:10001") < dockerfile.index(
+            "RUN senpai-browser-smoke-test"
         )
 
 
