@@ -84,7 +84,7 @@ def test_secret_redactor_replaces_overlapping_values_longest_first():
 
 
 def test_weave_openhands_traces_a_real_openhands_turn(
-    tmp_path, trace_exporter: InMemorySpanExporter
+    tmp_path, monkeypatch, trace_exporter: InMemorySpanExporter
 ):
     uninstrument()
     trace_exporter.clear()
@@ -102,6 +102,10 @@ def test_weave_openhands_traces_a_real_openhands_turn(
         from openhands.sdk.llm import Message, MessageToolCall, TextContent
         from openhands.sdk.testing import TestLLM
 
+        monkeypatch.setattr(
+            "openhands.sdk.llm.llm_profile_store._DEFAULT_PROFILE_DIR",
+            tmp_path / ".openhands" / "profiles",
+        )
         response = Message(
             role="assistant",
             content=[TextContent(text="Finishing the task")],

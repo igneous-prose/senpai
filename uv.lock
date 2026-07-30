@@ -2714,8 +2714,8 @@ wheels = [
 
 [[package]]
 name = "openhands-sdk"
-version = "1.39.0"
-source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e#856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e" }
+version = "1.39.1"
+source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032#29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032" }
 dependencies = [
     { name = "agent-client-protocol" },
     { name = "deprecation" },
@@ -2738,8 +2738,8 @@ dependencies = [
 
 [[package]]
 name = "openhands-tools"
-version = "1.39.0"
-source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e#856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e" }
+version = "1.39.1"
+source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032#29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032" }
 dependencies = [
     { name = "binaryornot" },
     { name = "browser-use" },
@@ -6242,8 +6242,8 @@ requires-dist = [
     { name = "jupyter", marker = "extra == 'dev'" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "openhands-sdk", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e" },
-    { name = "openhands-tools", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e" },
+    { name = "openhands-sdk", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032" },
+    { name = "openhands-tools", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032" },
     { name = "psutil" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv" },

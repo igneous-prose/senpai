@@ -183,12 +183,18 @@ deployed harness or role and injects the current text once without rotating the
 conversation UUID.
 
 The project pins both OpenHands SDK packages to commit
-`856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e` in
+`29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032` in
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk).
-That fork is fast-forwarded to OpenHands SDK 1.39.0 and adds a typed Anthropic
+That fork tracks OpenHands SDK 1.39.1 and adds a typed Anthropic
 `prompt_cache_ttl="1h"` option. OpenAI continues to use its native
 `prompt_cache_retention="24h"` option; Senpai does not send Anthropic TTL
 arguments to OpenAI.
+
+For direct `openai/*` models, Senpai explicitly selects OpenHands' Responses
+API path for both agent inference and context condensation. It opts into
+`reasoning_summary="auto"`, which requests the most detailed reasoning summary
+available from the selected model, while retaining encrypted reasoning state
+for stateless continuation.
 
 ## Images
 

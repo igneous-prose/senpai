@@ -24,6 +24,7 @@ from senpai_agent.openhands_runner import (
     find_role_file,
     graceful_interrupts,
     main,
+    openai_responses_configuration,
     openhands_reasoning_effort,
     parse_runner_args,
     prompt_cache_configuration,
@@ -171,6 +172,43 @@ def test_role_is_system_context_loaded_before_project_skills():
 )
 def test_provider_specific_prompt_cache_configuration(model, expected):
     assert prompt_cache_configuration(model) == expected
+
+
+def test_openai_uses_responses_with_the_most_detailed_reasoning_summary():
+    configuration = openai_responses_configuration("openai/gpt-5.4")
+    llm = LLM(
+        model="openai/gpt-5.4",
+        api_key=SecretStr("test-key"),
+        reasoning_effort="xhigh",
+        **configuration,
+    )
+
+    assert configuration == {
+        "api_mode": "responses",
+        "reasoning_summary": "auto",
+    }
+    assert llm.uses_responses_api() is True
+
+    call_kwargs = llm._prepare_responses_params(
+        messages=[
+            Message(role="user", content=[TextContent(text="Investigate the task")])
+        ],
+        tools=[],
+        include=None,
+        store=False,
+        add_security_risk_prediction=False,
+        kwargs={},
+    )[3]
+
+    assert call_kwargs["reasoning"] == {
+        "effort": "xhigh",
+        "summary": "auto",
+    }
+    assert "reasoning.encrypted_content" in call_kwargs["include"]
+
+
+def test_non_openai_models_do_not_force_the_responses_api():
+    assert openai_responses_configuration("anthropic/claude-opus-4-8") == {}
 
 
 def test_event_summary_preserves_bounded_reasoning_and_action():

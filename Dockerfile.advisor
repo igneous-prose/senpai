@@ -42,7 +42,7 @@ RUN cd /tmp/senpai && \
       --prune matplotlib \
       > requirements.txt && \
     uv pip install --python "$SENPAI_PYTHON" -r requirements.txt && \
-    python -c 'import importlib.metadata, importlib.util, openhands.sdk, sys; assert sys.version_info[:2] == (3, 13); assert importlib.util.find_spec("torch") is None; assert importlib.metadata.version("openhands-sdk") == "1.39.0"; assert importlib.metadata.version("weave-openhands") == "0.1.0"' && \
+    python -c 'import importlib.metadata, importlib.util, openhands.sdk, sys; assert sys.version_info[:2] == (3, 13); assert importlib.util.find_spec("torch") is None; assert importlib.metadata.version("openhands-sdk") == "1.39.1"; assert importlib.metadata.version("weave-openhands") == "0.1.0"' && \
     rm -rf /root/.cache/uv
 
 COPY scripts/senpai-browser-smoke-test.py /usr/local/bin/senpai-browser-smoke-test

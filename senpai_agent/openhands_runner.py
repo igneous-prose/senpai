@@ -436,6 +436,16 @@ def prompt_cache_configuration(model: str) -> dict[str, str]:
     return {}
 
 
+def openai_responses_configuration(model: str) -> dict[str, str]:
+    if model.split("/", 1)[0].lower() != "openai":
+        return {}
+    return {
+        "api_mode": "responses",
+        # OpenAI defines "auto" as the most detailed summarizer available.
+        "reasoning_summary": "auto",
+    }
+
+
 def build_main_tools(config: RunnerConfig) -> list[Tool]:
     """Keep native reasoning tools while replacing unsafe control boundaries."""
 
@@ -657,6 +667,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             reasoning_effort=openhands_reasoning_effort(config.reasoning_effort),
             usage_id="senpai",
             **prompt_cache_configuration(config.model),
+            **openai_responses_configuration(config.model),
         )
         if config.agent_name:
             definition = find_named_agent(config.agent_name, file_agents)

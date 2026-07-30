@@ -198,7 +198,7 @@ def test_python_deps_and_icml_target_import(test_pod):
         "assert sys.version_info[:2] == (3, 13)\n"
         "assert torch.__version__.startswith('2.13.')\n"
         "assert torch.version.cuda.startswith('13.')\n"
-        "assert importlib.metadata.version('openhands-sdk') == '1.39.0'\n"
+        "assert importlib.metadata.version('openhands-sdk') == '1.39.1'\n"
         "assert importlib.metadata.version('weave-openhands') == '0.1.0'\n"
         "print('ok')\n"
         "PY"

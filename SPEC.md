@@ -177,8 +177,8 @@ intact pending native OpenHands support for skill-declared child configuration.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `856dd7ac3fcce6ac6dce114bd5fdbc1370a9ae4e`, based on OpenHands SDK
-1.39.0.
+at commit `29e8d30c7c6f1d29f4870d5c9ce2cda018a0c032`, based on OpenHands SDK
+1.39.1.
 
 `prompt_cache_configuration()` sets:
 
@@ -190,6 +190,11 @@ The fork emits an Anthropic cache-control `ttl` only when explicit Anthropic
 caching is active. Its tests prove the five-minute wire form remains unchanged,
 the one-hour TTL is forwarded, and OpenAI retention continues to work without
 receiving an Anthropic TTL parameter.
+
+Direct `openai/*` models use the Responses API for both agent inference and
+context condensation. Senpai sets `reasoning_summary="auto"` to request the
+most detailed summary available from the model and keeps encrypted reasoning
+state available for stateless continuation.
 
 ## Typed tools
 
