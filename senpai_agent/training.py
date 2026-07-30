@@ -170,7 +170,7 @@ class TrainingSupervisor:
         active.thread = thread
         with self._lock:
             self._active[training_id] = active
-        thread.start()
+            thread.start()
         return result
 
     def get_training_status(self, training_id: str) -> TrainingResult:
@@ -192,6 +192,17 @@ class TrainingSupervisor:
         error_tail = b""
         scan_overlap = b""
         deadline = active.started + active.timeout_seconds
+        terminate_at = max(
+            active.started,
+            deadline - self.terminate_grace_seconds,
+        )
+
+        def remaining_grace() -> float:
+            return min(
+                self.terminate_grace_seconds,
+                max(0.0, deadline - time.monotonic()),
+            )
+
         with active.log_path.open("rb") as log:
             while True:
                 error_tail, scan_overlap = self._consume_log(
@@ -216,6 +227,15 @@ class TrainingSupervisor:
                         )
                     )
                     published_run_ids = discovered_run_ids
+                if active.cancelled:
+                    state = TrainingState.CANCELLED
+                    self._terminate_process_group(
+                        active.process,
+                        active.process_group_id,
+                        grace_seconds=remaining_grace(),
+                    )
+                    exit_code = active.process.returncode
+                    break
                 exit_code = active.process.poll()
                 if exit_code is not None:
                     state = (
@@ -230,13 +250,15 @@ class TrainingSupervisor:
                     self._terminate_process_group(
                         active.process,
                         active.process_group_id,
+                        grace_seconds=remaining_grace(),
                     )
                     break
-                if time.monotonic() >= deadline:
+                if time.monotonic() >= terminate_at:
                     state = TrainingState.TIMED_OUT
                     self._terminate_process_group(
                         active.process,
                         active.process_group_id,
+                        grace_seconds=remaining_grace(),
                     )
                     exit_code = active.process.returncode
                     break
@@ -298,11 +320,17 @@ class TrainingSupervisor:
         self,
         process: subprocess.Popen[bytes],
         process_group_id: int,
+        *,
+        grace_seconds: float | None = None,
     ) -> None:
         terminate_process_group(
             process,
             process_group_id=process_group_id,
-            grace_seconds=self.terminate_grace_seconds,
+            grace_seconds=(
+                self.terminate_grace_seconds
+                if grace_seconds is None
+                else grace_seconds
+            ),
             wait_full_grace=True,
         )
 
@@ -336,17 +364,13 @@ class TrainingSupervisor:
 
     def close(self) -> None:
         with self._lock:
-            active = list(self._active.values())
-            for training in active:
+            threads = []
+            for training in self._active.values():
                 training.cancelled = True
-        for training in active:
-            self._terminate_process_group(
-                training.process,
-                training.process_group_id,
-            )
-        for training in active:
-            if training.thread is not None:
-                training.thread.join()
+                if training.thread is not None:
+                    threads.append(training.thread)
+        for thread in threads:
+            thread.join()
 
     def drain(self) -> None:
         with self._lock:

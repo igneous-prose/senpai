@@ -150,7 +150,7 @@ Common launch controls:
 - `--names frieren,fern` selects stable student identities; otherwise `--n_students` and `--student_prefix` generate them.
 - `--kube_context` selects a kubectl context; `--namespace` scopes every apply, discovery, monitor, and stop command (default: `default`).
 - `--gpus_per_student`, `--cpu_per_gpu`, and `--memory_gi_per_gpu` size each student independently.
-- `--timeout_minutes` and `--max_epochs` are hard limits on each training process.
+- `--timeout_minutes` and `--max_epochs` are hard limits on each training process. The wall-clock timeout includes process-group termination grace; cleanup cannot extend a run past the configured ceiling.
 - `--poll_interval_s` and `--poll_jitter_s` control the outer loop without teaching agents to poll.
 - `--gh_history_scope branch` is normal durable track memory, `fresh` is a shallow ablation checkout, and `repo` exposes whole-repository history.
 - `--extra_instructions` accepts a Markdown path or literal text and is appended to the generated launch-isolation rules.

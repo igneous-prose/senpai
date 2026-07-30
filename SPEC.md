@@ -374,6 +374,10 @@ TERM/KILL cleanup, restart identity checks using PID/PGID/create-time, a bounded
 W&B run IDs. Run IDs are persisted while training is still running so metric
 monitoring can begin immediately.
 
+The timeout is a total wall-clock ceiling, not merely the point at which
+shutdown begins. TERM is sent early enough that the configured grace period
+ends at the deadline, after which the complete process group is killed.
+
 The controller polls only monitors that are due. It fetches one latest selected
 metric value from W&B, evaluates deterministic threshold/change/staleness and
 terminal-state rules, and persists deduplicated compact signals. Ordinary

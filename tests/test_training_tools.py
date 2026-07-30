@@ -143,10 +143,18 @@ def test_training_timeout_terminates_the_process_group(tmp_path: Path):
     supervisor = TrainingSupervisor(
         workspace=workspace,
         state_dir=tmp_path / "state",
-        terminate_grace_seconds=0.1,
+        terminate_grace_seconds=0.4,
     )
     spec = TrainingSpec(
-        argv=(sys.executable, "-c", "import time; time.sleep(60)"),
+        argv=(
+            sys.executable,
+            "-c",
+            (
+                "import signal,time;"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+                "time.sleep(60)"
+            ),
+        ),
         cwd=workspace,
         timeout_seconds=1,
     )
@@ -159,7 +167,8 @@ def test_training_timeout_terminates_the_process_group(tmp_path: Path):
     assert result.state is TrainingState.RUNNING
     assert launch_elapsed < 0.5
     assert terminal.state is TrainingState.TIMED_OUT
-    assert time.monotonic() - started < 5
+    assert terminal.elapsed_seconds < 1.25
+    assert time.monotonic() - started < 1.25
 
 
 def test_training_timeout_kills_term_ignoring_descendants(tmp_path: Path):
@@ -330,6 +339,48 @@ def test_supervisor_close_cancels_active_training(tmp_path: Path):
     result = supervisor.get_training_status(running.training_id)
 
     assert result.state is TrainingState.CANCELLED
+
+
+def test_supervisor_close_never_races_or_extends_the_training_deadline(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "workspace"
+    ready = workspace / "ready"
+    workspace.mkdir()
+    supervisor = TrainingSupervisor(
+        workspace=workspace,
+        state_dir=tmp_path / "state",
+        terminate_grace_seconds=1.5,
+    )
+    started = time.monotonic()
+    running = supervisor.run_training(
+        TrainingSpec(
+            argv=(
+                sys.executable,
+                "-c",
+                (
+                    "import pathlib,signal,time;"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+                    f"pathlib.Path({str(ready)!r}).write_text('ready');"
+                    "time.sleep(60)"
+                ),
+            ),
+            cwd=workspace,
+            timeout_seconds=2,
+        )
+    )
+    while not ready.exists() and time.monotonic() - started < 0.5:
+        time.sleep(0.01)
+    assert ready.exists()
+    while time.monotonic() - started < 0.7:
+        time.sleep(0.01)
+
+    supervisor.close()
+    result = supervisor.get_training_status(running.training_id)
+
+    assert result.state in {TrainingState.CANCELLED, TrainingState.TIMED_OUT}
+    assert result.elapsed_seconds < 2.1
+    assert time.monotonic() - started < 2.1
 
 
 def test_supervisor_drain_keeps_training_alive_until_terminal(tmp_path: Path):
