@@ -474,7 +474,11 @@ def openai_responses_configuration(model: str) -> dict[str, str | bool | int]:
 def anthropic_compaction_configuration(model: str) -> dict[str, int]:
     if model.split("/", 1)[0].lower() != "anthropic":
         return {}
-    return {"anthropic_compact_threshold": 150_000}
+    return {"anthropic_compact_threshold": 200_000}
+
+
+def local_event_db_path(config: RunnerConfig) -> Path:
+    return config.state_dir / f"{config.role}-events.sqlite3"
 
 
 def build_main_tools(config: RunnerConfig) -> list[Tool]:
@@ -499,19 +503,14 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
             Tool(name="github_transition", params={"role": config.role}),
         )
     )
-    if config.role == "advisor":
-        if not config.child:
-            tools.append(
-                Tool(
-                    name="dispatch_agent",
-                    params={
-                        "event_db_path": str(
-                            config.state_dir / "advisor-events.sqlite3"
-                        )
-                    },
-                )
+    if not config.child:
+        tools.append(
+            Tool(
+                name="dispatch_agent",
+                params={"event_db_path": str(local_event_db_path(config))},
             )
-    elif config.role == "student" and not config.child:
+        )
+    if config.role == "student" and not config.child:
         training_params: dict[str, str | int] = {
             "state_dir": str(config.state_dir / "training"),
             "max_timeout_seconds": config.training_max_timeout_seconds,
@@ -682,9 +681,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         trusted_actor=config.github_trusted_actor,
     )
     configure_child_process(
-        child_process_config(config)
-        if config.role == "advisor" and not config.child
-        else None
+        child_process_config(config) if not config.child else None
     )
     for name in (
         *GITHUB_SECRET_ENV_NAMES,
@@ -767,12 +764,18 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 config.timeout_seconds,
             ),
         ):
-            if config.role == "advisor" and not config.child:
+            if not config.child:
                 with (
-                    AdvisorEventStore(
-                        config.state_dir / "advisor-events.sqlite3"
-                    ) as event_store,
-                    AdvisorEventPump(event_store, conversation),
+                    AdvisorEventStore(local_event_db_path(config)) as event_store,
+                    AdvisorEventPump(
+                        event_store,
+                        conversation,
+                        parent_conversation_id=(
+                            str(config.conversation_id)
+                            if config.role == "student"
+                            else None
+                        ),
+                    ),
                 ):
                     conversation.run()
             else:

@@ -888,6 +888,7 @@ def test_dispatch_agent_is_nonblocking_and_context_is_explicit(
         assert event.dedupe_key == f"agent_result:{observation.task_id}"
         assert event.payload == {
             "task_id": observation.task_id,
+            "parent_conversation_id": str(parent.id),
             "task": "Compare the candidate runs.",
             "result": "Child research result",
         }
@@ -936,6 +937,7 @@ def test_dispatch_agent_enqueues_error_when_child_disappears():
         assert event.kind == "agent_error"
         assert event.dedupe_key == f"agent_result:{observation.task_id}"
         assert event.payload["task_id"] == observation.task_id
+        assert event.payload["parent_conversation_id"] == str(parent.id)
         assert event.payload["task"] == "Check one hypothesis."
         assert event.payload["error"] == "RuntimeError: child disappeared"
     finally:

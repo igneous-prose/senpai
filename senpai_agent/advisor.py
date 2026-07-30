@@ -161,9 +161,19 @@ class MessageConversation(Protocol):
 def deliver_pending_events(
     store: AdvisorEventStore,
     conversation: MessageConversation,
+    *,
+    parent_conversation_id: str | None = None,
 ) -> int:
     delivered = 0
-    for event in store.pending():
+    pending = store.pending()
+    if parent_conversation_id is not None:
+        pending = [
+            event
+            for event in pending
+            if event.payload.get("parent_conversation_id")
+            == parent_conversation_id
+        ]
+    for event in pending:
         conversation.send_message(event.to_user_message())
         store.acknowledge(event.dedupe_key)
         delivered += 1
@@ -177,21 +187,27 @@ class AdvisorEventPump:
         conversation: MessageConversation,
         *,
         poll_interval: float = 0.5,
+        parent_conversation_id: str | None = None,
     ):
         self._store = store
         self._conversation = conversation
         self._poll_interval = poll_interval
+        self._parent_conversation_id = parent_conversation_id
         self._stop = threading.Event()
         self._error: BaseException | None = None
         self._thread = threading.Thread(
             target=self._run,
-            name="senpai-advisor-event-pump",
+            name="senpai-agent-event-pump",
         )
 
     def _run(self) -> None:
         try:
             while not self._stop.is_set():
-                deliver_pending_events(self._store, self._conversation)
+                deliver_pending_events(
+                    self._store,
+                    self._conversation,
+                    parent_conversation_id=self._parent_conversation_id,
+                )
                 self._stop.wait(self._poll_interval)
         except BaseException as error:  # noqa: BLE001
             self._error = error

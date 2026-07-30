@@ -72,7 +72,7 @@ def render_child_prompt(request: AgentDispatchRequest, task: str) -> str:
     context = [message.model_dump(mode="json") for message in request.parent_context]
     return (
         "# Generic child-agent context\n\n"
-        "You are a fresh, short-lived child of the Senpai advisor. The JSON "
+        "You are a fresh, short-lived child of a main Senpai agent. The JSON "
         "below is the complete model-visible parent context at dispatch time. "
         "Use it as evidence, perform only the assigned bounded task, and end "
         "with a concise report for the parent.\n\n"

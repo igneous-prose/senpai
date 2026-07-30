@@ -1158,7 +1158,7 @@ class DispatchAgentObservation(Observation):
             TextContent(
                 text=(
                     f"Child task {self.task_id} was dispatched. Its result or "
-                    "error will arrive as a durable advisor event."
+                    "error will arrive as a durable local event."
                 )
             )
         ]
@@ -1262,6 +1262,7 @@ class _DispatchAgentExecutor(
                 dedupe_key=f"agent_result:{request.task_id}",
                 payload={
                     "task_id": request.task_id,
+                    "parent_conversation_id": request.parent_conversation_id,
                     "task": task,
                     "result": result or "",
                 },
@@ -1272,6 +1273,7 @@ class _DispatchAgentExecutor(
                 dedupe_key=f"agent_result:{request.task_id}",
                 payload={
                     "task_id": request.task_id,
+                    "parent_conversation_id": request.parent_conversation_id,
                     "task": task,
                     "error": f"{type(error).__name__}: {error}",
                 },
@@ -1323,7 +1325,7 @@ class DispatchAgentTool(ToolDefinition[DispatchAgentAction, DispatchAgentObserva
                     "By default the child receives only the normal system prompt "
                     "and task. Set include_context=true only when the full parent "
                     "history is necessary; it can be expensive. Completion or "
-                    "failure returns later as a durable local advisor event."
+                    "failure returns later as a durable local parent event."
                 ),
                 action_type=DispatchAgentAction,
                 observation_type=DispatchAgentObservation,

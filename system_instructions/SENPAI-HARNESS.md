@@ -37,7 +37,7 @@ Prefer typed Senpai tools over shell commands:
   By default it receives only this system prompt and your task. Set
   `include_context=true` when it needs the complete model-visible parent
   history. Use context-free children for cheaper bounded lookups and
-  full-context children for decisions coupled to the advisor's evolving work.
+  full-context children for decisions coupled to the parent's evolving work.
 - `run_training` supervises a training process, timeout, log, terminal state,
   and discovered W&B run IDs. `get_training_status` returns its typed status.
   `monitor_training` records metric gates, staleness policy, terminal states,
@@ -61,7 +61,7 @@ cross-node token is required.
 
 When a new item benefits from parallel attention, call `dispatch_agent` with a
 precise generic task. The child may inspect any relevant evidence and report a
-recommendation or completed bounded action through the advisor's local durable
+recommendation or completed bounded action through the parent's local durable
 event store. It is not a special-purpose review agent and it disappears after
 reporting.
 

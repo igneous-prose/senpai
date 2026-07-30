@@ -681,6 +681,46 @@ class LocalAdvisorMailbox:
         return
 
 
+class LocalStudentMailbox:
+    """Wake the exact student conversation that dispatched a finished child."""
+
+    def __init__(self, store_path: Path):
+        self.store_path = store_path
+
+    def poll(self) -> tuple[ControllerEvent, ...]:
+        with AdvisorEventStore(self.store_path) as store:
+            pending = store.pending()
+        if not pending:
+            return ()
+        parent_id = pending[0].payload.get("parent_conversation_id")
+        if not isinstance(parent_id, str):
+            raise RuntimeError("student child event has no parent conversation")
+        matching = [
+            event
+            for event in pending
+            if event.payload.get("parent_conversation_id") == parent_id
+        ]
+        identity = "|".join(event.dedupe_key for event in matching)
+        return (
+            ControllerEvent(
+                kind="local_events_pending",
+                dedupe_key=f"local_events:{uuid.uuid5(uuid.NAMESPACE_URL, identity)}",
+                payload={
+                    "conversation_id": parent_id,
+                    "count": len(matching),
+                    "kinds": sorted({event.kind for event in matching}),
+                    "delivery": (
+                        "The OpenHands event pump will inject these events at "
+                        "the next safe conversation boundary."
+                    ),
+                },
+            ),
+        )
+
+    def acknowledge(self, _dedupe_keys: Sequence[str]) -> None:
+        return
+
+
 class OpenHandsMonitorTriage:
     """Run one context-free generic child for an actionable monitor signal."""
 
@@ -849,6 +889,15 @@ class StudentConversationSelector:
         self.registry = registry
 
     def __call__(self, events: Sequence[ControllerEvent]) -> UUID:
+        local_event_ids = {
+            UUID(str(event.payload["conversation_id"]))
+            for event in events
+            if event.kind == "local_events_pending"
+        }
+        if local_event_ids:
+            if len(local_event_ids) != 1:
+                raise RuntimeError("local events target multiple conversations")
+            return local_event_ids.pop()
         monitor_ids = {
             UUID(str(event.payload["conversation_id"]))
             for event in events
@@ -1263,6 +1312,7 @@ def controller_main(
         )
         mailbox = CompositeMailbox(
             github_mailbox,
+            LocalStudentMailbox(runner_config.state_dir / "student-events.sqlite3"),
             MonitorMailbox(
                 TrainingMonitorEngine(monitor_store, training, metrics),
                 monitor_store,

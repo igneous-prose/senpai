@@ -3,12 +3,15 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
+from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.controller import (
     AssignmentConversationRegistry,
     Controller,
     ControllerEvent,
     ConversationLedger,
     GitHubMailbox,
+    LocalStudentMailbox,
+    StudentConversationSelector,
     SystemContextLedger,
     TurnResult,
     _full_prompt,
@@ -81,6 +84,37 @@ def test_assignment_conversation_is_reused_for_monitor_wake(tmp_path: Path):
     assert isinstance(first, UUID)
     assert wake == first
     assert next_revision != first
+
+
+def test_late_student_child_result_wakes_its_exact_parent(tmp_path: Path):
+    first_parent = UUID("00000000-0000-0000-0000-000000000011")
+    second_parent = UUID("00000000-0000-0000-0000-000000000012")
+    store_path = tmp_path / "student-events.sqlite3"
+    with AdvisorEventStore(store_path) as store:
+        store.enqueue(
+            AdvisorEvent(
+                kind="agent_result",
+                dedupe_key="agent_result:first",
+                payload={"parent_conversation_id": str(first_parent)},
+            )
+        )
+        store.enqueue(
+            AdvisorEvent(
+                kind="agent_result",
+                dedupe_key="agent_result:second",
+                payload={"parent_conversation_id": str(second_parent)},
+            )
+        )
+
+    events = LocalStudentMailbox(store_path).poll()
+    selected = StudentConversationSelector(
+        AssignmentConversationRegistry(tmp_path / "students.json")
+    )(events)
+
+    assert len(events) == 1
+    assert events[0].payload["count"] == 1
+    assert events[0].payload["conversation_id"] == str(first_parent)
+    assert selected == first_parent
 
 
 def test_controller_builds_first_turn_from_program_and_role_task(

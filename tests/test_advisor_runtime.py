@@ -154,6 +154,47 @@ def test_event_pump_injects_new_events_while_conversation_is_running(
         assert store.pending() == []
 
 
+def test_event_pump_routes_child_results_to_their_parent_conversation(
+    tmp_path: Path,
+):
+    first_parent = "00000000-0000-0000-0000-000000000001"
+    second_parent = "00000000-0000-0000-0000-000000000002"
+    first = AdvisorEvent(
+        kind="agent_result",
+        dedupe_key="agent_result:first",
+        payload={"parent_conversation_id": first_parent},
+    )
+    second = AdvisorEvent(
+        kind="agent_result",
+        dedupe_key="agent_result:second",
+        payload={"parent_conversation_id": second_parent},
+    )
+
+    class Conversation:
+        def __init__(self):
+            self.messages: list[str] = []
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+    with AdvisorEventStore(tmp_path / "student-events.sqlite3") as store:
+        store.enqueue(first)
+        store.enqueue(second)
+        conversation = Conversation()
+        with AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            parent_conversation_id=first_parent,
+        ):
+            deadline = time.monotonic() + 1
+            while not conversation.messages and time.monotonic() < deadline:
+                time.sleep(0.01)
+
+        assert conversation.messages == [first.to_user_message()]
+        assert store.pending() == [second]
+
+
 def test_event_pump_surfaces_delivery_failure_and_leaves_event_pending(
     tmp_path: Path,
 ):

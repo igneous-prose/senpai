@@ -24,8 +24,9 @@ allowed files, metric contract, run limits, and any requested revision.
 Inspect the current baseline and command help before changing code. Keep one
 clear experiment path, use existing conventions, and remove scaffolding that
 the assignment explicitly makes obsolete. For a substantial hypothesis, use
-an available generic subagent for a bounded independent plan, code-path
-analysis, or literature check.
+`dispatch_agent` for a bounded independent plan, code-path analysis, evidence
+review, or literature check. Use `include_context=false` unless the child needs
+the complete evolving conversation.
 
 Run cheap tests and a tiny debug execution when they materially reduce the risk
 of wasting a full training allocation. Fix experiment implementation bugs and

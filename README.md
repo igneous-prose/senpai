@@ -120,11 +120,11 @@ Senpai wraps the terminal with a fail-closed policy and adds:
   requests revisions, responds idempotently to exact human Issue messages,
   submits authenticated structured results, reconciles labels, closes, and
   merges.
-- `dispatch_agent(task, include_context=false)`: starts a generic,
-  independently bounded child and returns immediately. A context-free child
-  receives only the normal system prompt and task. With
-  `include_context=true`, it also receives the complete model-visible parent
-  history.
+- `dispatch_agent(task, include_context=false)`: lets either a main advisor or
+  main student start a generic, independently bounded child and returns
+  immediately. A context-free child receives only the normal system prompt and
+  task. With `include_context=true`, it also receives the complete model-visible
+  parent history.
 - `run_training` and `get_training_status`: start and inspect a supervised
   process without streaming raw progress through model history.
 - `monitor_training`: records the selected W&B metric, direction, threshold or
@@ -160,12 +160,17 @@ While an advisor turn is active, its GitHub watcher can append a new
 `review_ready` event through OpenHands' concurrent message path. The advisor is
 instructed to dispatch a generic full-context review child and continue its
 unrelated research. Child results return through a local SQLite event store;
-they are not cross-node messages.
+they are not cross-node messages. A main student uses the same asynchronous
+dispatch and local event path for bounded codebase, evidence, and history work.
+A result that arrives after a student turn ends wakes and resumes the exact
+parent conversation UUID.
 
-Senpai has two local SQLite databases:
+Senpai has three local SQLite databases across the two roles:
 
 - `advisor-events.sqlite3` stores watcher and generic child-agent events until
   they are injected into the advisor conversation;
+- `student-events.sqlite3` stores generic child-agent results until they are
+  injected into the student conversation; and
 - `training/monitors.sqlite3` stores monitor specifications, last samples,
   deduplicated signals, and triage decisions.
 
@@ -212,7 +217,7 @@ disabled only for this stored chain: OpenAI owns the active model context while
 OpenHands retains the complete durable event log for restart recovery,
 observability, and debugging.
 
-Direct `anthropic/*` models enable Anthropic's native compaction at 150,000
+Direct `anthropic/*` models enable Anthropic's native compaction at 200,000
 input tokens. The fork persists the returned compaction block in the normal
 OpenHands event log and replays it first on every later Messages API request,
 including after a controller restart. OpenHands' local condenser is disabled
@@ -221,8 +226,8 @@ for that chain so two independent summaries never compete.
 Agents can search the complete local event history themselves at
 `$SENPAI_OPENHANDS_STATE_DIR/$SENPAI_CONVERSATION_ID/events/`. These JSON files
 can be very large, so the harness instructs agents to use `rg` and bounded
-reads. Advisors can dispatch a context-free child for broad recovery; the child
-receives the parent event directory through
+reads. Main advisors and students can dispatch a context-free child for broad
+recovery; the child receives the parent event directory through
 `$SENPAI_PARENT_CONVERSATION_HISTORY_DIR`.
 
 ## Images

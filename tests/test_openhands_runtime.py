@@ -264,7 +264,7 @@ def test_anthropic_uses_native_provider_compaction() -> None:
         **configuration,
     )
 
-    assert configuration == {"anthropic_compact_threshold": 150_000}
+    assert configuration == {"anthropic_compact_threshold": 200_000}
     assert llm.uses_anthropic_compaction() is True
     assert anthropic_compaction_configuration("openai/gpt-5.6") == {}
 
@@ -368,6 +368,7 @@ def test_event_summary_preserves_bounded_reasoning_and_action():
                 "senpai_terminal",
                 "get_prs",
                 "github_transition",
+                "dispatch_agent",
                 "senpai_training",
             },
         ),
@@ -390,14 +391,13 @@ def test_main_tools_replace_terminal_and_add_role_boundaries(
     assert "task_tool_set" not in by_name
     assert expected_custom <= set(by_name)
     assert by_name["senpai_terminal"].params == {"role": role}
+    assert by_name["dispatch_agent"].params == {
+        "event_db_path": str(config.state_dir / f"{role}-events.sqlite3")
+    }
     if role == "student":
         assert by_name["senpai_training"].params == {
             "state_dir": str(config.state_dir / "training"),
             "max_timeout_seconds": 1800,
-        }
-    else:
-        assert by_name["dispatch_agent"].params == {
-            "event_db_path": str(config.state_dir / "advisor-events.sqlite3")
         }
     assert by_name["get_prs"].params == {"state_dir": str(config.state_dir / "github")}
 
@@ -666,6 +666,7 @@ def test_main_student_conversation_is_persisted_for_monitor_wake(
     monkeypatch,
 ):
     captured = {}
+    child_runtime = []
 
     class FakeConversation:
         def __init__(self, **kwargs):
@@ -686,6 +687,7 @@ def test_main_student_conversation_is_persisted_for_monitor_wake(
 
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
+    monkeypatch.setattr(runner, "configure_child_process", child_runtime.append)
 
     assert (
         run_openhands(
@@ -695,6 +697,8 @@ def test_main_student_conversation_is_persisted_for_monitor_wake(
         == 0
     )
     assert captured["delete_on_close"] is False
+    assert child_runtime[0].role == "student"
+    assert child_runtime[-1] is None
 
 
 def test_github_tokens_never_reach_the_agent_environment(

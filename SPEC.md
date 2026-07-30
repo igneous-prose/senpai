@@ -88,12 +88,14 @@ store. OpenHands 1.39 supports concurrent `send_message`; `AdvisorEventPump`
 injects at its state lock boundary without cancelling unrelated work.
 
 Generic child results use a local SQLite WAL event store because parent and
-child run on the same advisor instance. That is not an inter-node protocol.
+child run on the same advisor or student instance. That is not an inter-node
+protocol.
 
 The only SQLite databases are `advisor-events.sqlite3`, for unacknowledged
-advisor watcher/child events, and `training/monitors.sqlite3`, for student
-monitor policy, samples, signals, and triage decisions. OpenHands conversation
-history is a separate file-backed per-UUID event log.
+advisor watcher/child events; `student-events.sqlite3`, for unacknowledged
+student child events; and `training/monitors.sqlite3`, for student monitor
+policy, samples, signals, and triage decisions. OpenHands conversation history
+is a separate file-backed per-UUID event log.
 
 ## State and conversations
 
@@ -119,6 +121,7 @@ Student state:
 /var/lib/senpai/openhands_state/
 ├── controller-lease.json
 ├── student-conversations.json
+├── student-events.sqlite3
 ├── started-conversations.json
 ├── system-context-revisions.json
 ├── training/
@@ -209,7 +212,7 @@ accepts an explicit `max` override. Automatic OpenAI compaction starts at
 chain, but its complete local event log remains durable and is used to recover
 the latest response ID after restart.
 
-Direct Anthropic models use native server-side compaction with a 150,000-input-
+Direct Anthropic models use native server-side compaction with a 200,000-input-
 token trigger. OpenHands persists the returned typed compaction block in the
 normal event log and replays it first in each later request, including after a
 process restart. The local condenser is disabled for these conversations.
@@ -219,9 +222,9 @@ The complete durable transcript remains available as plain event JSON under
 `$SENPAI_OPENHANDS_STATE_DIR/$SENPAI_CONVERSATION_ID/events/`. The harness
 directs the model to use `rg` and bounded reads because the directory can be
 large. No dedicated history-search tool duplicates shell capabilities. A
-dispatched child receives `$SENPAI_PARENT_CONVERSATION_HISTORY_DIR`, allowing
-an advisor to delegate broad history recovery without copying the full parent
-context.
+dispatched child receives `$SENPAI_PARENT_CONVERSATION_HISTORY_DIR`, allowing a
+main advisor or student to delegate broad history recovery without copying the
+full parent context.
 
 ## Typed tools
 
@@ -278,7 +281,8 @@ dispatch_agent(task: str, include_context: bool = false)
   -> {task_id, status}
 ```
 
-The advisor has one generic asynchronous delegation primitive. With
+Each main advisor and student has one generic asynchronous delegation
+primitive. With
 `include_context=false`, the fresh child receives only the normal merged system
 prompt and the task. With `include_context=true`, it also receives a snapshot of
 the complete model-visible parent history, including progressively disclosed
@@ -290,7 +294,17 @@ disappears. It is not a hard-coded reviewer. When `review_ready` arrives during
 other advisor work, the role policy asks the advisor to dispatch a generic
 full-context PR review and continue unrelated work.
 
-Advisor child agents receive neither training tools nor recursive dispatch.
+Child agents receive neither training tools nor further dispatch.
+Every child result records its parent conversation UUID. If a student child
+finishes after the parent turn, the controller wakes and resumes that exact
+student conversation before the event pump acknowledges the result.
+
+OpenHands' preset `task_tool_set` remains disabled. It runs a registered
+subagent synchronously inside the parent runtime and does not provide Senpai's
+asynchronous durable result path, hard process deadline, or explicit
+`include_context` boundary. The stock preset is not inherently recursive;
+Senpai's stronger non-recursion guarantee comes from withholding
+`dispatch_agent` from every child.
 
 ### Training and monitoring
 
