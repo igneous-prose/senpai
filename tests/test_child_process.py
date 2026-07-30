@@ -137,6 +137,9 @@ def test_openhands_child_command_isolated_from_parent_conversation(
     assert "GH_TOKEN" not in child.environment
     assert child.environment["EXA_API_KEY"] == "exa-secret"
     assert "SENPAI_OPENHANDS_AGENT" not in child.environment
+    assert child.environment["SENPAI_PARENT_CONVERSATION_HISTORY_DIR"] == str(
+        config.state_dir / uuid.UUID(request.parent_conversation_id).hex / "events"
+    )
 
 
 def test_child_hands_github_token_over_one_use_file(

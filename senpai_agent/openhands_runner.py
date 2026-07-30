@@ -471,6 +471,12 @@ def openai_responses_configuration(model: str) -> dict[str, str | bool | int]:
     }
 
 
+def anthropic_compaction_configuration(model: str) -> dict[str, int]:
+    if model.split("/", 1)[0].lower() != "anthropic":
+        return {}
+    return {"anthropic_compact_threshold": 150_000}
+
+
 def build_main_tools(config: RunnerConfig) -> list[Tool]:
     """Keep native reasoning tools while replacing unsafe control boundaries."""
 
@@ -490,7 +496,6 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
                 name="get_prs",
                 params={"state_dir": str(config.state_dir / "github")},
             ),
-            Tool(name="search_conversation_history"),
             Tool(name="github_transition", params={"role": config.role}),
         )
     )
@@ -638,6 +643,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
     register_senpai_tools()
     file_agents = discover_agents(config.workspace)
     available_agents = [definition.name for definition in file_agents]
+    os.environ["SENPAI_CONVERSATION_ID"] = config.conversation_id.hex
 
     print(
         "OPENHANDS_RUN "
@@ -696,6 +702,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             usage_id="senpai",
             **prompt_cache_configuration(config.model),
             **openai_responses_configuration(config.model),
+            **anthropic_compaction_configuration(config.model),
         )
         if config.agent_name:
             definition = find_named_agent(config.agent_name, file_agents)
@@ -707,12 +714,18 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 harness_instructions,
                 role_instructions,
             )
-            if llm.responses_use_previous_response_id:
+            if (
+                llm.responses_use_previous_response_id
+                or llm.uses_anthropic_compaction()
+            ):
                 agent = agent.model_copy(update={"condenser": None})
         else:
             condenser = (
                 None
-                if llm.responses_use_previous_response_id
+                if (
+                    llm.responses_use_previous_response_id
+                    or llm.uses_anthropic_compaction()
+                )
                 else get_default_condenser(
                     llm.model_copy(update={"usage_id": "senpai-condenser"})
                 )

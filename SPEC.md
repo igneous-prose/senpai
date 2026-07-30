@@ -177,7 +177,7 @@ intact pending native OpenHands support for skill-declared child configuration.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `527771ce74d68e2e031649cbb4eb9ebde6b5cf69`, based on OpenHands SDK
+at commit `4ed3504d4fdae153e8364bc3ab5ce455e4bf7079`, based on OpenHands SDK
 1.39.1.
 
 `prompt_cache_configuration()` sets:
@@ -207,19 +207,23 @@ detailed available summary. The default effort is `xhigh`; GPT-5.6 still
 accepts an explicit `max` override. Automatic OpenAI compaction starts at
 200,000 rendered tokens. The OpenHands condenser is disabled for that provider
 chain, but its complete local event log remains durable and is used to recover
-the latest response ID after restart. Other providers retain the high-quality
-OpenHands condenser.
+the latest response ID after restart.
+
+Direct Anthropic models use native server-side compaction with a 150,000-input-
+token trigger. OpenHands persists the returned typed compaction block in the
+normal event log and replays it first in each later request, including after a
+process restart. The local condenser is disabled for these conversations.
+Other providers retain the high-quality OpenHands condenser.
+
+The complete durable transcript remains available as plain event JSON under
+`$SENPAI_OPENHANDS_STATE_DIR/$SENPAI_CONVERSATION_ID/events/`. The harness
+directs the model to use `rg` and bounded reads because the directory can be
+large. No dedicated history-search tool duplicates shell capabilities. A
+dispatched child receives `$SENPAI_PARENT_CONVERSATION_HISTORY_DIR`, allowing
+an advisor to delegate broad history recovery without copying the full parent
+context.
 
 ## Typed tools
-
-### `search_conversation_history`
-
-This read-only tool performs a case-insensitive fixed-text search over the
-complete active OpenHands event branch. It searches model-visible message text
-and tool calls, then returns at most 20 bounded snippets newest first. It does
-not expose raw storage, abandoned branches, or automatically reinsert the whole
-history into the model context. This preserves the usefulness of a durable
-transcript without undoing provider compaction or creating a large token spike.
 
 ### `get_prs`
 
@@ -413,7 +417,8 @@ Retained intentionally:
 
 - Agent skills and their model/effort metadata under `.agents`;
 - OpenHands Browser, task tracker, Think, and the high-quality default
-  condenser for providers not using stored OpenAI Responses continuation;
+  condenser for providers not using stored OpenAI Responses continuation or
+  Anthropic native compaction;
 - the pinned `weave-openhands` agent, LLM, and tool tracing integration; and
 - only a small bootstrap shell path for clone, identity, and Git push guards.
 

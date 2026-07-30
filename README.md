@@ -116,9 +116,6 @@ Senpai wraps the terminal with a fail-closed policy and adds:
   inline review comment. Five PRs are returned inline by default. Larger
   results become one Markdown artifact outside the target checkout; raising the
   inline limit above five warns about context pollution.
-- `search_conversation_history`: searches the complete active durable event
-  branch and returns bounded newest-first snippets. It is an on-demand recovery
-  aid, not an automatic replay of old context.
 - `github_transition`: creates assignments, performs lease-guarded pushes,
   requests revisions, responds idempotently to exact human Issue messages,
   submits authenticated structured results, reconciles labels, closes, and
@@ -186,17 +183,18 @@ deployed harness or role and injects the current text once without rotating the
 conversation UUID.
 
 The project pins both OpenHands SDK packages to commit
-`527771ce74d68e2e031649cbb4eb9ebde6b5cf69` in
+`4ed3504d4fdae153e8364bc3ab5ce455e4bf7079` in
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk).
 That fork tracks OpenHands SDK 1.39.1 and adds a typed Anthropic
-`prompt_cache_ttl="1h"` option, durable OpenAI Responses continuation, and an
-explicit GPT-5.6 cache boundary. GPT-5.6 marks the stable system block as the
-cache breakpoint, uses a stable cache key per role and agent kind, and leaves
-dynamic project context outside that boundary. It requests
-`prompt_cache_options.mode="explicit"` with a 30-minute TTL. Older compatible
-OpenAI models retain `prompt_cache_retention="24h"`. Senpai does not send
-Anthropic TTL arguments to OpenAI. The fork also makes Laminar an optional
-extra, so Senpai installs only its configured Weave observability integration.
+`prompt_cache_ttl="1h"` option, durable Anthropic server-side compaction,
+durable OpenAI Responses continuation, and an explicit GPT-5.6 cache boundary.
+GPT-5.6 marks the stable system block as the cache breakpoint, uses a stable
+cache key per role and agent kind, and leaves dynamic project context outside
+that boundary. It requests `prompt_cache_options.mode="explicit"` with a
+30-minute TTL. Older compatible OpenAI models retain
+`prompt_cache_retention="24h"`. Senpai does not send Anthropic TTL arguments to
+OpenAI. The fork also makes Laminar an optional extra, so Senpai installs only
+its configured Weave observability integration.
 
 For direct `openai/*` models, Senpai explicitly selects OpenHands' Responses
 API path, stores each response, and passes the latest `previous_response_id`
@@ -213,6 +211,19 @@ compaction starts at 200,000 rendered tokens. The OpenHands condenser is
 disabled only for this stored chain: OpenAI owns the active model context while
 OpenHands retains the complete durable event log for restart recovery,
 observability, and debugging.
+
+Direct `anthropic/*` models enable Anthropic's native compaction at 150,000
+input tokens. The fork persists the returned compaction block in the normal
+OpenHands event log and replays it first on every later Messages API request,
+including after a controller restart. OpenHands' local condenser is disabled
+for that chain so two independent summaries never compete.
+
+Agents can search the complete local event history themselves at
+`$SENPAI_OPENHANDS_STATE_DIR/$SENPAI_CONVERSATION_ID/events/`. These JSON files
+can be very large, so the harness instructs agents to use `rg` and bounded
+reads. Advisors can dispatch a context-free child for broad recovery; the child
+receives the parent event directory through
+`$SENPAI_PARENT_CONVERSATION_HISTORY_DIR`.
 
 ## Images
 
@@ -335,7 +346,8 @@ Deliberate deferrals:
 - Skill-declared child model/reasoning semantics remain in skill frontmatter
   pending native OpenHands support.
 - The high-quality default OpenHands condenser remains enabled for providers
-  that are not using stored OpenAI Responses continuation.
+  that are not using stored OpenAI Responses continuation or Anthropic native
+  compaction.
 - Hivemind startup is commented out pending its separate rewrite.
 - Senpai imposes no token/cost budget or conversation-retention policy.
 

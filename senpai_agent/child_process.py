@@ -226,6 +226,11 @@ class OpenHandsChildProcess:
                 "OPENHANDS_SUPPRESS_BANNER": "1",
                 "SENPAI_ROLE": self._config.role,
                 "SENPAI_OPENHANDS_API_KEY_ENV": self._config.api_key_env,
+                "SENPAI_PARENT_CONVERSATION_HISTORY_DIR": str(
+                    self._config.state_dir
+                    / uuid.UUID(self._request.parent_conversation_id).hex
+                    / "events"
+                ),
                 "GH_REPO": self._config.github_repo,
                 self._config.api_key_env: self._config.api_key,
             }

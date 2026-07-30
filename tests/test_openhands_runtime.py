@@ -19,6 +19,7 @@ import senpai_agent.openhands_runner as runner
 from senpai_agent.openhands_runner import (
     EVENT_TEXT_LIMIT,
     RunnerConfig,
+    anthropic_compaction_configuration,
     build_main_agent_context,
     build_main_tools,
     conversation_prompt_cache_key,
@@ -255,6 +256,19 @@ def test_openai_uses_stored_responses_with_provider_compaction():
     assert "include" not in call_kwargs
 
 
+def test_anthropic_uses_native_provider_compaction() -> None:
+    configuration = anthropic_compaction_configuration("anthropic/claude-opus-4-8")
+    llm = LLM(
+        model="anthropic/claude-opus-4-8",
+        api_key=SecretStr("test-key"),
+        **configuration,
+    )
+
+    assert configuration == {"anthropic_compact_threshold": 150_000}
+    assert llm.uses_anthropic_compaction() is True
+    assert anthropic_compaction_configuration("openai/gpt-5.6") == {}
+
+
 def test_gpt56_marks_only_the_stable_system_cache_boundary():
     llm = LLM(
         model="openai/gpt-5.6",
@@ -344,7 +358,6 @@ def test_event_summary_preserves_bounded_reasoning_and_action():
             {
                 "senpai_terminal",
                 "get_prs",
-                "search_conversation_history",
                 "github_transition",
                 "dispatch_agent",
             },
@@ -354,7 +367,6 @@ def test_event_summary_preserves_bounded_reasoning_and_action():
             {
                 "senpai_terminal",
                 "get_prs",
-                "search_conversation_history",
                 "github_transition",
                 "senpai_training",
             },
@@ -563,6 +575,7 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
             self.id = kwargs["conversation_id"]
             captured["secrets"] = kwargs["secrets"]
             captured["delete_on_close"] = kwargs["delete_on_close"]
+            captured["condenser"] = agent.condenser
             self.state = SimpleNamespace(
                 execution_status=ConversationExecutionStatus.FINISHED
             )
@@ -571,6 +584,9 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
             captured["prompt"] = prompt
             captured["role"] = self.agent.agent_context.system_message_suffix
             captured["plugin"] = self.plugins[0].source
+            captured["conversation_id_env"] = runner.os.environ[
+                "SENPAI_CONVERSATION_ID"
+            ]
 
         def run(self):
             pass
@@ -594,6 +610,8 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
         "plugin": str(PLUGIN_DIR),
         "secrets": {"WANDB_API_KEY": "wandb-key"},
         "delete_on_close": False,
+        "condenser": None,
+        "conversation_id_env": config.conversation_id.hex,
         "closed": True,
     }
 
