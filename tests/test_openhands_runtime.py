@@ -70,7 +70,6 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "workspace": tmp_path,
         "state_dir": tmp_path / "state",
         "conversation_id": uuid.uuid4(),
-        "continue_session": False,
         "role": "advisor",
         "enable_browser": False,
         "agent_name": None,
@@ -984,7 +983,8 @@ def test_openhands_loads_the_native_senpai_plugin():
 
     assert plugin.manifest.name == "senpai"
     assert "assign-experiment" in skill_names
-    assert "survey-prs" in skill_names
+    assert "poll-for-work" not in skill_names
+    assert "survey-prs" not in skill_names
     assert plugin.mcp_config == {}
     assert not (PLUGIN_DIR / ".mcp.json").exists()
 

@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol, cast
+from typing import Annotated, Literal, Protocol
 from urllib import request
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 
-from pydantic import SecretStr
+from pydantic import (
+    ConfigDict,
+    Field,
+    SecretStr,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
+from senpai_agent.github_http import next_link
 from senpai_agent.models import (
     AssignmentRecord,
+    Contract,
     ExperimentResult,
     ResultMarkerError,
     RevisionRecord,
@@ -123,6 +134,119 @@ class _ResultComment:
     result: ExperimentResult
 
 
+class _GitHubResponse(Contract):
+    model_config = ConfigDict(
+        extra="ignore",
+        frozen=True,
+        allow_inf_nan=False,
+        str_strip_whitespace=False,
+    )
+
+
+_RequiredString = Annotated[StrictStr, Field(min_length=1)]
+_PositiveInteger = Annotated[StrictInt, Field(gt=0)]
+
+
+class _GitHubRef(_GitHubResponse):
+    ref: _RequiredString
+
+
+class _GitHubHead(_GitHubRef):
+    sha: _RequiredString
+
+
+class _GitHubLabel(_GitHubResponse):
+    name: _RequiredString
+
+
+class _GitHubUser(_GitHubResponse):
+    login: _RequiredString
+
+
+class _PullRequestResponse(_GitHubResponse):
+    number: _PositiveInteger
+    node_id: _RequiredString
+    html_url: _RequiredString
+    title: _RequiredString
+    body: StrictStr | None
+    base: _GitHubRef
+    head: _GitHubHead
+    labels: tuple[_GitHubLabel, ...]
+    draft: StrictBool
+    state: Literal["open", "closed"]
+    merged: StrictBool
+    mergeable: StrictBool | None
+    merge_commit_sha: StrictStr | None
+
+    def snapshot(self) -> PullRequestSnapshot:
+        return PullRequestSnapshot(
+            number=self.number,
+            node_id=self.node_id,
+            url=self.html_url,
+            title=self.title,
+            body=self.body or "",
+            base_ref=self.base.ref,
+            head_ref=self.head.ref,
+            head_sha=self.head.sha,
+            labels=tuple(sorted({label.name for label in self.labels})),
+            draft=self.draft,
+            state=self.state,
+            merged=self.merged,
+            mergeable=self.mergeable,
+            merge_commit_sha=self.merge_commit_sha,
+        )
+
+
+class _IssueCommentResponse(_GitHubResponse):
+    id: _PositiveInteger
+    body: StrictStr
+    html_url: StrictStr
+    user: _GitHubUser
+
+    def comment(self) -> _IssueComment:
+        return _IssueComment(
+            id=self.id,
+            body=self.body,
+            url=self.html_url,
+            author=self.user.login,
+        )
+
+
+class _IssueResponse(_GitHubResponse):
+    id: _PositiveInteger
+    state: StrictStr
+    labels: tuple[_GitHubLabel, ...]
+    user: _GitHubUser
+    pull_request: dict[str, object] | None = None
+
+
+class _NumberedResponse(_GitHubResponse):
+    number: _PositiveInteger
+
+
+class _IssueSearchResponse(_NumberedResponse):
+    pull_request: dict[str, object] | None = None
+
+
+class _DraftPullRequestResponse(_GitHubResponse):
+    is_draft: StrictBool = Field(alias="isDraft")
+
+
+class _DraftMutationResponse(_GitHubResponse):
+    pull_request: _DraftPullRequestResponse = Field(alias="pullRequest")
+
+
+def _validated_response[ResponseT: _GitHubResponse](
+    model: type[ResponseT],
+    value: object,
+    name: str,
+) -> ResponseT:
+    try:
+        return model.model_validate(value)
+    except ValidationError as error:
+        raise ReconciliationError(f"GitHub returned invalid {name}") from error
+
+
 class _UrllibTransport:
     def request(
         self,
@@ -221,40 +345,11 @@ class GitHubWorkflow:
             f"/repos/{self._repo}/pulls/{number}",
             expected_statuses={200},
         )
-        data = _object(response.json_body, "pull request")
-        head = _object(data.get("head"), "pull request head")
-        base = _object(data.get("base"), "pull request base")
-        labels = _labels(data.get("labels"))
-        state_value = data.get("state")
-        if state_value not in ("open", "closed"):
-            raise ReconciliationError("GitHub returned an invalid pull request state")
-        mergeable = data.get("mergeable")
-        if mergeable is not None and not isinstance(mergeable, bool):
-            raise ReconciliationError("GitHub returned invalid mergeability")
-        merge_commit_sha = data.get("merge_commit_sha")
-        if merge_commit_sha is not None and not isinstance(merge_commit_sha, str):
-            raise ReconciliationError("GitHub returned an invalid merge commit SHA")
-
-        snapshot = PullRequestSnapshot(
-            number=_integer(data.get("number"), "pull request number"),
-            node_id=_string(data.get("node_id"), "pull request node ID"),
-            url=_string(data.get("html_url"), "pull request URL"),
-            title=_string(data.get("title"), "pull request title"),
-            body=_string(
-                data.get("body") or "",
-                "pull request body",
-                allow_empty=True,
-            ),
-            base_ref=_string(base.get("ref"), "pull request base ref"),
-            head_ref=_string(head.get("ref"), "pull request head ref"),
-            head_sha=_string(head.get("sha"), "pull request head SHA"),
-            labels=labels,
-            draft=_boolean(data.get("draft"), "pull request draft state"),
-            state=cast(Literal["open", "closed"], state_value),
-            merged=_boolean(data.get("merged"), "pull request merged state"),
-            mergeable=mergeable,
-            merge_commit_sha=merge_commit_sha,
-        )
+        snapshot = _validated_response(
+            _PullRequestResponse,
+            response.json_body,
+            "pull request",
+        ).snapshot()
         if snapshot.number != number:
             raise ReconciliationError("GitHub returned the wrong pull request")
         return snapshot
@@ -371,12 +466,10 @@ class GitHubWorkflow:
         remove: set[str],
         expected_head_sha: str,
     ) -> MutationResult:
-        before = self.pull_request(number)
-        _require_head(before, expected_head_sha)
-        _require_assignment_identity(
-            before,
-            repo=self._repo,
+        before, _ = self._assigned_pull_at_head(
+            number,
             assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
         )
         changed, desired = self._set_labels(
             number,
@@ -392,12 +485,10 @@ class GitHubWorkflow:
                 version=before.head_sha,
             )
 
-        after = self.pull_request(number)
-        _require_head(after, expected_head_sha)
-        _require_assignment_identity(
-            after,
-            repo=self._repo,
+        after, _ = self._assigned_pull_at_head(
+            number,
             assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
         )
         if after.labels != desired:
             raise ReconciliationError("GitHub did not reach the requested label set")
@@ -405,31 +496,6 @@ class GitHubWorkflow:
             changed=True,
             resource_url=after.url,
             state="labels_reconciled",
-            version=after.head_sha,
-        )
-
-    def upsert_marker_comment(
-        self,
-        number: int,
-        *,
-        marker: str,
-        body: str,
-        expected_head_sha: str,
-    ) -> MutationResult:
-        _validate_marker(marker, body)
-        before = self.pull_request(number)
-        _require_head(before, expected_head_sha)
-        changed, verified = self._upsert_marker_comment(
-            number,
-            marker=marker,
-            body=body,
-        )
-        after = self.pull_request(number)
-        _require_head(after, expected_head_sha)
-        return MutationResult(
-            changed=changed,
-            resource_url=verified.url or after.url,
-            state="marker_comment_upserted",
             version=after.head_sha,
         )
 
@@ -467,7 +533,6 @@ class GitHubWorkflow:
             body=comment_body,
         )
         self._human_issue(number)
-        self._require_marker(number, marker, comment_body)
         return MutationResult(
             changed=changed,
             resource_url=verified.url,
@@ -484,27 +549,12 @@ class GitHubWorkflow:
         revision_id: str,
         comment: str,
     ) -> MutationResult:
-        before = self.pull_request(number)
-        _require_open(before)
-        _require_head(before, expected_head_sha)
-        assignment = _require_assignment_identity(
-            before,
-            repo=self._repo,
+        before, assignment = self._assigned_pull_at_head(
+            number,
             assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
         )
-        revised_assignment = assignment.model_copy(update={"revision_id": revision_id})
-        revised_body = _replace_assignment_marker(
-            before.body,
-            revised_assignment,
-        )
-        assignment_changed = revised_body != before.body
-        if assignment_changed:
-            self._mutate(
-                "PATCH",
-                f"/repos/{self._repo}/pulls/{number}",
-                json_body={"body": revised_body},
-                expected_statuses={200},
-            )
+        _require_open(before)
         marker = render_revision_marker(
             RevisionRecord(
                 repo=self._repo,
@@ -520,9 +570,21 @@ class GitHubWorkflow:
             marker=marker,
             body=marker_body,
         )
-        current = self.pull_request(number)
+        revised_assignment = assignment.model_copy(update={"revision_id": revision_id})
+        revised_body = _replace_assignment_marker(
+            before.body,
+            revised_assignment,
+        )
+        assignment_changed = revised_body != before.body
+        if assignment_changed:
+            self._mutate(
+                "PATCH",
+                f"/repos/{self._repo}/pulls/{number}",
+                json_body={"body": revised_body},
+                expected_statuses={200},
+            )
+        current = self._pull_at_head(number, expected_head_sha)
         _require_open(current)
-        _require_head(current, expected_head_sha)
         if parse_assignment_markers(current.body) != (revised_assignment,):
             raise ReconciliationError("GitHub did not update the assignment revision")
         draft_changed = self._set_draft(current, draft=True)
@@ -532,15 +594,13 @@ class GitHubWorkflow:
             add={"status:wip"},
             remove={"status:review"},
         )
-        after = self.pull_request(number)
+        after = self._pull_at_head(number, expected_head_sha)
         _require_open(after)
-        _require_head(after, expected_head_sha)
         if not after.draft:
             raise ReconciliationError(
                 "GitHub did not convert the pull request to draft"
             )
         _require_exact_labels(after, desired_labels)
-        self._require_marker(number, marker, marker_body)
         return MutationResult(
             changed=assignment_changed
             or marker_changed
@@ -562,9 +622,8 @@ class GitHubWorkflow:
     ) -> PullRequestSnapshot:
         """Validate an assignment/result pair before mutating its Git branch."""
 
-        snapshot = self.pull_request(number)
+        snapshot = self._pull_at_head(number, current_head_sha)
         _require_open(snapshot)
-        _require_head(snapshot, current_head_sha)
         if snapshot.head_ref != branch:
             raise WorkflowPreconditionError(
                 f"pull request branch is {snapshot.head_ref!r}, expected {branch!r}"
@@ -585,9 +644,8 @@ class GitHubWorkflow:
         expected_head_sha: str,
         result: ExperimentResult,
     ) -> MutationResult:
-        before = self.pull_request(number)
+        before = self._pull_at_head(number, expected_head_sha)
         _require_open(before)
-        _require_head(before, expected_head_sha)
         _require_result_identity(
             result,
             repo=self._repo,
@@ -599,9 +657,8 @@ class GitHubWorkflow:
             number,
             result=result,
         )
-        current = self.pull_request(number)
+        current = self._pull_at_head(number, expected_head_sha)
         _require_open(current)
-        _require_head(current, expected_head_sha)
         ready_changed = self._set_draft(current, draft=False)
         labels_changed, desired_labels = self._set_labels(
             number,
@@ -609,19 +666,13 @@ class GitHubWorkflow:
             add={"status:review"},
             remove={"status:wip"},
         )
-        after = self.pull_request(number)
+        after = self._pull_at_head(number, expected_head_sha)
         _require_open(after)
-        _require_head(after, expected_head_sha)
         if after.draft:
             raise ReconciliationError(
                 "GitHub did not mark the pull request ready for review"
             )
         _require_exact_labels(after, desired_labels)
-        self._require_result(
-            number,
-            assignment_id=result.assignment.assignment_id,
-            expected_head_sha=expected_head_sha,
-        )
         return MutationResult(
             changed=result_changed or ready_changed or labels_changed,
             resource_url=after.url,
@@ -638,12 +689,10 @@ class GitHubWorkflow:
         marker: str,
         reason: str,
     ) -> MutationResult:
-        before = self.pull_request(number)
-        _require_head(before, expected_head_sha)
-        _require_assignment_identity(
-            before,
-            repo=self._repo,
+        before, _ = self._assigned_pull_at_head(
+            number,
             assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
         )
         if before.merged:
             raise WorkflowPreconditionError(
@@ -655,12 +704,10 @@ class GitHubWorkflow:
             marker=marker,
             body=marker_body,
         )
-        current = self.pull_request(number)
-        _require_head(current, expected_head_sha)
-        _require_assignment_identity(
-            current,
-            repo=self._repo,
+        current, _ = self._assigned_pull_at_head(
+            number,
             assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
         )
         state_changed = current.state != "closed"
         if state_changed:
@@ -670,16 +717,13 @@ class GitHubWorkflow:
                 json_body={"state": "closed"},
                 expected_statuses={200},
             )
-        after = self.pull_request(number)
-        _require_head(after, expected_head_sha)
-        _require_assignment_identity(
-            after,
-            repo=self._repo,
+        after, _ = self._assigned_pull_at_head(
+            number,
             assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
         )
         if after.state != "closed":
             raise ReconciliationError("GitHub did not close the pull request")
-        self._require_marker(number, marker, marker_body)
         return MutationResult(
             changed=marker_changed or state_changed,
             resource_url=after.url,
@@ -699,8 +743,7 @@ class GitHubWorkflow:
             raise ValueError("merge_method must be merge, squash, or rebase")
         if not assignment_id.strip():
             raise ValueError("assignment_id must not be empty")
-        before = self.pull_request(number)
-        _require_head(before, expected_head_sha)
+        before = self._pull_at_head(number, expected_head_sha)
         terminal_result = self._require_result(
             number,
             assignment_id=assignment_id,
@@ -756,8 +799,7 @@ class GitHubWorkflow:
             },
             expected_statuses={200},
         )
-        after = self.pull_request(number)
-        _require_head(after, expected_head_sha)
+        after = self._pull_at_head(number, expected_head_sha)
         if not after.merged or after.state != "closed":
             raise ReconciliationError("GitHub did not merge the pull request")
         if not after.merge_commit_sha:
@@ -775,6 +817,30 @@ class GitHubWorkflow:
             state="experiment_merged",
             version=after.merge_commit_sha,
         )
+
+    def _pull_at_head(
+        self,
+        number: int,
+        expected_head_sha: str,
+    ) -> PullRequestSnapshot:
+        snapshot = self.pull_request(number)
+        _require_head(snapshot, expected_head_sha)
+        return snapshot
+
+    def _assigned_pull_at_head(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        expected_head_sha: str,
+    ) -> tuple[PullRequestSnapshot, AssignmentRecord]:
+        snapshot = self._pull_at_head(number, expected_head_sha)
+        assignment = _require_assignment_identity(
+            snapshot,
+            repo=self._repo,
+            assignment_id=assignment_id,
+        )
+        return snapshot, assignment
 
     def _set_draft(
         self,
@@ -802,18 +868,20 @@ class GitHubWorkflow:
         )
         if response is None:
             return True
-        body = _object(response.json_body, "GraphQL response")
-        if body.get("errors"):
+        if not isinstance(response.json_body, dict):
+            raise ReconciliationError("GitHub returned invalid GraphQL response")
+        if response.json_body.get("errors"):
             raise ReconciliationError(
                 f"GitHub GraphQL {mutation} mutation returned errors"
             )
-        data = _object(body.get("data"), "GraphQL data")
-        mutation_result = _object(data.get(mutation), f"GraphQL {mutation}")
-        pull_request = _object(
-            mutation_result.get("pullRequest"),
-            f"GraphQL {mutation} pull request",
+        data = response.json_body.get("data")
+        mutation_payload = data.get(mutation) if isinstance(data, dict) else None
+        mutation_result = _validated_response(
+            _DraftMutationResponse,
+            mutation_payload,
+            f"GraphQL {mutation} result",
         )
-        if pull_request.get("isDraft") is not draft:
+        if mutation_result.pull_request.is_draft is not draft:
             raise ReconciliationError(
                 f"GitHub GraphQL {mutation} returned the wrong draft state"
             )
@@ -850,75 +918,64 @@ class GitHubWorkflow:
         marker: str,
         body: str,
     ) -> tuple[bool, _IssueComment]:
-        matches = self._marker_comments(number, marker)
-        if len(matches) > 1:
-            raise ReconciliationError(
-                f"GitHub contains multiple comments for marker {marker!r}"
-            )
-        if matches and matches[0].body == body:
-            return False, matches[0]
-
-        if matches:
-            self._mutate(
-                "PATCH",
-                f"/repos/{self._repo}/issues/comments/{matches[0].id}",
-                json_body={"body": body},
-                expected_statuses={200},
-            )
-        else:
-            self._mutate(
-                "POST",
-                f"/repos/{self._repo}/issues/{number}/comments",
-                json_body={"body": body},
-                expected_statuses={201},
-            )
-
-        verified = self._marker_comments(number, marker)
-        if len(verified) != 1 or verified[0].body != body:
-            raise ReconciliationError(
-                "GitHub did not reach the requested marker comment"
-            )
-        return True, verified[0]
+        return self._upsert_comment(
+            number,
+            body=body,
+            matches=lambda: self._marker_comments(number, marker),
+            subject=f"comments for marker {marker!r}",
+            desired_state="marker comment",
+        )
 
     def _upsert_result_comment(
         self,
         number: int,
         *,
         result: ExperimentResult,
-    ) -> tuple[bool, _ResultComment]:
+    ) -> tuple[bool, _IssueComment]:
         assignment_id = result.assignment.assignment_id
-        matches = self._result_comments(number, assignment_id)
-        if len(matches) > 1:
-            raise ReconciliationError(
-                f"GitHub contains multiple result markers for {assignment_id!r}"
-            )
-
         body = render_result_comment(result)
-        if matches and matches[0].comment.body == body:
-            return False, matches[0]
-        if matches:
-            self._mutate(
-                "PATCH",
-                (f"/repos/{self._repo}/issues/comments/{matches[0].comment.id}"),
-                json_body={"body": body},
-                expected_statuses={200},
-            )
-        else:
-            self._mutate(
-                "POST",
-                f"/repos/{self._repo}/issues/{number}/comments",
-                json_body={"body": body},
-                expected_statuses={201},
-            )
+        return self._upsert_comment(
+            number,
+            body=body,
+            matches=lambda: tuple(
+                match.comment for match in self._result_comments(number, assignment_id)
+            ),
+            subject=f"result markers for {assignment_id!r}",
+            desired_state="terminal result",
+        )
 
-        verified = self._result_comments(number, assignment_id)
-        if (
-            len(verified) != 1
-            or verified[0].result != result
-            or verified[0].comment.body != body
-        ):
+    def _upsert_comment(
+        self,
+        number: int,
+        *,
+        body: str,
+        matches: Callable[[], tuple[_IssueComment, ...]],
+        subject: str,
+        desired_state: str,
+    ) -> tuple[bool, _IssueComment]:
+        existing = matches()
+        if len(existing) > 1:
+            raise ReconciliationError(f"GitHub contains multiple {subject}")
+        if existing and existing[0].body == body:
+            return False, existing[0]
+        if existing:
+            method = "PATCH"
+            path = f"/repos/{self._repo}/issues/comments/{existing[0].id}"
+            expected_statuses = {200}
+        else:
+            method = "POST"
+            path = f"/repos/{self._repo}/issues/{number}/comments"
+            expected_statuses = {201}
+        self._mutate(
+            method,
+            path,
+            json_body={"body": body},
+            expected_statuses=expected_statuses,
+        )
+        verified = matches()
+        if len(verified) != 1 or verified[0].body != body:
             raise ReconciliationError(
-                "GitHub did not reach the requested terminal result"
+                f"GitHub did not reach the requested {desired_state}"
             )
         return True, verified[0]
 
@@ -969,10 +1026,11 @@ class GitHubWorkflow:
             )
         return tuple(
             self.pull_request(
-                _integer(
-                    _object(item, "assignment pull request").get("number"),
-                    "assignment pull request number",
-                )
+                _validated_response(
+                    _NumberedResponse,
+                    item,
+                    "assignment pull request",
+                ).number
             )
             for item in response.json_body
         )
@@ -1002,14 +1060,15 @@ class GitHubWorkflow:
             raise ReconciliationError(
                 "GitHub returned invalid active assignment results"
             )
-        return tuple(
-            _integer(
-                data.get("number"),
-                "active assignment number",
+        issues = tuple(
+            _validated_response(
+                _IssueSearchResponse,
+                item,
+                "active assignment",
             )
             for item in response.json_body
-            if "pull_request" in (data := _object(item, "active assignment"))
         )
+        return tuple(issue.number for issue in issues if issue.pull_request is not None)
 
     def _require_result(
         self,
@@ -1048,27 +1107,6 @@ class GitHubWorkflow:
             if comment.author == trusted_actor and marker in comment.body.splitlines()
         )
 
-    def _require_marker(
-        self,
-        number: int,
-        marker: str,
-        body: str | None = None,
-    ) -> _IssueComment:
-        matches = self._marker_comments(number, marker)
-        if not matches:
-            raise WorkflowPreconditionError(
-                f"terminal result or workflow marker {marker!r} is missing"
-            )
-        if len(matches) > 1:
-            raise ReconciliationError(
-                f"GitHub contains multiple comments for marker {marker!r}"
-            )
-        if body is not None and matches[0].body != body:
-            raise ReconciliationError(
-                "GitHub marker comment does not match the requested body"
-            )
-        return matches[0]
-
     def _comments(self, number: int) -> tuple[_IssueComment, ...]:
         number = _positive_number(number)
         url: str | None = f"/repos/{self._repo}/issues/{number}/comments?per_page=100"
@@ -1088,46 +1126,34 @@ class GitHubWorkflow:
             if not isinstance(page, list):
                 raise ReconciliationError("GitHub returned invalid paginated comments")
             for raw_comment in page:
-                data = _object(raw_comment, "issue comment")
                 comments.append(
-                    _IssueComment(
-                        id=_integer(data.get("id"), "issue comment ID"),
-                        body=_string(data.get("body"), "issue comment body"),
-                        url=_string(
-                            data.get("html_url"),
-                            "issue comment URL",
-                            allow_empty=True,
-                        ),
-                        author=_string(
-                            _object(
-                                data.get("user"),
-                                "issue comment author",
-                            ).get("login"),
-                            "issue comment author login",
-                        ),
-                    )
+                    _validated_response(
+                        _IssueCommentResponse,
+                        raw_comment,
+                        "issue comment",
+                    ).comment()
                 )
-            url = _next_link(response.header("Link"))
+            url = next_link(response.header("Link"))
             if url is not None and not url.startswith(f"{self._api_url}/"):
                 raise ReconciliationError(
                     "GitHub pagination returned an unexpected origin"
                 )
         return tuple(comments)
 
-    def _human_issue(self, number: int) -> dict[str, object]:
+    def _human_issue(self, number: int) -> _IssueResponse:
         response = self._request(
             "GET",
             f"/repos/{self._repo}/issues/{number}",
             expected_statuses={200},
         )
-        issue = _object(response.json_body, "issue")
-        if "pull_request" in issue:
+        issue = _validated_response(_IssueResponse, response.json_body, "issue")
+        if issue.pull_request is not None:
             raise WorkflowPreconditionError(
                 "human messages must use an issue, not a pull request"
             )
-        if _string(issue.get("state"), "issue state") != "open":
+        if issue.state != "open":
             raise WorkflowPreconditionError("human issue must be open")
-        if "human" not in _labels(issue.get("labels")):
+        if "human" not in {label.name for label in issue.labels}:
             raise WorkflowPreconditionError("human issue must retain the human label")
         return issue
 
@@ -1135,14 +1161,11 @@ class GitHubWorkflow:
         self,
         number: int,
         *,
-        issue: dict[str, object],
+        issue: _IssueResponse,
         human_message_id: int,
     ) -> str:
-        if _integer(issue.get("id"), "issue ID") == human_message_id:
-            return _string(
-                _object(issue.get("user"), "issue author").get("login"),
-                "issue author login",
-            )
+        if issue.id == human_message_id:
+            return issue.user.login
         match = next(
             (
                 comment
@@ -1164,10 +1187,11 @@ class GitHubWorkflow:
                 "/user",
                 expected_statuses={200},
             )
-            self._trusted_actor = _string(
-                _object(response.json_body, "authenticated user").get("login"),
-                "authenticated user login",
-            )
+            self._trusted_actor = _validated_response(
+                _GitHubUser,
+                response.json_body,
+                "authenticated user",
+            ).login
         return self._trusted_actor
 
     def _request(
@@ -1431,50 +1455,3 @@ def _replace_assignment_marker(
         )
     lines[indexes[0]] = replacement
     return "\n".join(lines)
-
-
-def _labels(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list):
-        raise ReconciliationError("GitHub returned invalid pull request labels")
-    labels = []
-    for item in value:
-        data = _object(item, "pull request label")
-        labels.append(_string(data.get("name"), "pull request label name"))
-    return tuple(sorted(set(labels)))
-
-
-def _next_link(value: str | None) -> str | None:
-    if value is None:
-        return None
-    for part in value.split(","):
-        segments = [segment.strip() for segment in part.split(";")]
-        if 'rel="next"' not in segments[1:]:
-            continue
-        target = segments[0]
-        if target.startswith("<") and target.endswith(">"):
-            return target[1:-1]
-    return None
-
-
-def _object(value: object, name: str) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise ReconciliationError(f"GitHub returned invalid {name}")
-    return cast(dict[str, object], value)
-
-
-def _string(value: object, name: str, *, allow_empty: bool = False) -> str:
-    if not isinstance(value, str) or (not allow_empty and not value):
-        raise ReconciliationError(f"GitHub returned invalid {name}")
-    return value
-
-
-def _integer(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ReconciliationError(f"GitHub returned invalid {name}")
-    return value
-
-
-def _boolean(value: object, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise ReconciliationError(f"GitHub returned invalid {name}")
-    return value

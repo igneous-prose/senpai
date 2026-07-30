@@ -5,9 +5,6 @@ STATUS_SKILL = ROOT / ".agents" / "skills" / "senpai-status-check" / "SKILL.md"
 HUMAN_ISSUES_SKILL = (
     ROOT / "plugins" / "senpai" / "skills" / "check-human-issues" / "SKILL.md"
 )
-POLL_FOR_WORK_SKILL = (
-    ROOT / "plugins" / "senpai" / "skills" / "poll-for-work" / "SKILL.md"
-)
 
 
 def test_status_skill_uses_runtime_scope_without_legacy_assumptions():
@@ -56,11 +53,3 @@ def test_human_issue_skill_uses_the_typed_mutation_boundary():
     assert "respond_to_issue" in instructions
     assert "github_transition" in instructions
     assert "gh issue comment" not in instructions
-
-
-def test_poll_for_work_skill_uses_the_bounded_pr_reader():
-    instructions = POLL_FOR_WORK_SKILL.read_text()
-
-    assert "get_prs" in instructions
-    assert "max_inline_prs=5" in instructions
-    assert "pr_all_comments" not in instructions

@@ -9,7 +9,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from openhands.sdk.llm import TextContent
 from openhands.sdk.tool import (
@@ -27,17 +27,13 @@ from openhands.tools.terminal import (
 )
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from senpai_agent.delegation import (
-    AdvisorEventSink,
-    ChildAgentRunnerFactory,
-    DelegateAgentTool,
-)
+from senpai_agent.delegation import DelegateAgentTool
 from senpai_agent.git_workflow import (
     create_assignment_branch,
     push_assignment_branch,
 )
 from senpai_agent.github import PRRetrievalResult, get_prs
-from senpai_agent.github_workflow import GitHubWorkflow, MutationResult
+from senpai_agent.github_workflow import GitHubWorkflow
 from senpai_agent.models import (
     AssignmentRecord,
     DispositionRecord,
@@ -54,91 +50,6 @@ from senpai_agent.training import (
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
-
-
-class TrainingService(Protocol):
-    def run_training(self, spec: TrainingSpec) -> TrainingResult: ...
-
-    def get_training_status(self, training_id: str) -> TrainingResult: ...
-
-    def close(self) -> None: ...
-
-    def drain(self) -> None: ...
-
-
-class GitHubWorkflowService(Protocol):
-    def create_assignment(
-        self,
-        assignment: AssignmentRecord,
-        *,
-        title: str,
-        body: str,
-    ) -> MutationResult: ...
-
-    def reconcile_labels(
-        self,
-        number: int,
-        *,
-        assignment_id: str,
-        add: set[str],
-        remove: set[str],
-        expected_head_sha: str,
-    ) -> MutationResult: ...
-
-    def request_revision(
-        self,
-        number: int,
-        *,
-        assignment_id: str,
-        expected_head_sha: str,
-        revision_id: str,
-        comment: str,
-    ) -> MutationResult: ...
-
-    def respond_to_issue(
-        self,
-        number: int,
-        *,
-        human_message_id: int,
-        response: str,
-    ) -> MutationResult: ...
-
-    def submit_result(
-        self,
-        number: int,
-        *,
-        expected_head_sha: str,
-        result: ExperimentResult,
-    ) -> MutationResult: ...
-
-    def preflight_submit_result(
-        self,
-        number: int,
-        *,
-        branch: str,
-        current_head_sha: str,
-        expected_result_head_sha: str,
-        result: ExperimentResult,
-    ) -> object: ...
-
-    def close_experiment(
-        self,
-        number: int,
-        *,
-        assignment_id: str,
-        expected_head_sha: str,
-        marker: str,
-        reason: str,
-    ) -> MutationResult: ...
-
-    def merge_experiment(
-        self,
-        number: int,
-        *,
-        expected_head_sha: str,
-        assignment_id: str,
-        merge_method: Literal["merge", "squash", "rebase"] = "squash",
-    ) -> MutationResult: ...
 
 
 @dataclass(frozen=True)
@@ -244,8 +155,8 @@ class MonitorTrainingAction(Action):
     gates: tuple[MetricGate, ...] = Field(
         default=(),
         description=(
-            "Metric thresholds or changes that should be triaged. Ordinary polls "
-            "are programmatic and do not consume model tokens."
+            "Metric thresholds or changes that should resume this conversation. "
+            "Ordinary polls are programmatic and do not consume model tokens."
         ),
     )
     poll_interval_seconds: float = Field(
@@ -267,7 +178,7 @@ class MonitorTrainingAction(Action):
                 TrainingState.CANCELLED,
             }
         ),
-        description="Training state changes that should be triaged.",
+        description="Training state changes that should resume this conversation.",
     )
 
 
@@ -323,7 +234,7 @@ class TrainingResultObservation(Observation):
 
 
 class _RunTrainingExecutor(ToolExecutor[RunTrainingAction, TrainingResultObservation]):
-    def __init__(self, training: TrainingService):
+    def __init__(self, training: TrainingSupervisor):
         self.training = training
 
     def __call__(
@@ -345,7 +256,7 @@ class _RunTrainingExecutor(ToolExecutor[RunTrainingAction, TrainingResultObserva
 class _GetTrainingStatusExecutor(
     ToolExecutor[GetTrainingStatusAction, TrainingResultObservation]
 ):
-    def __init__(self, training: TrainingService):
+    def __init__(self, training: TrainingSupervisor):
         self.training = training
 
     def __call__(
@@ -362,19 +273,8 @@ class RunTrainingTool(ToolDefinition[RunTrainingAction, TrainingResultObservatio
     @classmethod
     def create(
         cls,
-        conv_state: object | None = None,
-        training: TrainingService | None = None,
-        *,
-        state_dir: str | Path | None = None,
+        training: TrainingSupervisor,
     ) -> Sequence[Self]:
-        if training is None:
-            if conv_state is None or state_dir is None:
-                raise ValueError("conv_state and state_dir are required")
-            workspace = Path(conv_state.workspace.working_dir)
-            training = TrainingSupervisor(
-                workspace=workspace,
-                state_dir=Path(state_dir),
-            )
         return [
             cls(
                 description=(
@@ -402,18 +302,8 @@ class GetTrainingStatusTool(
     @classmethod
     def create(
         cls,
-        conv_state: object | None = None,
-        training: TrainingService | None = None,
-        *,
-        state_dir: str | Path | None = None,
+        training: TrainingSupervisor,
     ) -> Sequence[Self]:
-        if training is None:
-            if conv_state is None or state_dir is None:
-                raise ValueError("conv_state and state_dir are required")
-            training = TrainingSupervisor(
-                workspace=Path(conv_state.workspace.working_dir),
-                state_dir=Path(state_dir),
-            )
         return [
             cls(
                 description=(
@@ -436,7 +326,7 @@ class GetTrainingStatusTool(
 class _MonitorTrainingExecutor(
     ToolExecutor[MonitorTrainingAction, MonitorTrainingObservation]
 ):
-    def __init__(self, training: TrainingService, store: MonitorStore):
+    def __init__(self, training: TrainingSupervisor, store: MonitorStore):
         self.training = training
         self.store = store
 
@@ -474,30 +364,16 @@ class MonitorTrainingTool(
     @classmethod
     def create(
         cls,
-        conv_state: object | None = None,
-        training: TrainingService | None = None,
-        monitor_store: MonitorStore | None = None,
-        *,
-        state_dir: str | Path | None = None,
+        training: TrainingSupervisor,
+        monitor_store: MonitorStore,
     ) -> Sequence[Self]:
-        if training is None or monitor_store is None:
-            if conv_state is None or state_dir is None:
-                raise ValueError("conv_state and state_dir are required")
-            training = training or TrainingSupervisor(
-                workspace=Path(conv_state.workspace.working_dir),
-                state_dir=Path(state_dir),
-            )
-            monitor_store = monitor_store or MonitorStore(
-                Path(state_dir) / "monitors.sqlite3"
-            )
         return [
             cls(
                 description=(
                     "Durably monitor one training process without model polling. "
                     "Specify an optional W&B metric, direction, threshold/change "
-                    "gates, stale timeout, and terminal states. Senpai sends only "
-                    "actionable signals through a small triage child, then resumes "
-                    "this same student conversation when needed."
+                    "gates, stale timeout, and terminal states. Senpai resumes this "
+                    "same student conversation only when the policy emits a signal."
                 ),
                 action_type=MonitorTrainingAction,
                 observation_type=MonitorTrainingObservation,
@@ -670,11 +546,11 @@ class GetPRsTool(ToolDefinition[GetPRsAction, GetPRsObservation]):
             raise RuntimeError(
                 "configure GitHub credentials before initializing get_prs"
             )
-        if workspace is None and conv_state is not None:
+        if workspace is None:
+            if conv_state is None:
+                raise ValueError("get_prs requires its OpenHands workspace")
             workspace = Path(conv_state.workspace.working_dir)
-        target_workspace = (
-            Path(workspace).resolve() if workspace is not None else Path.cwd()
-        )
+        target_workspace = Path(workspace).resolve()
         artifact_dir = (
             Path(state_dir).resolve()
             if state_dir is not None
@@ -842,7 +718,7 @@ class _GitHubTransitionExecutor(
 ):
     def __init__(
         self,
-        workflow: GitHubWorkflowService,
+        workflow: GitHubWorkflow,
         role: str,
         workspace: Path,
         git_token: SecretStr | None = None,
@@ -964,13 +840,17 @@ class _GitHubTransitionExecutor(
                 ),
                 reason=transition.reason,
             )
-        else:
+        elif isinstance(transition, MergeExperimentTransition):
             self._require_role("advisor")
             result = self.workflow.merge_experiment(
                 transition.pr_number,
                 expected_head_sha=transition.expected_head_sha,
                 assignment_id=transition.assignment_id,
                 merge_method=transition.merge_method,
+            )
+        else:
+            raise TypeError(
+                f"unsupported GitHub transition: {type(transition).__name__}"
             )
         return GitHubTransitionObservation(
             changed=result.changed,
@@ -995,7 +875,7 @@ class GitHubTransitionTool(
     def create(
         cls,
         conv_state: object | None = None,
-        workflow: GitHubWorkflowService | None = None,
+        workflow: GitHubWorkflow | None = None,
         *,
         role: str | None = None,
         workspace: str | Path | None = None,
@@ -1019,11 +899,9 @@ class GitHubTransitionTool(
             )
             git_token = credentials.token
         if workspace is None:
-            workspace = (
-                Path(conv_state.workspace.working_dir)
-                if conv_state is not None
-                else Path.cwd()
-            )
+            if conv_state is None:
+                raise ValueError("github_transition requires its OpenHands workspace")
+            workspace = Path(conv_state.workspace.working_dir)
         return [
             cls(
                 description=(
@@ -1110,52 +988,6 @@ def _terminal_denial(
         is_error=True,
         command=action.command,
         exit_code=None,
-    )
-
-
-def create_senpai_tools(
-    *,
-    training: TrainingService,
-    child_runner_factory: ChildAgentRunnerFactory,
-    event_sink: AdvisorEventSink,
-    github_workflow: GitHubWorkflowService,
-    role: str = "advisor",
-    get_prs_fn: Callable[..., PRRetrievalResult] = get_prs,
-    max_agent_workers: int = 8,
-    max_agent_runtime_seconds: float | None = None,
-    pr_artifact_dir: str | Path | None = None,
-    workspace: str | Path | None = None,
-    advisor_branch: str | None = None,
-) -> tuple[ToolDefinition, ...]:
-    """Create the compact Senpai tool set with all external boundaries injected."""
-
-    return (
-        *RunTrainingTool.create(training=training),
-        *GetTrainingStatusTool.create(training=training),
-        *MonitorTrainingTool.create(
-            training=training,
-            monitor_store=MonitorStore(
-                Path(tempfile.mkdtemp(prefix="senpai-monitor-tests-"))
-                / "monitors.sqlite3"
-            ),
-        ),
-        *GetPRsTool.create(
-            get_prs_fn=get_prs_fn,
-            state_dir=pr_artifact_dir,
-            workspace=workspace,
-        ),
-        *GitHubTransitionTool.create(
-            workflow=github_workflow,
-            role=role,
-            workspace=workspace,
-            advisor_branch=advisor_branch,
-        ),
-        *DelegateAgentTool.create(
-            child_runner_factory=child_runner_factory,
-            event_sink=event_sink,
-            max_workers=max_agent_workers,
-            max_runtime_seconds=max_agent_runtime_seconds,
-        ),
     )
 
 

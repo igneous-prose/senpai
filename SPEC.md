@@ -94,8 +94,8 @@ protocol.
 The only SQLite databases are `advisor-events.sqlite3`, for unacknowledged
 advisor watcher/child events; `student-events.sqlite3`, for unacknowledged
 student child events; and `training/monitors.sqlite3`, for student monitor
-policy, samples, signals, and triage decisions. OpenHands conversation history
-is a separate file-backed per-UUID event log.
+policy, samples, and deduplicated actionable signals. OpenHands conversation
+history is a separate file-backed per-UUID event log.
 
 ## State and conversations
 
@@ -106,8 +106,7 @@ Advisor state:
 ├── advisor-conversation-id
 ├── controller-lease.json
 ├── advisor-events.sqlite3
-├── started-conversations.json
-├── system-context-revisions.json
+├── conversation-state.json
 ├── github/
 └── conversations managed by OpenHands
 ```
@@ -122,8 +121,7 @@ Student state:
 ├── controller-lease.json
 ├── student-conversations.json
 ├── student-events.sqlite3
-├── started-conversations.json
-├── system-context-revisions.json
+├── conversation-state.json
 ├── training/
 │   ├── <training-id>.json
 │   ├── <training-id>.log
@@ -134,20 +132,28 @@ Student state:
 ```
 
 `student-conversations.json` maps one `(assignment_id, revision_id)` to one
-UUID. `started-conversations.json` preserves correct continuation semantics if
-the Python controller restarts. A `training_monitor` event carries its original
-conversation UUID and therefore resumes, rather than replaces, the student
-conversation.
+UUID. `conversation-state.json` records, per UUID, both successful initial
+instruction delivery and the digest of the delivered merged system context.
+The controller replaces this one document atomically after a successful turn,
+so a restart cannot observe those two facts at different revisions. A
+`training_monitor` event carries its original conversation UUID and therefore
+resumes, rather than replaces, the student conversation.
+
+When `conversation-state.json` does not yet exist, startup atomically migrates
+the previous `started-conversations.json` and
+`system-context-revisions.json` files. A conversation caught between those
+legacy files' two writes resumes without replaying its initial brief and
+receives the current system context once.
 
 OpenHands stores base state and individual events beneath that UUID. A killed
 worker resumes from the last persisted event. An in-flight response or tool
 call without a durable event is retried from the preceding event.
 
-The controller marks a conversation started, and records its current system
-context revision, only after the first OpenHands turn succeeds. A crash or
-nonzero first turn therefore retries the complete programme and assignment
-prompt instead of incorrectly continuing from instructions that were never
-delivered.
+The controller marks a conversation's initial instructions delivered and
+records its current system-context digest in the same atomic update, only after
+the OpenHands turn succeeds. A crash or nonzero first turn therefore retries
+the complete programme and assignment prompt instead of incorrectly
+continuing from instructions that were never delivered.
 
 Student state is ephemeral by default. Losing it is acceptable after the
 assignment ends because the PR, branch, typed result, W&B runs, and Weave trace
@@ -376,13 +382,11 @@ GitHub events, child results, or an already-pending hard-failure wake. Repeating
 `monitor_training` with a changed policy replaces the stored policy and resets
 its derived samples and signals to match the new marker.
 
-A fresh no-context generic child triages each actionable signal. Hard failures
-always wake even if triage fails. A no-wake decision acknowledges the signal.
-A wake decision is persisted with the signal, so retrying an unacknowledged
-student turn does not pay for the triage child again. The triage child omits
-browser tools. Triage publishes a distinct lease whose deadline includes the
-child's execution and shutdown grace. A wake event carries the original
-student conversation UUID and a compact summary.
+Every persisted actionable signal directly creates a compact
+`training_monitor` wake for the signal's original student conversation UUID.
+No intermediate LLM call gates these events: registering the monitor policy is
+the student's request to resume when one of its conditions emits a signal. The
+signal remains pending until that exact conversation successfully handles it.
 
 Controller events are partitioned by their exact conversation UUID before a
 turn. Each partition is acknowledged only after its own successful turn, so a
@@ -473,9 +477,12 @@ Hivemind startup remains commented with a clear note. The Python controller
 waits for the optional cluster start gate while continuously refreshing a
 `start-gate` lease; readiness therefore cannot deadlock gated launch. Cluster
 launch and cutoff CLIs accept a gate only when it is an absolute normalized
-file path beneath their shared PVC mount. Cluster cutoff still waits for
-readiness/deadline and deletes launch resources; all conversation
-harvest/archive code is removed.
+file path beneath their shared PVC mount. Cluster cutoff arms as soon as all
+expected resources are Ready or when its bounded readiness window expires,
+whichever comes first, and opens the optional start gate in either case. One
+missing or crash-looping pod therefore cannot prevent the runtime budget from
+starting. At the persisted deadline it deletes launch resources; all
+conversation harvest/archive code is removed.
 
 ## Removed code
 
@@ -511,6 +518,8 @@ The change is acceptable when:
 - no operational prompt advertises a missing tool or service;
 - no runtime role requires Claude Code semantics;
 - secrets do not appear in serialized tool specs or captured content;
-- monitor wakes resume the original student UUID; and
+- monitor wakes resume the original student UUID;
+- cutoff arming completes after a bounded readiness window even when a pod
+  never becomes Ready; and
 - a live credential preflight plus GitHub read-only smoke succeeds before
   production rollout.

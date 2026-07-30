@@ -6,16 +6,11 @@ SPDX-PackageName: senpai
 
 # senpai
 
-Senpai is an autonomous ML research loop built on the OpenHands Agent SDK. An
-advisor proposes and reviews experiments; GPU students implement one assigned
-PR each, train, and return structured evidence. GitHub is the workflow record
-and W&B is the experiment record.
+Senpai is an autonomous ML research loop built on the OpenHands Agent SDK. An advisor proposes and reviews experiments; GPU students implement one assigned PR each, train, and return structured evidence. GitHub is the workflow record and W&B is the experiment record.
 
-Senpai is problem-agnostic. It clones a separate target repository into
-`target/`; agent commits, branches, and PRs land there, never in this runner
-repository.
+Senpai is problem-agnostic. It clones a separate target repository into `target/`; agent commits, branches, and PRs land there, never in this runner repository.
 
-The detailed runtime and safety contract is in [SPEC.md](SPEC.md).
+This README is the operator guide. [SPEC.md](SPEC.md) is the canonical runtime, persistence, and safety contract.
 
 ## Architecture
 
@@ -32,13 +27,9 @@ flowchart LR
     S --> WB
 ```
 
-GitHub PR labels and human-tagged Issues are the only cross-node protocol.
-There is no Senpai network service, port, shared RPC token, cluster DNS
-requirement, or Tailscale setup. The same controller works in Kubernetes,
-Docker, or directly on a host.
+GitHub PR labels and human-tagged Issues are the only cross-node protocol. Senpai has no RPC service, shared network token, cluster DNS requirement, or Tailscale setup. The same controller works in Kubernetes, Docker, or directly on a host.
 
-Each entrypoint performs clone and identity setup, then executes one Python
-supervisor:
+Each role runs:
 
 ```text
 entrypoint
@@ -46,54 +37,16 @@ entrypoint
   exec python -m senpai_agent.supervisor advisor|student
 
 supervisor
-  start the controller worker
-  restart crashes with bounded backoff
-  hard-kill and restart an overdue phase
+  restart crashed workers with bounded backoff
+  terminate and restart an overdue phase
 
 controller worker
   poll -> reconcile -> bounded OpenHands turn -> verify -> sleep
 ```
 
-The worker publishes an atomic progress lease for each phase. A restart reuses
-the same state directory and conversation UUID, so OpenHands reloads the
-conversation through its last durable event. Only an in-flight response or
-tool call that had not produced an event can be lost.
+The controller owns cadence, durable events, conversation selection, GitHub transitions, and training monitoring. OpenHands owns research judgment, code changes, and evidence interpretation.
 
-The controller owns cadence, conversation selection, durable events, and
-training monitoring. OpenHands owns research judgment, code changes, and
-evidence interpretation.
-
-## Runtime layout
-
-```text
-senpai/
-├── senpai_agent/
-│   ├── controller.py         # portable poll/reconcile/turn loop
-│   ├── supervisor.py         # hard process deadline and restart boundary
-│   ├── openhands_runner.py   # one bounded OpenHands turn
-│   ├── tools.py              # typed OpenHands tools
-│   ├── github.py             # complete, context-bounded PR reads
-│   ├── github_workflow.py    # verified GitHub state transitions
-│   ├── git_workflow.py       # lease-guarded branch publication
-│   ├── training.py           # nonblocking process supervision
-│   ├── monitor.py            # deterministic W&B/training monitor
-│   ├── advisor.py            # local child-event store and event pump
-│   └── hooks.py              # hook CLI and fail-closed policy
-├── system_instructions/
-│   ├── SENPAI-HARNESS.md
-│   ├── SENPAI-ADVISOR.md
-│   └── SENPAI-STUDENT.md
-├── plugins/senpai/           # native OpenHands plugin, skills, hooks
-├── .agents/                  # agents and progressively disclosed skills
-├── k8s/                      # entrypoints, launcher, and manifests
-├── Dockerfile.advisor        # Chromium; no training stack
-├── Dockerfile.student        # CUDA/PyTorch + Chromium
-├── Dockerfile.cutoff         # minimal kubectl deadline job
-├── senpai.yaml
-└── SPEC.md
-```
-
-The target repository provides:
+The runner repository contains the controller, role images, Kubernetes launcher, OpenHands plugin, typed tools, and shared role instructions. The target repository supplies:
 
 ```text
 target/
@@ -103,140 +56,40 @@ target/
     └── prompt-student.md
 ```
 
-Applicable target `AGENTS.md` and compatible `CLAUDE.md` files are loaded by
-OpenHands as project context. Agent skills are presented as a compact catalog
-and disclosed only when invoked.
+Applicable target `AGENTS.md` and compatible `CLAUDE.md` files are loaded as project context. Skills are presented as a compact catalog and disclosed only when invoked.
 
-## Typed tools
+## Agent tools
 
-OpenHands retains its normal Browser, task tracker, and Think facilities.
-Senpai wraps the terminal with a fail-closed policy and adds:
+OpenHands retains its Browser, task tracker, Think, terminal, and file-editing facilities. Senpai adds:
 
-- `delegate_agent`: the only subagent launch function. It selects a
-  file-defined `general-purpose`, `explore`, or `search` agent, a `smart` or
-  `fast` model tier, optional parent context, and foreground or background
-  delivery. Up to eight independent calls run concurrently.
-- `get_prs`: one read function for explicit numbers, an inclusive date range,
-  or a search. It includes every PR body, issue comment, submitted review, and
-  inline review comment. Five PRs are returned inline by default. Larger
-  results become one Markdown artifact outside the target checkout; raising the
-  inline limit above five warns about context pollution.
-- `github_transition`: creates assignments, performs lease-guarded pushes,
-  requests revisions, responds idempotently to exact human Issue messages,
-  submits authenticated structured results, reconciles labels, closes, and
-  merges.
-- `run_training` and `get_training_status`: start and inspect a supervised
-  process without streaming raw progress through model history.
-- `monitor_training`: records the selected W&B metric, direction, threshold or
-  change gates, staleness policy, terminal states, and current conversation
-  UUID.
+- `delegate_agent`: starts a file-defined `general-purpose`, `explore`, or `search` agent with a `smart` or `fast` model tier, optional parent context, and foreground or background delivery. Up to eight independent calls run concurrently.
+- `get_prs`: reads explicit PR numbers, an inclusive date range, or a search result. It includes the PR body, every issue comment, submitted review, and inline review comment. Five PRs are returned inline by default. Larger results become one Markdown artifact outside the target checkout; raising the inline limit above five risks polluting model context.
+- `github_transition`: performs verified, idempotent assignments, branch publication, revision requests, human-Issue responses, result submission, label reconciliation, closure, and merging.
+- `run_training` and `get_training_status`: start and inspect a supervised process without streaming raw progress through model history.
+- `monitor_training`: records the W&B metric, direction, gates, staleness policy, terminal states, and current conversation UUID to monitor.
 
-The main advisor/student terminal denies raw GitHub mutations, `git push`,
-direct training launches, sleeps, polling loops, and log streams. Native
-OpenHands hooks provide early feedback; the in-process wrapper enforces the
-same policy if hooks are bypassed or fail. File-defined subagents receive the
-raw OpenHands terminal and file editor, plus nested delegation where
-applicable. They receive no GitHub credential or GitHub tools. They return
-findings to the main advisor or student, which owns typed GitHub reads and
-transitions.
+The main advisor and student terminal denies raw GitHub mutations, `git push`, direct training launches, sleeps, polling loops, and log streams. Hooks provide early feedback and the in-process wrapper enforces the same policy.
 
-## Conversations and monitoring
+File-defined subagents receive the OpenHands terminal and file editor plus the tools declared by their definition. They receive no GitHub credential or GitHub mutation tools. Their findings return to the parent, which owns workflow transitions.
 
-- The advisor has one durable UUID at
-  `/var/lib/senpai/<research-tag>/advisor/openhands_state`.
-- A student gets one UUID per assignment revision. A later monitor event
-  continues that exact conversation.
-- Student state is ephemeral by default. The PR, branch, structured result,
-  W&B runs, and Weave trace are the durable handoff.
+`EXA_API_KEY` powers the Search agent's two modes through `exa-py`: general web search and scholarly publication search. Senpai does not configure an Exa MCP server.
+
+## Conversations, recovery, and monitoring
+
+- The advisor keeps one durable conversation UUID under `/var/lib/senpai/<research-tag>/advisor/openhands_state`.
+- A student gets one conversation UUID per assignment revision. Monitor and child-agent events resume that same UUID.
+- OpenHands reloads a conversation through its last durable event after a worker or container restart. Only an in-flight model response or tool call that had not produced an event can be lost.
+- Student state may be ephemeral. The PR, branch, structured result, W&B runs, and Weave trace are the durable handoff.
 - Senpai does not prune conversations. Operators own storage retention.
-- `human_issues: false` disables human-Issue polling entirely for isolated
-  launches.
+- Set `human_issues: false` to disable human-Issue polling for isolated launches.
 
-When a student starts training it registers `monitor_training` and ends the
-turn. The controller polls training state and one latest W&B metric value
-programmatically. Only a gate, stale metric, or terminal state creates a
-compact signal. A fresh context-free child decides whether the signal warrants
-waking the main student; failures always wake conservatively. If it wakes, the
-controller resumes the same student UUID with the compact conclusion. The
-decision is persisted across retries, and the triage child omits browser tools.
-Invalid metrics and individual W&B or training-status failures become bounded
-hard-failure signals without blocking other monitors or event mailboxes.
-Monitor triage publishes its own progress lease so a normal triage cannot
-expire the controller's poll deadline.
+When training starts, the student registers `monitor_training` and ends its turn. The controller polls process state and the latest selected W&B metric without putting routine samples into model history. A gate, stale metric, terminal state, or bounded monitor failure creates one compact persisted signal and directly resumes the original student conversation. Individual monitor failures do not block other monitors or GitHub events.
 
-While an advisor turn is active, its GitHub watcher can append a new
-`review_ready` event through OpenHands' concurrent message path. The advisor is
-instructed to dispatch a generic full-context review child and continue its
-unrelated research. Child results return through a local SQLite event store;
-they are not cross-node messages. A main student uses the same asynchronous
-delegation and local event path for bounded codebase, evidence, and history work.
-A result that arrives after a student turn ends wakes and resumes the exact
-parent conversation UUID.
+The advisor watches GitHub while a turn is active and can receive a new `review_ready` event through OpenHands' concurrent message path. Advisor and student child-agent results use role-local durable event storage; they are not cross-node messages. A result arriving after a turn ends wakes the exact parent conversation.
 
-Senpai has three local SQLite databases across the two roles:
+Agents can search their complete local OpenHands event history beneath `$SENPAI_OPENHANDS_STATE_DIR/$SENPAI_CONVERSATION_ID/events/`. Those JSON files can be large, so role instructions recommend `rg`, bounded reads, and a context-free Explore child for broad recovery.
 
-- `advisor-events.sqlite3` stores watcher and generic child-agent events until
-  they are injected into the advisor conversation;
-- `student-events.sqlite3` stores generic child-agent results until they are
-  injected into the student conversation; and
-- `training/monitors.sqlite3` stores monitor specifications, last samples,
-  deduplicated signals, and triage decisions.
-
-Neither is a cross-node queue. OpenHands conversation history is a separate
-per-UUID file-backed event log; GitHub and W&B remain the shared records.
-
-## Prompt stack and cache
-
-Senpai keeps harness instructions and role policy as separate source files but
-merges them into one stable OpenHands system suffix. `program.md`, the target
-role task, current GitHub state, and current UTC time are user-turn context.
-The full role is not periodically duplicated because it remains in the system
-message on every inference. A persisted merged-context hash detects a changed
-deployed harness or role and injects the current text once without rotating the
-conversation UUID.
-
-The project pins both OpenHands SDK packages to commit
-`4ed3504d4fdae153e8364bc3ab5ce455e4bf7079` in
-[`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk).
-That fork tracks OpenHands SDK 1.39.1 and adds a typed Anthropic
-`prompt_cache_ttl="1h"` option, durable Anthropic server-side compaction,
-durable OpenAI Responses continuation, and an explicit GPT-5.6 cache boundary.
-GPT-5.6 marks the stable system block as the cache breakpoint, uses a stable
-cache key per role and agent kind, and leaves dynamic project context outside
-that boundary. It requests `prompt_cache_options.mode="explicit"` with a
-30-minute TTL. Older compatible OpenAI models retain
-`prompt_cache_retention="24h"`. Senpai does not send Anthropic TTL arguments to
-OpenAI. The fork also makes Laminar an optional extra, so Senpai installs only
-its configured Weave observability integration.
-
-For direct `openai/*` models, Senpai explicitly selects OpenHands' Responses
-API path, stores each response, and passes the latest `previous_response_id`
-with only the new user or tool inputs. The response ID already lives in the
-durable OpenHands event log, so a restarted controller resumes the same
-server-side chain. System instructions and tools are still sent on every call.
-
-Senpai requests `reasoning_context="all_turns"` and
-`reasoning_summary="auto"`. This allows supported OpenAI models to reuse
-private reasoning from earlier turns while returning the most detailed
-available reasoning summary. The default reasoning effort is `xhigh`; operators
-can still request `max` explicitly for GPT-5.6. OpenAI's automatic Responses
-compaction starts at 200,000 rendered tokens. The OpenHands condenser is
-disabled only for this stored chain: OpenAI owns the active model context while
-OpenHands retains the complete durable event log for restart recovery,
-observability, and debugging.
-
-Direct `anthropic/*` models enable Anthropic's native compaction at 200,000
-input tokens. The fork persists the returned compaction block in the normal
-OpenHands event log and replays it first on every later Messages API request,
-including after a controller restart. OpenHands' local condenser is disabled
-for that chain so two independent summaries never compete.
-
-Agents can search the complete local event history themselves at
-`$SENPAI_OPENHANDS_STATE_DIR/$SENPAI_CONVERSATION_ID/events/`. These JSON files
-can be very large, so the harness instructs agents to use `rg` and bounded
-reads. Main advisors and students can dispatch a context-free child for broad
-recovery; the child receives the parent event directory through
-`$SENPAI_PARENT_CONVERSATION_HISTORY_DIR`.
+For provider-specific Responses continuation, server-side compaction, reasoning, and cache behavior, see [SPEC.md](SPEC.md) and the OpenHands fork's [FORK_MODS.md](https://github.com/morganmcg1/software-agent-sdk/blob/main/FORK_MODS.md). Dependency revisions are pinned in `pyproject.toml` and `uv.lock`.
 
 ## Images
 
@@ -248,11 +101,7 @@ ghcr.io/wandb/senpai-student:sha-<40-character-source-commit>
 ghcr.io/wandb/senpai-cutoff:sha-<40-character-source-commit>
 ```
 
-All images are built from the exact same revision. Advisor and student install
-Chromium and run a browser smoke test during the build. The advisor image
-excludes PyTorch, CUDA, and Kubernetes tooling. The student image validates
-CUDA/PyTorch and its supported architectures. The cutoff image contains only
-the shell/Python runtime and a checksum-verified pinned `kubectl`.
+All images are built from the same revision. Advisor and student install Chromium and run a browser smoke test during the build. The advisor excludes PyTorch, CUDA, and Kubernetes tooling. The student validates CUDA/PyTorch and its supported architectures. The cutoff image contains a minimal runtime and checksum-verified `kubectl`.
 
 Build locally:
 
@@ -272,21 +121,18 @@ docker build \
   -t "senpai-cutoff:sha-$revision" .
 ```
 
-The launcher accepts only matching full-SHA tags or immutable digests. GitHub
-Actions is the canonical image/browser acceptance path when Docker is
-unavailable locally.
+The launcher accepts only matching full-SHA tags or immutable digests. GitHub Actions is the canonical image and browser acceptance path when Docker is unavailable locally.
 
 ## Configuration and preflight
 
-`senpai.yaml` supplies defaults; every field can be overridden through
-`k8s/launch.py`.
+`senpai.yaml` supplies defaults. Every field can be overridden through `k8s/launch.py`.
 
 Required launch inputs:
 
-- `--tag`;
-- `--target_repo_url`;
-- matching immutable `--advisor_image` and `--student_image`; and
-- GitHub, Anthropic, Exa, and W&B credentials from the environment or `.env`.
+- `--tag`
+- `--target_repo_url`
+- matching immutable `--advisor_image` and `--student_image`
+- GitHub, Anthropic, Exa, and W&B credentials from the environment or `.env`
 
 Run checks without deploying:
 
@@ -297,13 +143,22 @@ uv run python k8s/launch.py \
   --preflight_only
 ```
 
-Preflight validates repository push access and the target branch, plus the
-Anthropic, Exa, and W&B keys. Exa uses one bounded request:
-`type=instant`, `category=publication`, `numResults=1`.
+Preflight verifies repository push access, the target branch, image provenance when images are supplied, and the Anthropic, Exa, and W&B keys. Exa uses one cheap bounded request with `type=instant`, `category=publication`, and `numResults=1`.
+
+Common launch controls:
+
+- `--names frieren,fern` selects stable student identities; otherwise `--n_students` and `--student_prefix` generate them.
+- `--gpus_per_student`, `--cpu_per_gpu`, and `--memory_gi_per_gpu` size each student independently.
+- `--timeout_minutes` and `--max_epochs` are hard limits on each training process.
+- `--poll_interval_s` and `--poll_jitter_s` control the outer loop without teaching agents to poll.
+- `--gh_history_scope branch` is normal durable track memory, `fresh` is a shallow ablation checkout, and `repo` exposes whole-repository history.
+- `--extra_instructions` accepts a Markdown path or literal text and is appended to the generated launch-isolation rules.
+- `--dry_run` renders manifests without credential checks or cluster writes.
 
 ## Kubernetes
 
 ```bash
+revision=$(git rev-parse HEAD)
 uv run python k8s/launch.py \
   --tag july29 \
   --target_repo_url https://github.com/OWNER/TARGET.git \
@@ -314,36 +169,55 @@ uv run python k8s/launch.py \
   --student_image "ghcr.io/wandb/senpai-student:sha-$revision"
 ```
 
-The launcher verifies credentials and image provenance, creates GitHub routing
-labels, writes one launch Secret and per-role ConfigMaps, and deploys the two
-role images. It creates no Service, event token, ServiceAccount, or RBAC. A
-deterministic ConfigMap/Secret hash rolls pods when effective configuration
-changes.
+The launcher verifies credentials and provenance, creates GitHub routing labels, writes one launch Secret and per-role ConfigMaps, and deploys both roles. It creates no Service, event token, ServiceAccount, or RBAC. A deterministic ConfigMap/Secret hash rolls pods when effective configuration changes.
 
-If a cluster cutoff job releases a gated launch, `--start_gate_path` and the
-cutoff's `--start-gate-path` must name the same absolute normalized file
-beneath `--pvc_mount_path`. Both CLIs reject pod-local or relative paths.
+If a cutoff job releases a gated launch, `--start_gate_path` and the cutoff's `--start-gate-path` must name the same absolute normalized file beneath `--pvc_mount_path`. Both CLIs reject relative and pod-local paths.
 
-`EXA_API_KEY` powers the Search agent's direct two-mode Exa tool for general
-web and scholarly publication search through the official `exa-py` library. No
-Exa MCP server is configured.
+Useful operations:
 
 ```bash
 kubectl get deployments -l research-tag=july29
+kubectl get pods -l research-tag=july29
 kubectl logs -f deployment/senpai-july29-frieren
+kubectl rollout restart deployment/senpai-july29-frieren
 kubectl delete deployments,configmaps,secrets -l research-tag=july29
 ```
 
-## Docker or local hosts
+Pod startup and liveness probes check the supervisor lease. A failed worker is restarted in place and an unhealthy container is restarted by Kubernetes. Keep the advisor state directory durable across pod replacement if its conversation must survive.
 
-No shared Docker network is required for Senpai communication. Run each
-controller wherever it can reach GitHub and W&B. Persist
-`/var/lib/senpai/<tag>/advisor` for the advisor. Student `/var/lib/senpai` may
-remain ephemeral.
+## Docker and local hosts
 
-Both role images expose the worker lease as their healthcheck. Use Docker's
-`--restart unless-stopped` policy for container-level recovery; the internal
-supervisor handles a worker that is alive but no longer making progress.
+No shared Docker network is required. Run each controller wherever it can reach GitHub and W&B. Persist `/var/lib/senpai/<tag>/advisor` for the advisor. Student `/var/lib/senpai` may remain ephemeral.
+
+Both role images expose the worker lease through their healthcheck. Use Docker's `--restart unless-stopped` policy for container-level recovery; the internal supervisor handles a worker that remains alive but stops making progress. A Docker deployment must perform the same bootstrap as `k8s/entrypoint-advisor.sh` or `k8s/entrypoint-student.sh`: clone the pinned runner and target revisions, install agent definitions and skills, render the role file, vault the GitHub token, then execute the supervisor. Mount `/var/lib/senpai` when the advisor conversation must survive container replacement.
+
+For direct host development, first perform the clone, identity, skill installation, role rendering, and credential-file steps from the appropriate `k8s/entrypoint-*.sh`. With the same environment and prepared target checkout, the long-running processes are:
+
+```bash
+uv run python -m senpai_agent.supervisor advisor
+uv run python -m senpai_agent.supervisor student
+```
+
+The supervisor health command accepts the role's `controller-lease.json` path and exits nonzero when progress is absent or overdue:
+
+```bash
+uv run python -m senpai_agent.supervisor health \
+  /var/lib/senpai/openhands_state/controller-lease.json
+```
+
+Useful recovery facts:
+
+- Worker restart backoff is bounded and resets after a stable run.
+- Controller phase deadlines are visible in `controller-lease.json`.
+- Durable event keys prevent already-acknowledged GitHub and child events from replaying as new work.
+- A replacement student can reconstruct completed work from its branch, PR, structured comments, and W&B run records even when its local conversation was intentionally ephemeral.
+- Do not copy an advisor state directory while its process is running; stop the container before moving or snapshotting it.
+
+## Observability
+
+When `WANDB_ENTITY` and `WANDB_PROJECT` are configured, `weave-openhands` traces advisor, student, and child-agent runs to that W&B Weave project. It records agent, LLM, and tool spans under the durable OpenHands conversation ID and flushes before each runner or controller process exits.
+
+GitHub and W&B remain the shared operational records. Role-local state exists to resume conversations, deduplicate events, supervise processes, and monitor runs; it is not an inter-node queue.
 
 ## Development
 
@@ -353,26 +227,13 @@ uv run pytest -q
 bash -n k8s/*.sh scripts/*.sh plugins/senpai/scripts/*.sh
 ```
 
-The test suite covers tool schemas and role boundaries, complete PR retrieval,
-GitHub reconciliation and replay, ambiguous writes, assignment git
-integration, local event injection, training supervision, monitoring, hooks,
-prompt construction, state topology, image split, launch preflight, and
-cluster cutoff.
-
-When `WANDB_ENTITY` and `WANDB_PROJECT` are configured, the pinned
-`weave-openhands` integration traces every advisor, student, and child-agent
-OpenHands run to that W&B Weave project. It records the agent, LLM, and tool
-span tree under the durable OpenHands conversation ID and flushes before each
-runner or controller process exits.
+The suite covers tool schemas and role boundaries, complete PR retrieval, GitHub reconciliation and replay, ambiguous writes, assignment git integration, local event injection, training supervision, monitoring, hooks, prompt construction, state topology, image separation, launch preflight, and cluster cutoff.
 
 Deliberate deferrals:
 
-- Skill-declared child model/reasoning semantics remain in skill frontmatter
-  pending native OpenHands support.
-- The high-quality default OpenHands condenser remains enabled for providers
-  that are not using stored OpenAI Responses continuation or Anthropic native
-  compaction.
-- Hivemind startup is commented out pending its separate rewrite.
+- Skill-declared child model/reasoning semantics remain in skill frontmatter pending native OpenHands support.
+- The high-quality OpenHands condenser remains enabled for providers not using stored OpenAI Responses continuation or Anthropic native compaction.
+- Hivemind startup remains commented out pending its separate rewrite.
 - Senpai imposes no token/cost budget or conversation-retention policy.
 
 ## Domain guides

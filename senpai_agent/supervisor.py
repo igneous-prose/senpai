@@ -18,10 +18,14 @@ from pathlib import Path
 import psutil
 from pydantic import SecretStr
 
+from senpai_agent.processes import terminate_process_group
+from senpai_agent.secrets import (
+    GITHUB_TOKEN_FD_ENV,
+    GITHUB_TOKEN_FILE_ENV,
+    scrub_github_credentials,
+)
+
 LEASE_ENV = "SENPAI_CONTROLLER_LEASE_PATH"
-GITHUB_TOKEN_FILE_ENV = "SENPAI_GITHUB_TOKEN_FILE"
-GITHUB_TOKEN_FD_ENV = "SENPAI_GITHUB_TOKEN_FD"
-GITHUB_TOKEN_ENV_NAMES = ("GITHUB_TOKEN", "GH_TOKEN")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,12 +114,7 @@ class WorkerSupervisor:
         self.lease_path = lease_path.resolve()
         self.config = config or SupervisorConfig()
         self.environment = dict(os.environ if environment is None else environment)
-        for name in (
-            *GITHUB_TOKEN_ENV_NAMES,
-            GITHUB_TOKEN_FILE_ENV,
-            GITHUB_TOKEN_FD_ENV,
-        ):
-            self.environment.pop(name, None)
+        scrub_github_credentials(self.environment)
         self.github_token = github_token
 
     def run(self, stop: threading.Event | None = None) -> int:
@@ -134,7 +133,7 @@ class WorkerSupervisor:
                 process = subprocess.Popen(
                     self.command,
                     env=environment,
-                    start_new_session=os.name != "nt",
+                    start_new_session=True,
                     pass_fds=(token_fd,) if token_fd is not None else (),
                 )
             finally:
@@ -171,8 +170,6 @@ class WorkerSupervisor:
     def _open_github_token_pipe(self) -> int | None:
         if self.github_token is None:
             return None
-        if os.name == "nt":
-            raise RuntimeError("GitHub token pipes require a POSIX runtime")
         read_fd, write_fd = os.pipe()
         try:
             os.write(
@@ -241,27 +238,11 @@ class WorkerSupervisor:
         process: subprocess.Popen[bytes],
         descendants: Mapping[int, float],
     ) -> None:
-        if process.poll() is None:
-            if os.name == "nt":
-                process.terminate()
-            else:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
         self._signal_descendants(descendants, signal.SIGTERM)
-
-        try:
-            process.wait(timeout=self.config.terminate_grace_seconds)
-        except subprocess.TimeoutExpired:
-            if os.name == "nt":
-                process.kill()
-            else:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            process.wait()
+        terminate_process_group(
+            process,
+            grace_seconds=self.config.terminate_grace_seconds,
+        )
         self._signal_descendants(descendants, signal.SIGKILL)
 
     @staticmethod

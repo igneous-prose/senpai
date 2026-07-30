@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 import tempfile
 import time
 import warnings
@@ -17,6 +16,8 @@ from typing import Any
 from urllib.parse import urlencode
 
 from pydantic import SecretStr
+
+from senpai_agent.github_http import GitHubReader, GitHubReadError
 
 _ARTIFACT_MAX_AGE_SECONDS = 24 * 60 * 60
 
@@ -96,8 +97,8 @@ def get_prs(
         artifact_dir: External directory for oversized Markdown results. Defaults
             to ``$SENPAI_OPENHANDS_STATE_DIR/github`` or a temporary directory.
         target_workspace: Target checkout that must not contain artifacts.
-        token: Optional typed GitHub credential injected only into ``gh`` child
-            processes. Ambient GitHub token variables are always removed.
+        token: Optional typed GitHub credential passed only to the shared HTTP
+            reader. Ambient GitHub token variables are ignored.
 
     Returns:
         A manifest plus either inline Markdown or one Markdown artifact path.
@@ -119,19 +120,20 @@ def get_prs(
 
     if token is not None and not isinstance(token, SecretStr):
         raise TypeError("token must be a SecretStr")
+    reader = GitHubReader(token)
     selected_numbers = set(explicit_numbers)
     if normalized_range is not None or normalized_search is not None:
         selected_numbers.update(
             _search_pr_numbers(
+                reader,
                 repo,
                 normalized_range,
                 normalized_search,
-                token=token,
             )
         )
 
     pull_requests = tuple(
-        _fetch_pr(repo, number, token=token) for number in sorted(selected_numbers)
+        _fetch_pr(reader, repo, number) for number in sorted(selected_numbers)
     )
     markdown = _render_markdown(repo, pull_requests)
     manifest = tuple(pr.manifest_entry for pr in pull_requests)
@@ -195,11 +197,10 @@ def _iso_date(value: str | date) -> str:
 
 
 def _search_pr_numbers(
+    reader: GitHubReader,
     repo: str,
     date_range: tuple[str, str] | None,
     search: str | None,
-    *,
-    token: SecretStr | None,
 ) -> tuple[int, ...]:
     query = [f"repo:{repo}", "is:pr"]
     if search is not None:
@@ -207,109 +208,47 @@ def _search_pr_numbers(
     if date_range is not None:
         query.append(f"created:{date_range[0]}..{date_range[1]}")
     endpoint = "/search/issues?" + urlencode({"q": " ".join(query), "per_page": 100})
-    pages = _gh_api(endpoint, paginate=True, token=token)
-    numbers = {
-        int(item["number"])
-        for page in _as_pages(pages, dict)
-        for item in page.get("items", [])
-    }
+    numbers: set[int] = set()
+    for page in reader.pages(endpoint):
+        if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+            raise GitHubReadError("GitHub returned invalid issue search results")
+        numbers.update(
+            int(item["number"]) for item in page["items"] if isinstance(item, dict)
+        )
     return tuple(sorted(numbers))
 
 
 def _fetch_pr(
+    reader: GitHubReader,
     repo: str,
     number: int,
-    *,
-    token: SecretStr | None,
 ) -> _PR:
     root = f"/repos/{repo}"
-    details = _gh_api(
-        f"{root}/pulls/{number}",
-        paginate=False,
-        token=token,
-    )
+    details = reader.get(f"{root}/pulls/{number}")
     if not isinstance(details, dict):
         raise TypeError(f"GitHub returned an invalid PR #{number} response")
     return _PR(
         details=details,
         issue_comments=_paginated_items(
+            reader,
             f"{root}/issues/{number}/comments?per_page=100",
-            token=token,
         ),
         reviews=_paginated_items(
+            reader,
             f"{root}/pulls/{number}/reviews?per_page=100",
-            token=token,
         ),
         inline_comments=_paginated_items(
+            reader,
             f"{root}/pulls/{number}/comments?per_page=100",
-            token=token,
         ),
     )
 
 
 def _paginated_items(
+    reader: GitHubReader,
     endpoint: str,
-    *,
-    token: SecretStr | None,
 ) -> tuple[dict[str, Any], ...]:
-    pages = _gh_api(endpoint, paginate=True, token=token)
-    return tuple(
-        item
-        for page in _as_pages(pages, list)
-        for item in page
-        if isinstance(item, dict)
-    )
-
-
-def _as_pages(value: Any, page_type: type) -> list:
-    if not isinstance(value, list) or any(
-        not isinstance(page, page_type) for page in value
-    ):
-        raise RuntimeError("GitHub returned an invalid paginated response")
-    return value
-
-
-def _gh_api(
-    endpoint: str,
-    *,
-    paginate: bool,
-    token: SecretStr | None,
-) -> Any:
-    command = [
-        "gh",
-        "api",
-        "--header",
-        "Accept: application/vnd.github+json",
-    ]
-    if paginate:
-        command.extend(("--paginate", "--slurp"))
-    command.append(endpoint)
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=_github_process_env(token),
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or "unknown gh api error"
-        raise RuntimeError(f"GitHub request failed for {endpoint}: {detail}")
-    try:
-        return json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"GitHub returned invalid JSON for {endpoint}") from error
-
-
-def _github_process_env(token: SecretStr | None) -> dict[str, str]:
-    env = dict(os.environ)
-    env.pop("GITHUB_TOKEN", None)
-    env.pop("GH_TOKEN", None)
-    if token is not None:
-        value = token.get_secret_value()
-        if not value.strip():
-            raise ValueError("token must not be empty")
-        env["GH_TOKEN"] = value
-    return env
+    return tuple(reader.objects(endpoint))
 
 
 def _render_markdown(repo: str, pull_requests: tuple[_PR, ...]) -> str:

@@ -30,6 +30,12 @@ from senpai_agent.delegation import (
     DelegationConfig,
     configure_delegation,
 )
+from senpai_agent.secrets import (
+    GITHUB_TOKEN_ENV_NAMES,
+    GITHUB_TOKEN_FD_ENV,
+    GITHUB_TOKEN_FILE_ENV,
+    scrub_github_credentials,
+)
 from senpai_agent.weave_monitoring import (
     finish_weave_monitoring,
     initialize_weave_monitoring,
@@ -70,22 +76,16 @@ DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_REASONING_EFFORT = "xhigh"
 DEFAULT_FAST_REASONING_EFFORT = "low"
 REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra", "none")
-SENPAI_CONTINUATION_FILE = "current_conversation_id"
 COMMAND_SECRET_ENV_NAMES = (
     "WANDB_API_KEY",
     "EXA_API_KEY",
 )
-GITHUB_TOKEN_FD_ENV = "SENPAI_GITHUB_TOKEN_FD"
-GITHUB_SECRET_ENV_NAMES = ("GITHUB_TOKEN", "GH_TOKEN")
 EVENT_TEXT_LIMIT = 20000
 
 
 @dataclass(frozen=True)
 class RunnerArgs:
     max_turns: int = field(alias="--max-turns")
-    continue_session: bool = field(
-        default=False, alias=["-c", "--continue"], action="store_true"
-    )
     model: str | None = field(default=None, alias="--model")
     api_key_env: str | None = field(default=None, alias="--api-key-env")
     reasoning_effort: str | None = field(
@@ -125,7 +125,6 @@ class RunnerConfig:
     workspace: Path
     state_dir: Path
     conversation_id: uuid.UUID
-    continue_session: bool
     role: str
     enable_browser: bool
     agent_name: str | None
@@ -191,13 +190,13 @@ def github_token(
             raise RuntimeError(f"{GITHUB_TOKEN_FD_ENV} is empty")
         return SecretStr(value)
 
-    token_file = env.get("SENPAI_GITHUB_TOKEN_FILE")
+    token_file = env.get(GITHUB_TOKEN_FILE_ENV)
     if token_file:
         path = Path(token_file)
         metadata = path.lstat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
             raise RuntimeError(
-                "SENPAI_GITHUB_TOKEN_FILE must be a private regular file"
+                f"{GITHUB_TOKEN_FILE_ENV} must be a private regular file"
             )
         try:
             value = path.read_text(encoding="utf-8")
@@ -205,11 +204,11 @@ def github_token(
             path.unlink(missing_ok=True)
         value = value.strip()
         if not value:
-            raise RuntimeError("SENPAI_GITHUB_TOKEN_FILE is empty")
+            raise RuntimeError(f"{GITHUB_TOKEN_FILE_ENV} is empty")
         return SecretStr(value)
 
     value = next(
-        (env[name] for name in GITHUB_SECRET_ENV_NAMES if env.get(name)),
+        (env[name] for name in GITHUB_TOKEN_ENV_NAMES if env.get(name)),
         None,
     )
     if value is None:
@@ -271,29 +270,6 @@ def resolve_plugin_dir(explicit: str | None = None) -> Path:
 
 def fresh_conversation_id() -> uuid.UUID:
     return uuid.uuid4()
-
-
-def select_conversation_id(
-    state_dir: Path,
-    *,
-    continue_session: bool,
-    explicit_id: str | None = None,
-) -> uuid.UUID:
-    state_dir.mkdir(parents=True, exist_ok=True)
-    marker = state_dir / SENPAI_CONTINUATION_FILE
-    if explicit_id:
-        conversation_id = uuid.UUID(explicit_id)
-        marker.write_text(str(conversation_id), encoding="utf-8")
-        return conversation_id
-    if continue_session and marker.exists():
-        previous = marker.read_text(encoding="utf-8").strip()
-        if previous:
-            conversation_id = uuid.UUID(previous)
-            marker.write_text(str(conversation_id), encoding="utf-8")
-            return conversation_id
-    conversation_id = fresh_conversation_id()
-    marker.write_text(str(conversation_id), encoding="utf-8")
-    return conversation_id
 
 
 def resolve_config(
@@ -390,17 +366,18 @@ def resolve_config(
                 ),
             )
             if role == "advisor"
-            else select_conversation_id(
-                state_dir,
-                continue_session=args.continue_session,
-                explicit_id=env_value(
-                    args.conversation_id,
-                    env,
-                    "SENPAI_OPENHANDS_CONVERSATION_ID",
-                ),
+            else (
+                uuid.UUID(explicit_id)
+                if (
+                    explicit_id := env_value(
+                        args.conversation_id,
+                        env,
+                        "SENPAI_OPENHANDS_CONVERSATION_ID",
+                    )
+                )
+                else fresh_conversation_id()
             )
         ),
-        continue_session=args.continue_session,
         role=role,
         enable_browser=args.enable_browser,
         agent_name=env_value(args.agent, env, "SENPAI_OPENHANDS_AGENT"),
@@ -703,7 +680,6 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "workspace": str(config.workspace),
                 "state_dir": str(config.state_dir),
                 "conversation_id": str(config.conversation_id),
-                "continue": config.continue_session,
                 "role": config.role,
                 "model": config.model,
                 "smart_model": config.smart_model,
@@ -737,12 +713,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             trusted_actor=config.github_trusted_actor,
         )
     configure_delegation(delegation_config(config))
-    for name in (
-        *GITHUB_SECRET_ENV_NAMES,
-        "SENPAI_GITHUB_TOKEN_FILE",
-        GITHUB_TOKEN_FD_ENV,
-    ):
-        os.environ.pop(name, None)
+    scrub_github_credentials(os.environ)
     conversation = None
     try:
         llm = LLM(

@@ -25,6 +25,7 @@ PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
         "gh api -fstate=closed repos/wandb/senpai/issues/17",
         "gh api -Fbody=@comment.md repos/wandb/senpai/issues/17",
         "gh api repos/wandb/senpai/issues/17 -f state=closed",
+        "gh pr checks 17 --watch",
         "env GH_HOST=github.com gh pr merge 17 --squash",
         "env -S 'command gh pr merge 17 --squash'",
         "/usr/bin/env -- command gh issue close 12",

@@ -138,9 +138,6 @@ def test_training_rejects_timeout_above_the_launch_ceiling(tmp_path: Path):
 
 
 def test_training_timeout_terminates_the_process_group(tmp_path: Path):
-    if os.name == "nt":
-        pytest.skip("POSIX process-group contract")
-
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     supervisor = TrainingSupervisor(
@@ -166,9 +163,6 @@ def test_training_timeout_terminates_the_process_group(tmp_path: Path):
 
 
 def test_training_timeout_kills_term_ignoring_descendants(tmp_path: Path):
-    if os.name == "nt":
-        pytest.skip("POSIX process-group contract")
-
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     child_pid_path = workspace / "child.pid"
@@ -214,9 +208,6 @@ def test_training_timeout_kills_term_ignoring_descendants(tmp_path: Path):
 def test_successful_training_cleans_up_descendants_before_reporting_terminal(
     tmp_path: Path,
 ):
-    if os.name == "nt":
-        pytest.skip("POSIX process-group contract")
-
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     child_pid_path = workspace / "child.pid"
@@ -365,9 +356,6 @@ def test_supervisor_drain_keeps_training_alive_until_terminal(tmp_path: Path):
 def test_new_supervisor_terminates_verified_orphaned_process_group(
     tmp_path: Path,
 ):
-    if os.name == "nt":
-        pytest.skip("POSIX process-group contract")
-
     workspace = tmp_path / "workspace"
     state_dir = tmp_path / "state"
     workspace.mkdir()
@@ -427,9 +415,6 @@ def test_new_supervisor_terminates_verified_orphaned_process_group(
 
 
 def test_restart_does_not_signal_a_reused_or_unverified_pid(tmp_path: Path):
-    if os.name == "nt":
-        pytest.skip("POSIX process-group contract")
-
     workspace = tmp_path / "workspace"
     state_dir = tmp_path / "state"
     workspace.mkdir()

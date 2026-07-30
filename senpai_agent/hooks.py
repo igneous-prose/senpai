@@ -118,6 +118,13 @@ def _gh_policy(tokens: list[str], index: int) -> PolicyDecision:
             False,
             f"Use a typed Senpai GitHub tool for `gh {noun}` mutations.",
         )
+    if noun == "pr" and operation == "checks" and any(
+        value == "--watch" or value.startswith("--watch=") for value in remaining
+    ):
+        return PolicyDecision(
+            False,
+            "Do not model-poll GitHub checks; let the controller deliver updates.",
+        )
     return PolicyDecision(True)
 
 

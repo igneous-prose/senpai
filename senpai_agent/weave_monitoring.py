@@ -9,12 +9,13 @@ from threading import Lock
 from weave_openhands import finish as weave_finish
 from weave_openhands import init as weave_init
 
+from senpai_agent.secrets import GITHUB_TOKEN_ENV_NAMES
+
 _initialized = False
 _project_name: str | None = None
 _content_redactor: SecretRedactor | None = None
 TRACE_SECRET_ENV_NAMES = (
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
+    *GITHUB_TOKEN_ENV_NAMES,
     "WANDB_API_KEY",
     "EXA_API_KEY",
     "ANTHROPIC_API_KEY",

@@ -688,154 +688,6 @@ def test_reconcile_labels_rejects_the_wrong_assignment_before_mutation():
     assert fake.mutations == []
 
 
-def test_marker_upsert_reads_every_page_updates_once_and_replay_is_a_noop():
-    marker = "<!-- senpai-result:v1 assignment-7 -->"
-    fake = FakeGitHub(
-        pull_request(),
-        comments=[
-            comment(1, "unrelated"),
-            comment(2, f"{marker}\n\nold result"),
-        ],
-        comment_page_size=1,
-    )
-    client = workflow(fake)
-    desired = f"{marker}\n\nnew terminal result"
-
-    first = client.upsert_marker_comment(
-        7,
-        marker=marker,
-        body=desired,
-        expected_head_sha=HEAD_SHA,
-    )
-    mutations_after_first = list(fake.mutations)
-    second = client.upsert_marker_comment(
-        7,
-        marker=marker,
-        body=desired,
-        expected_head_sha=HEAD_SHA,
-    )
-
-    assert first.changed is True
-    assert second.changed is False
-    assert [item["body"] for item in fake.comments] == ["unrelated", desired]
-    assert mutations_after_first == [
-        (
-            "PATCH",
-            f"/repos/{REPO}/issues/comments/2",
-            {"body": desired},
-        )
-    ]
-    assert fake.mutations == mutations_after_first
-    comment_gets = [
-        request
-        for request in fake.requests
-        if request[0] == "GET" and request[1].endswith("/comments")
-    ]
-    assert len(comment_gets) >= 4
-
-
-def test_marker_upsert_creates_once_and_rejects_duplicate_marker_comments():
-    marker = "<!-- senpai-revision:v1 revision-2 -->"
-    fake = FakeGitHub(pull_request())
-    client = workflow(fake)
-    desired = f"{marker}\n\nTry a lower learning rate."
-
-    client.upsert_marker_comment(
-        7,
-        marker=marker,
-        body=desired,
-        expected_head_sha=HEAD_SHA,
-    )
-    client.upsert_marker_comment(
-        7,
-        marker=marker,
-        body=desired,
-        expected_head_sha=HEAD_SHA,
-    )
-
-    assert [item["body"] for item in fake.comments] == [desired]
-    assert [mutation[0] for mutation in fake.mutations] == ["POST"]
-
-    fake.comments.append(comment(2, desired))
-    with pytest.raises(ReconciliationError, match="multiple comments"):
-        client.upsert_marker_comment(
-            7,
-            marker=marker,
-            body=desired,
-            expected_head_sha=HEAD_SHA,
-        )
-
-
-def test_marker_upsert_ignores_spoofed_comments_and_never_mutates_them():
-    marker = "<!-- senpai-revision:v1 revision-2 -->"
-    spoofed = f"{marker}\n\nBlock the real workflow."
-    desired = f"{marker}\n\nUse the trusted revision."
-    fake = FakeGitHub(
-        pull_request(),
-        comments=[
-            comment(1, spoofed, author="untrusted-user"),
-            comment(2, spoofed, author="another-untrusted-user"),
-        ],
-    )
-    client = workflow(fake)
-
-    first = client.upsert_marker_comment(
-        7,
-        marker=marker,
-        body=desired,
-        expected_head_sha=HEAD_SHA,
-    )
-    mutations_after_first = list(fake.mutations)
-    second = client.upsert_marker_comment(
-        7,
-        marker=marker,
-        body=desired,
-        expected_head_sha=HEAD_SHA,
-    )
-
-    assert first.changed is True
-    assert second.changed is False
-    assert [item["body"] for item in fake.comments] == [
-        spoofed,
-        spoofed,
-        desired,
-    ]
-    assert mutations_after_first == [
-        (
-            "POST",
-            f"/repos/{REPO}/issues/7/comments",
-            {"body": desired},
-        )
-    ]
-    assert fake.mutations == mutations_after_first
-
-
-def test_marker_lookup_matches_only_one_exact_column_zero_line():
-    marker = "<!-- senpai-revision:v1 revision-2 -->"
-    desired = f"{marker}\n\nUse the deterministic revision."
-    fake = FakeGitHub(
-        pull_request(),
-        comments=[
-            comment(1, f"Documentation example: {marker}"),
-            comment(2, f"> {marker}"),
-        ],
-    )
-
-    workflow(fake).upsert_marker_comment(
-        7,
-        marker=marker,
-        body=desired,
-        expected_head_sha=HEAD_SHA,
-    )
-
-    assert [item["body"] for item in fake.comments] == [
-        f"Documentation example: {marker}",
-        f"> {marker}",
-        desired,
-    ]
-    assert [mutation[0] for mutation in fake.mutations] == ["POST"]
-
-
 def test_request_revision_reconciles_comment_draft_and_labels_once():
     marker = render_revision_marker(
         RevisionRecord(
@@ -874,8 +726,8 @@ def test_request_revision_reconciles_comment_draft_and_labels_once():
     assert fake.pr["labels"] == {"student:one", "status:wip"}
     assert fake.comments[0]["body"] == (f"{marker}\n\nRun the requested ablation.")
     assert [mutation[0] for mutation in mutations_after_first] == [
-        "PATCH",
         "POST",
+        "PATCH",
         "POST",
         "PUT",
     ]
@@ -884,8 +736,114 @@ def test_request_revision_reconciles_comment_draft_and_labels_once():
         in cast(dict[str, str], mutations_after_first[2][2])["query"]
     )
     assert fake.mutations == mutations_after_first
-    assert requests_after_first == 10
-    assert len(fake.requests) - requests_after_first == 5
+    assert requests_after_first == 9
+    assert len(fake.requests) - requests_after_first == 4
+
+
+def test_request_revision_updates_a_trusted_marker_from_the_final_comment_page():
+    marker = render_revision_marker(
+        RevisionRecord(
+            repo=REPO,
+            pr_number=7,
+            assignment_id=ASSIGNMENT_ID,
+            revision_id="revision-2",
+            requested_head_sha=HEAD_SHA,
+        )
+    )
+    fake = FakeGitHub(
+        pull_request(labels={"student:one", "status:review"}, draft=False),
+        comments=[
+            comment(1, "unrelated"),
+            comment(2, f"{marker}\n\nOld instructions."),
+        ],
+        comment_page_size=1,
+    )
+
+    workflow(fake).request_revision(
+        7,
+        assignment_id=ASSIGNMENT_ID,
+        expected_head_sha=HEAD_SHA,
+        revision_id="revision-2",
+        comment="Run the requested ablation.",
+    )
+
+    assert [item["body"] for item in fake.comments] == [
+        "unrelated",
+        f"{marker}\n\nRun the requested ablation.",
+    ]
+    assert (
+        "PATCH",
+        f"/repos/{REPO}/issues/comments/2",
+        {"body": f"{marker}\n\nRun the requested ablation."},
+    ) in fake.mutations
+
+
+def test_request_revision_ignores_spoofed_and_non_exact_markers():
+    marker = render_revision_marker(
+        RevisionRecord(
+            repo=REPO,
+            pr_number=7,
+            assignment_id=ASSIGNMENT_ID,
+            revision_id="revision-2",
+            requested_head_sha=HEAD_SHA,
+        )
+    )
+    spoofed = f"{marker}\n\nUntrusted instructions."
+    fake = FakeGitHub(
+        pull_request(labels={"student:one", "status:review"}, draft=False),
+        comments=[
+            comment(1, spoofed, author="untrusted-user"),
+            comment(2, f"Documentation example: {marker}"),
+            comment(3, f"> {marker}"),
+        ],
+    )
+
+    workflow(fake).request_revision(
+        7,
+        assignment_id=ASSIGNMENT_ID,
+        expected_head_sha=HEAD_SHA,
+        revision_id="revision-2",
+        comment="Use the trusted revision.",
+    )
+
+    assert [item["body"] for item in fake.comments] == [
+        spoofed,
+        f"Documentation example: {marker}",
+        f"> {marker}",
+        f"{marker}\n\nUse the trusted revision.",
+    ]
+    assert any(
+        method == "POST" and path == f"/repos/{REPO}/issues/7/comments"
+        for method, path, _body in fake.mutations
+    )
+
+
+def test_request_revision_rejects_duplicate_trusted_marker_comments():
+    marker = render_revision_marker(
+        RevisionRecord(
+            repo=REPO,
+            pr_number=7,
+            assignment_id=ASSIGNMENT_ID,
+            revision_id="revision-2",
+            requested_head_sha=HEAD_SHA,
+        )
+    )
+    desired = f"{marker}\n\nRun the requested ablation."
+    fake = FakeGitHub(
+        pull_request(labels={"student:one", "status:review"}, draft=False),
+        comments=[comment(1, desired), comment(2, desired)],
+    )
+
+    with pytest.raises(ReconciliationError, match="multiple comments"):
+        workflow(fake).request_revision(
+            7,
+            assignment_id=ASSIGNMENT_ID,
+            expected_head_sha=HEAD_SHA,
+            revision_id="revision-2",
+            comment="Run the requested ablation.",
+        )
+
+    assert fake.mutations == []
 
 
 def test_request_revision_rejects_the_wrong_assignment_before_mutation():
@@ -938,8 +896,8 @@ def test_submit_result_reconciles_ready_state_as_durable_github_mail():
         in cast(dict[str, str], mutations_after_first[1][2])["query"]
     )
     assert fake.mutations == mutations_after_first
-    assert requests_after_first == 9
-    assert len(fake.requests) - requests_after_first == 5
+    assert requests_after_first == 8
+    assert len(fake.requests) - requests_after_first == 4
 
 
 def test_submit_result_preflight_validates_before_the_student_pushes():
@@ -1101,8 +1059,8 @@ def test_close_experiment_upserts_reason_closes_and_replays_without_mutation():
         "PATCH",
     ]
     assert fake.mutations == mutations_after_first
-    assert requests_after_first == 8
-    assert len(fake.requests) - requests_after_first == 5
+    assert requests_after_first == 7
+    assert len(fake.requests) - requests_after_first == 4
 
 
 def test_close_experiment_rejects_an_already_merged_pull_request():

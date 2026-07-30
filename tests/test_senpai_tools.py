@@ -31,20 +31,25 @@ from senpai_agent.models import (
 from senpai_agent.tools import (
     CreateAssignmentTransition,
     GetPRsAction,
+    GetPRsTool,
     GetTrainingStatusAction,
+    GetTrainingStatusTool,
     GitHubTransitionAction,
+    GitHubTransitionTool,
+    MonitorTrainingTool,
     PushBranchTransition,
     ReconcileLabelsTransition,
     RequestRevisionTransition,
     RespondToIssueTransition,
     RunTrainingAction,
+    RunTrainingTool,
     SenpaiTerminalExecutor,
     SubmitResultTransition,
     clear_github_credentials,
     configure_github_credentials,
-    create_senpai_tools,
     register_senpai_tools,
 )
+from senpai_agent.monitor import MonitorStore
 from senpai_agent.training import (
     TrainingResult,
     TrainingSpec,
@@ -169,11 +174,58 @@ def close_tools(tools) -> None:
     for tool in tools:
         if tool.executor is not None:
             tool.executor.close()
+            store = getattr(tool.executor, "store", None)
+            if isinstance(store, MonitorStore):
+                store.close()
+
+
+def make_tools(
+    tmp_path: Path,
+    *,
+    training,
+    child_runner_factory,
+    event_sink,
+    github_workflow,
+    role: str = "advisor",
+    get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+    max_agent_workers: int = 8,
+    max_agent_runtime_seconds: float | None = None,
+    pr_artifact_dir: str | Path | None = None,
+    workspace: str | Path | None = None,
+    advisor_branch: str | None = None,
+):
+    workspace = Path(workspace or tmp_path / "target")
+    return (
+        *RunTrainingTool.create(training=training),
+        *GetTrainingStatusTool.create(training=training),
+        *MonitorTrainingTool.create(
+            training=training,
+            monitor_store=MonitorStore(tmp_path / "monitors.sqlite3"),
+        ),
+        *GetPRsTool.create(
+            get_prs_fn=get_prs_fn,
+            state_dir=pr_artifact_dir,
+            workspace=workspace,
+        ),
+        *GitHubTransitionTool.create(
+            workflow=github_workflow,
+            role=role,
+            workspace=workspace,
+            advisor_branch=advisor_branch,
+        ),
+        *DelegateAgentTool.create(
+            child_runner_factory=child_runner_factory,
+            event_sink=event_sink,
+            max_workers=max_agent_workers,
+            max_runtime_seconds=max_agent_runtime_seconds,
+        ),
+    )
 
 
 def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
     fake_training = FakeTraining(training_result(tmp_path))
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=fake_training,
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -265,7 +317,8 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
         pr_calls.append((repo, kwargs))
         return pr_result
 
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=fake_training,
         get_prs_fn=fake_get_prs,
         child_runner_factory=lambda _request: None,
@@ -329,7 +382,8 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
 
 def test_training_tool_interrupt_cancels_the_supervisor(tmp_path: Path):
     training = FakeTraining(training_result(tmp_path))
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=training,
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -348,7 +402,8 @@ def test_github_transition_delegates_a_typed_idempotent_operation(
     tmp_path: Path,
 ):
     github = FakeGitHubWorkflow()
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -389,11 +444,38 @@ def test_github_transition_delegates_a_typed_idempotent_operation(
         close_tools(tools)
 
 
+def test_github_transition_rejects_an_unhandled_future_operation(
+    tmp_path: Path,
+):
+    github = FakeGitHubWorkflow()
+    tools = make_tools(
+        tmp_path,
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=github,
+        role="advisor",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+    action = GitHubTransitionAction.model_construct(
+        transition=SimpleNamespace(operation="future_transition")
+    )
+
+    try:
+        with pytest.raises(TypeError, match="unsupported GitHub transition"):
+            transition(action)
+        assert github.calls == []
+    finally:
+        close_tools(tools)
+
+
 def test_request_revision_transition_carries_the_assignment_identity(
     tmp_path: Path,
 ):
     github = FakeGitHubWorkflow()
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -439,7 +521,8 @@ def test_both_roles_can_respond_to_a_verified_human_message(
     tmp_path: Path,
 ):
     github = FakeGitHubWorkflow()
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -479,7 +562,8 @@ def test_student_cannot_bypass_result_submission_with_direct_label_change(
     tmp_path: Path,
 ):
     github = FakeGitHubWorkflow()
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -516,7 +600,8 @@ def test_student_cannot_use_the_standalone_push_transition(
         "senpai_agent.tools.push_assignment_branch",
         lambda *args, **kwargs: push_calls.append((args, kwargs)),
     )
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -557,7 +642,8 @@ def test_advisor_push_transition_is_limited_to_the_configured_advisor_branch(
         )
 
     monkeypatch.setattr("senpai_agent.tools.push_assignment_branch", push)
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -612,7 +698,8 @@ def test_student_result_is_preflighted_before_its_branch_is_pushed(
         "senpai_agent.tools.push_assignment_branch",
         lambda *args, **kwargs: push_calls.append((args, kwargs)),
     )
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -670,7 +757,8 @@ def test_student_result_validates_the_declared_local_head_before_push(
         )
 
     monkeypatch.setattr("senpai_agent.tools.push_assignment_branch", push)
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -720,7 +808,8 @@ def test_advisor_create_assignment_owns_git_and_pr_reconciliation(
         "senpai_agent.tools.create_assignment_branch",
         fake_create_assignment_branch,
     )
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
         child_runner_factory=lambda _request: None,
@@ -750,7 +839,7 @@ def test_advisor_create_assignment_owns_git_and_pr_reconciliation(
         assert observation.state == "assignment_created"
         assert branch_calls == [
             (
-                Path.cwd(),
+                tmp_path / "target",
                 {
                     "branch": "student-one/lower-lr",
                     "base_branch": "schmidhuber",
@@ -918,7 +1007,7 @@ def parent_conversation() -> SimpleNamespace:
     return SimpleNamespace(id=uuid.uuid4(), state=SimpleNamespace(view=view))
 
 
-def test_delegate_agent_foreground_returns_result_inline():
+def test_delegate_agent_foreground_returns_result_inline(tmp_path: Path):
     parent = parent_conversation()
     release = threading.Event()
     release.set()
@@ -927,7 +1016,8 @@ def test_delegate_agent_foreground_returns_result_inline():
         release=release,
         started=threading.Event(),
     )
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(
             TrainingResult(
                 training_id="unused",
@@ -1015,6 +1105,7 @@ def test_delegate_agent_allows_eight_parallel_background_children():
 def test_delegate_agent_background_is_nonblocking_and_context_is_explicit(
     include_context,
     expected_roles,
+    tmp_path: Path,
 ):
     parent = parent_conversation()
     release = threading.Event()
@@ -1031,7 +1122,8 @@ def test_delegate_agent_background_is_nonblocking_and_context_is_explicit(
         requests.append(request)
         return child
 
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(
             TrainingResult(
                 training_id="unused",
@@ -1097,7 +1189,9 @@ def test_delegate_agent_background_is_nonblocking_and_context_is_explicit(
         close_tools(tools)
 
 
-def test_delegate_agent_background_enqueues_error_when_child_disappears():
+def test_delegate_agent_background_enqueues_error_when_child_disappears(
+    tmp_path: Path,
+):
     parent = parent_conversation()
     release = threading.Event()
     release.set()
@@ -1108,7 +1202,8 @@ def test_delegate_agent_background_enqueues_error_when_child_disappears():
         fail=True,
     )
     sink = EventSink()
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(
             TrainingResult(
                 training_id="unused",
@@ -1147,7 +1242,7 @@ def test_delegate_agent_background_enqueues_error_when_child_disappears():
         close_tools(tools)
 
 
-def test_delegate_agent_supports_an_explicit_runtime_limit():
+def test_delegate_agent_supports_an_explicit_runtime_limit(tmp_path: Path):
     parent = parent_conversation()
     child = FakeChild(
         conversation_id=uuid.uuid4(),
@@ -1155,7 +1250,8 @@ def test_delegate_agent_supports_an_explicit_runtime_limit():
         started=threading.Event(),
     )
     sink = EventSink()
-    tools = create_senpai_tools(
+    tools = make_tools(
+        tmp_path,
         training=FakeTraining(
             TrainingResult(
                 training_id="unused",

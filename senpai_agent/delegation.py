@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import signal
 import subprocess
 import threading
 import uuid
@@ -28,6 +27,8 @@ from openhands.sdk.tool import (
 from pydantic import Field
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
+from senpai_agent.processes import terminate_process_group
+from senpai_agent.secrets import scrub_github_credentials
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
@@ -126,35 +127,6 @@ def render_child_prompt(request: DelegationRequest, task: str) -> str:
     )
 
 
-def _stop_process_group(
-    process: subprocess.Popen[str],
-    *,
-    terminate_grace_seconds: float,
-) -> None:
-    if process.poll() is not None:
-        return
-    if os.name == "nt":
-        process.terminate()
-    else:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-    try:
-        process.wait(timeout=terminate_grace_seconds)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-    if os.name == "nt":
-        process.kill()
-    else:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-    process.wait()
-
-
 def run_child_process(
     argv: Sequence[str],
     *,
@@ -172,7 +144,7 @@ def run_child_process(
         stderr=subprocess.STDOUT,
         text=True,
         env=dict(env),
-        start_new_session=os.name != "nt",
+        start_new_session=True,
     )
     if on_start is not None:
         on_start(process)
@@ -183,9 +155,9 @@ def run_child_process(
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as error:
-            _stop_process_group(
+            terminate_process_group(
                 process,
-                terminate_grace_seconds=terminate_grace_seconds,
+                grace_seconds=terminate_grace_seconds,
             )
             process.communicate()
             raise TimeoutError(
@@ -258,11 +230,8 @@ class OpenHandsChildProcess:
     @property
     def environment(self) -> dict[str, str]:
         environment = dict(os.environ)
+        scrub_github_credentials(environment)
         for name in (
-            "GITHUB_TOKEN",
-            "GH_TOKEN",
-            "SENPAI_GITHUB_TOKEN_FILE",
-            "SENPAI_GITHUB_TOKEN_FD",
             "SENPAI_OPENHANDS_AGENT",
             "SENPAI_OPENHANDS_CONVERSATION_ID",
         ):
@@ -297,7 +266,7 @@ class OpenHandsChildProcess:
             with self._lock:
                 self._process = process
             if self._interrupted.is_set():
-                _stop_process_group(process, terminate_grace_seconds=1)
+                terminate_process_group(process, grace_seconds=1)
 
         def finished(process: subprocess.Popen[str]) -> None:
             with self._lock:
@@ -322,7 +291,7 @@ class OpenHandsChildProcess:
         with self._lock:
             process = self._process
         if process is not None:
-            _stop_process_group(process, terminate_grace_seconds=1)
+            terminate_process_group(process, grace_seconds=1)
 
     @staticmethod
     def parse_result(output: str) -> str:

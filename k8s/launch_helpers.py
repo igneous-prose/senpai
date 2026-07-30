@@ -542,17 +542,9 @@ def preflight_check_target_repo_access(target_repo_url: str, token: str) -> None
     slug = target_repo_slug(target_repo_url)
     print(f"Preflight: checking github token against {slug}")
 
-    def gh_api(path: str) -> dict:
-        req = urllib.request.Request(
-            f"https://api.github.com{path}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "User-Agent": "senpai-launch-preflight",
-            },
-        )
+    def read(path: str) -> dict:
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return json.loads(resp.read())
+            return _github_api(path, token)
         except urllib.error.HTTPError as e:
             hint = ""
             if e.code == 401:
@@ -567,12 +559,12 @@ def preflight_check_target_repo_access(target_repo_url: str, token: str) -> None
                 f"{_api_error_summary(e, token)}{hint}"
             )
 
-    perms = gh_api(f"/repos/{slug}").get("permissions", {})
+    perms = read(f"/repos/{slug}").get("permissions", {})
     if perms.get("push"):
         print(f"  OK — token has push access to {slug}")
         return
 
-    user = gh_api("/user").get("login", "<unknown>")
+    user = read("/user").get("login", "<unknown>")
     sys.exit(
         f"ERROR: github token (user '{user}') cannot push to {slug}\n"
         f"  permissions: {perms}\n"
@@ -588,25 +580,10 @@ def ensure_target_repo_labels(
     slug = target_repo_slug(target_repo_url)
     print(f"Preflight: ensuring routing labels on {slug}")
 
-    def gh_api(path: str, method: str = "GET", data: bytes | None = None) -> dict:
-        req = urllib.request.Request(
-            f"https://api.github.com{path}",
-            data=data,
-            method=method,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json",
-                "User-Agent": "senpai-launch-preflight",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read() or b"{}")
-
     for name, (color, description) in labels.items():
         encoded = urllib.parse.quote(name, safe="")
         try:
-            gh_api(f"/repos/{slug}/labels/{encoded}")
+            _github_api(f"/repos/{slug}/labels/{encoded}", token)
             continue
         except urllib.error.HTTPError as e:
             if e.code == 404:
@@ -617,7 +594,12 @@ def ensure_target_repo_labels(
                         "description": description,
                     }
                 ).encode()
-                gh_api(f"/repos/{slug}/labels", method="POST", data=payload)
+                _github_api(
+                    f"/repos/{slug}/labels",
+                    token,
+                    method="POST",
+                    data=payload,
+                )
                 print(f"  created label {name}")
                 continue
 

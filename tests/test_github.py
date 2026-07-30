@@ -1,8 +1,6 @@
 import inspect
-import json
 import os
 import time
-from subprocess import CompletedProcess
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -74,8 +72,8 @@ def inline_comment(comment_id: int, body: str) -> dict:
     }
 
 
-class FakeGh:
-    """A complete fake of the external `gh api` process boundary."""
+class FakeGitHubReader:
+    """Complete fake for the shared read-only GitHub boundary."""
 
     def __init__(
         self,
@@ -92,55 +90,54 @@ class FakeGh:
         self.inline_comments = inline_comments or {}
         self.search_pages = search_pages or []
         self.search_queries: list[str] = []
+        self.tokens: list[SecretStr | None] = []
 
-    def __call__(self, command, **_kwargs):
-        endpoint = command[-1]
+    def factory(self, token):
+        self.tokens.append(token)
+        return self
+
+    def get(self, endpoint):
         parsed = urlsplit(endpoint)
         path = parsed.path
+        prefix = f"/repos/{REPO}/pulls/"
+        if path.startswith(prefix) and path.count("/") == 5:
+            return self.pulls[int(path.removeprefix(prefix))]
+        raise AssertionError(f"Unexpected non-paginated GitHub endpoint: {endpoint}")
 
-        if path == f"/repos/{REPO}/search/issues":
-            raise AssertionError(
-                "Search endpoint must use GitHub's global /search path"
-            )
-        if path == "/search/issues":
-            assert "--paginate" in command
-            assert "--slurp" in command
-            self.search_queries.extend(parse_qs(parsed.query).get("q", []))
-            payload = self.search_pages
+    def pages(self, endpoint):
+        parsed = urlsplit(endpoint)
+        if parsed.path != "/search/issues":
+            raise AssertionError(f"Unexpected GitHub search endpoint: {endpoint}")
+        self.search_queries.extend(parse_qs(parsed.query).get("q", []))
+        return tuple(self.search_pages)
+
+    def objects(self, endpoint):
+        path = urlsplit(endpoint).path
+        prefix = f"/repos/{REPO}/pulls/"
+        issue_prefix = f"/repos/{REPO}/issues/"
+        if path.startswith(issue_prefix) and path.endswith("/comments"):
+            number = int(path.removeprefix(issue_prefix).split("/", 1)[0])
+            pages = self.comments.get(number, [[]])
+        elif path.startswith(prefix) and path.endswith("/reviews"):
+            number = int(path.removeprefix(prefix).split("/", 1)[0])
+            pages = self.reviews.get(number, [[]])
+        elif path.startswith(prefix) and path.endswith("/comments"):
+            number = int(path.removeprefix(prefix).split("/", 1)[0])
+            pages = self.inline_comments.get(number, [[]])
         else:
-            prefix = f"/repos/{REPO}/pulls/"
-            issue_prefix = f"/repos/{REPO}/issues/"
-            if path.startswith(issue_prefix) and path.endswith("/comments"):
-                number = int(path.removeprefix(issue_prefix).split("/", 1)[0])
-                payload = self.comments.get(number, [[]])
-            elif path.startswith(prefix) and path.endswith("/reviews"):
-                number = int(path.removeprefix(prefix).split("/", 1)[0])
-                payload = self.reviews.get(number, [[]])
-            elif path.startswith(prefix) and path.endswith("/comments"):
-                number = int(path.removeprefix(prefix).split("/", 1)[0])
-                payload = self.inline_comments.get(number, [[]])
-            elif path.startswith(prefix):
-                number = int(path.removeprefix(prefix))
-                payload = self.pulls[number]
-            else:
-                raise AssertionError(f"Unexpected GitHub endpoint: {endpoint}")
-
-            if isinstance(payload, list):
-                assert "--paginate" in command
-                assert "--slurp" in command
-
-        return CompletedProcess(command, 0, stdout=json.dumps(payload), stderr="")
+            raise AssertionError(f"Unexpected paginated GitHub endpoint: {endpoint}")
+        return [item for page in pages for item in page]
 
 
-def install_fake_gh(monkeypatch, fake: FakeGh) -> None:
-    monkeypatch.setattr(github.subprocess, "run", fake)
+def install_fake_github(monkeypatch, fake: FakeGitHubReader) -> None:
+    monkeypatch.setattr(github, "GitHubReader", fake.factory)
 
 
 def test_get_prs_returns_complete_paginated_markdown_in_stable_order(
     monkeypatch, tmp_path
 ):
     long_body = "body-start\n" + ("untruncated evidence\n" * 2_000) + "body-end"
-    fake = FakeGh(
+    fake = FakeGitHubReader(
         {
             1: pull_request(1, body=long_body),
             2: pull_request(2),
@@ -154,7 +151,7 @@ def test_get_prs_returns_complete_paginated_markdown_in_stable_order(
         reviews={1: [[review(1, "complete review submission")]]},
         inline_comments={1: [[inline_comment(1, "complete inline review comment")]]},
     )
-    install_fake_gh(monkeypatch, fake)
+    install_fake_github(monkeypatch, fake)
 
     result = get_prs(
         REPO,
@@ -180,7 +177,7 @@ def test_get_prs_returns_complete_paginated_markdown_in_stable_order(
 def test_get_prs_unifies_explicit_search_and_date_range_selectors(
     monkeypatch, tmp_path
 ):
-    fake = FakeGh(
+    fake = FakeGitHubReader(
         {
             3: pull_request(3),
             7: pull_request(7),
@@ -190,7 +187,7 @@ def test_get_prs_unifies_explicit_search_and_date_range_selectors(
             {"items": [{"number": 3}, {"number": 7}]},
         ],
     )
-    install_fake_gh(monkeypatch, fake)
+    install_fake_github(monkeypatch, fake)
 
     result = get_prs(
         REPO,
@@ -213,8 +210,8 @@ def test_get_prs_spills_one_stable_markdown_artifact_outside_target_workspace(
     monkeypatch, tmp_path
 ):
     pulls = {number: pull_request(number) for number in range(1, 7)}
-    fake = FakeGh(pulls)
-    install_fake_gh(monkeypatch, fake)
+    fake = FakeGitHubReader(pulls)
+    install_fake_github(monkeypatch, fake)
     target_workspace = tmp_path / "target"
     target_workspace.mkdir()
     artifact_dir = tmp_path / "runtime-state" / "github"
@@ -256,8 +253,8 @@ def test_get_prs_spills_one_stable_markdown_artifact_outside_target_workspace(
 
 
 def test_get_prs_rejects_artifacts_inside_target_workspace(monkeypatch, tmp_path):
-    fake = FakeGh({number: pull_request(number) for number in range(1, 7)})
-    install_fake_gh(monkeypatch, fake)
+    fake = FakeGitHubReader({number: pull_request(number) for number in range(1, 7)})
+    install_fake_github(monkeypatch, fake)
     target_workspace = tmp_path / "target"
     target_workspace.mkdir()
 
@@ -271,8 +268,8 @@ def test_get_prs_rejects_artifacts_inside_target_workspace(monkeypatch, tmp_path
 
 
 def test_get_prs_removes_only_expired_generated_markdown(monkeypatch, tmp_path):
-    fake = FakeGh({number: pull_request(number) for number in range(1, 7)})
-    install_fake_gh(monkeypatch, fake)
+    fake = FakeGitHubReader({number: pull_request(number) for number in range(1, 7)})
+    install_fake_github(monkeypatch, fake)
     artifact_dir = tmp_path / "artifacts"
     artifact_dir.mkdir()
     expired = artifact_dir / "pull-requests-expired.md"
@@ -297,8 +294,8 @@ def test_get_prs_removes_only_expired_generated_markdown(monkeypatch, tmp_path):
 def test_get_prs_warns_that_raising_inline_limit_can_pollute_agent_context(
     monkeypatch, tmp_path
 ):
-    fake = FakeGh({1: pull_request(1)})
-    install_fake_gh(monkeypatch, fake)
+    fake = FakeGitHubReader({1: pull_request(1)})
+    install_fake_github(monkeypatch, fake)
 
     assert inspect.signature(get_prs).parameters["max_inline_prs"].default == 5
     assert "risks polluting agent context" in (get_prs.__doc__ or "")
@@ -323,18 +320,12 @@ def test_get_prs_requires_at_least_one_selector(tmp_path):
         )
 
 
-def test_get_prs_injects_github_auth_only_into_its_gh_process(
+def test_get_prs_passes_only_the_typed_credential_to_the_shared_reader(
     monkeypatch,
     tmp_path,
 ):
-    fake = FakeGh({1: pull_request(1)})
-    calls: list[tuple[list[str], dict[str, str]]] = []
-
-    def recording_gh(command, **kwargs):
-        calls.append((command, kwargs["env"]))
-        return fake(command, **kwargs)
-
-    monkeypatch.setattr(github.subprocess, "run", recording_gh)
+    fake = FakeGitHubReader({1: pull_request(1)})
+    install_fake_github(monkeypatch, fake)
     monkeypatch.setenv("GITHUB_TOKEN", "ambient-write-token")
     monkeypatch.setenv("GH_TOKEN", "ambient-gh-token")
 
@@ -346,10 +337,5 @@ def test_get_prs_injects_github_auth_only_into_its_gh_process(
         target_workspace=tmp_path / "target",
     )
 
-    assert calls
-    for command, env in calls:
-        assert "typed-write-token" not in command
-        assert "ambient-write-token" not in env.values()
-        assert "ambient-gh-token" not in env.values()
-        assert env["GH_TOKEN"] == "typed-write-token"
-        assert "GITHUB_TOKEN" not in env
+    assert len(fake.tokens) == 1
+    assert fake.tokens[0].get_secret_value() == "typed-write-token"

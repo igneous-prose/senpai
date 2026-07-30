@@ -1,5 +1,4 @@
 import subprocess
-import time
 from pathlib import Path
 from uuid import UUID
 
@@ -7,30 +6,32 @@ from pydantic import SecretStr
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.controller import (
-    AssignmentConversationRegistry,
-    CompositeMailbox,
     Controller,
-    ControllerEvent,
-    ConversationLedger,
-    GitHubMailbox,
-    LocalStudentMailbox,
-    MonitorMailbox,
-    OpenHandsMonitorTriage,
-    StudentConversationSelector,
-    StudentWorkspaceReconciler,
-    SystemContextLedger,
     TurnResult,
     _full_prompt,
 )
+from senpai_agent.github_mailbox import GitHubMailbox
+from senpai_agent.mailbox import (
+    CompositeMailbox,
+    ControllerEvent,
+    LocalStudentMailbox,
+)
 from senpai_agent.models import AssignmentRecord, render_assignment_marker
 from senpai_agent.monitor import (
+    MonitorMailbox,
     MonitorEvaluation,
     MonitorSignal,
     MonitorStore,
     TrainingMonitorSpec,
 )
+from senpai_agent.state import (
+    AssignmentConversationRegistry,
+    ConversationStateLedger,
+    StudentConversationSelector,
+)
 from senpai_agent.supervisor import ProgressLease, WorkerLease
 from senpai_agent.training import TrainingState
+from senpai_agent.workspace import StudentWorkspaceReconciler
 
 
 class Mailbox:
@@ -56,10 +57,9 @@ class Turns:
         prompt,
         *,
         conversation_id,
-        continue_session,
         event_keys,
     ):
-        self.calls.append((prompt, conversation_id, continue_session, event_keys))
+        self.calls.append((prompt, conversation_id, event_keys))
         return TurnResult(exit_code=0)
 
 
@@ -196,7 +196,7 @@ def test_advisor_repolls_immediately_after_a_turn_when_github_changed():
     assert "Current time (UTC):" in turns.calls[0][0]
     assert "review_ready" in turns.calls[1][0]
     assert mailbox.calls >= 3
-    assert turns.calls[1][2] is True
+    assert "programme" not in turns.calls[1][0]
 
 
 def test_no_github_work_means_no_model_turn():
@@ -238,7 +238,7 @@ def test_controller_retries_an_unacknowledged_event_after_turn_failure():
     controller.run(max_cycles=2)
 
     assert len(turns.calls) == 2
-    assert turns.calls[1][2] is False
+    assert "programme" in turns.calls[1][0]
     assert all("programme" in call[0] for call in turns.calls)
 
 
@@ -263,7 +263,6 @@ def test_controller_retries_an_unacknowledged_event_after_sdk_exception():
     controller.run(max_cycles=2)
 
     assert len(turns.calls) == 1
-    assert turns.calls[0][2] is False
     assert "programme" in turns.calls[0][0]
 
 
@@ -365,7 +364,7 @@ def test_composite_mailbox_keeps_healthy_events_when_a_peer_fails(capsys):
     assert "SENPAI_MAILBOX_ERROR RuntimeError" in capsys.readouterr().err
 
 
-def test_hard_monitor_failure_wakes_without_model_triage(tmp_path: Path):
+def test_every_monitor_signal_directly_wakes_its_student(tmp_path: Path):
     conversation_id = UUID("00000000-0000-0000-0000-000000000086")
     signal = MonitorSignal(
         kind="training_status",
@@ -373,7 +372,6 @@ def test_hard_monitor_failure_wakes_without_model_triage(tmp_path: Path):
         training_id="training-1",
         state=TrainingState.FAILED,
         detail="training failed",
-        hard_failure=True,
     )
     store = MonitorStore(tmp_path / "monitors.sqlite3")
     spec = TrainingMonitorSpec(
@@ -387,60 +385,13 @@ def test_hard_monitor_failure_wakes_without_model_triage(tmp_path: Path):
         def poll(self):
             return ()
 
-    triage_calls = []
-
-    class Triage:
-        def decide(self, _signal, _conversation_id):
-            triage_calls.append((_signal, _conversation_id))
-            raise AssertionError("hard failures must not spend a model call")
-
-    events = MonitorMailbox(Engine(), store, Triage()).poll()
+    events = MonitorMailbox(Engine(), store).poll()
 
     assert len(events) == 1
     assert events[0].payload["conversation_id"] == str(conversation_id)
-    assert store.decision(signal.dedupe_key).wake_main is True
-    assert triage_calls == []
+    assert events[0].payload["summary"] == "training failed"
+    assert "registered monitor policy" in str(events[0].payload["reason"])
     store.close()
-
-
-def test_monitor_triage_publishes_a_lease_beyond_its_child_timeout(
-    tmp_path: Path,
-    monkeypatch,
-):
-    lease_path = tmp_path / "controller-lease.json"
-    observed = []
-
-    class Child:
-        def __init__(self, _config, _request):
-            return
-
-        def run(self, _task, _timeout):
-            observed.append(WorkerLease.read(lease_path))
-            return '{"wake_main":true,"summary":"wake","reason":"test"}'
-
-    monkeypatch.setattr("senpai_agent.delegation.OpenHandsChildProcess", Child)
-    triage = OpenHandsMonitorTriage(
-        object(),
-        timeout_seconds=40,
-        progress=ProgressLease(lease_path),
-    )
-    signal = MonitorSignal(
-        kind="metric_stale",
-        dedupe_key="training:stale",
-        training_id="training-1",
-        metric="loss",
-        state=TrainingState.RUNNING,
-        detail="loss is stale",
-    )
-
-    decision = triage.decide(
-        signal,
-        UUID("00000000-0000-0000-0000-000000000087"),
-    )
-
-    assert decision.wake_main is True
-    assert observed[0].phase == "monitor-triage"
-    assert observed[0].deadline - time.monotonic() >= 60
 
 
 def test_controller_waits_behind_start_gate_while_refreshing_its_lease(
@@ -561,8 +512,8 @@ def test_controller_continues_a_conversation_recorded_before_restart(
     tmp_path: Path,
 ):
     conversation_id = UUID("00000000-0000-0000-0000-000000000004")
-    ledger = ConversationLedger(tmp_path / "conversations.json")
-    ledger.mark_started(conversation_id)
+    ledger = ConversationStateLedger(tmp_path / "conversation-state.json")
+    ledger.mark_success(conversation_id, "")
     turns = Turns()
     event = ControllerEvent(
         kind="training_monitor",
@@ -575,7 +526,9 @@ def test_controller_continues_a_conversation_recorded_before_restart(
         turns=turns,
         conversation_id=conversation_id,
         full_prompt="programme",
-        conversation_ledger=ConversationLedger(tmp_path / "conversations.json"),
+        conversation_state=ConversationStateLedger(
+            tmp_path / "conversation-state.json"
+        ),
         sleep=lambda _seconds: None,
         poll_interval_seconds=600,
         jitter_seconds=0,
@@ -584,7 +537,6 @@ def test_controller_continues_a_conversation_recorded_before_restart(
     controller.run(max_cycles=1)
 
     assert turns.calls[0][1] == conversation_id
-    assert turns.calls[0][2] is True
     assert "programme" not in turns.calls[0][0]
 
 
@@ -629,10 +581,10 @@ def test_changed_system_context_is_injected_once_without_rotating_uuid(
     tmp_path: Path,
 ):
     conversation_id = UUID("00000000-0000-0000-0000-000000000006")
-    conversations = ConversationLedger(tmp_path / "conversations.json")
-    conversations.mark_started(conversation_id)
-    system_contexts = SystemContextLedger(tmp_path / "system-contexts.json")
-    system_contexts.mark(conversation_id, "old harness and role")
+    conversation_state = ConversationStateLedger(
+        tmp_path / "conversation-state.json"
+    )
+    conversation_state.mark_success(conversation_id, "old harness and role")
     event = ControllerEvent(
         kind="review_ready",
         dedupe_key="review:17:new-role",
@@ -650,9 +602,8 @@ def test_changed_system_context_is_injected_once_without_rotating_uuid(
         turns=turns,
         conversation_id=conversation_id,
         full_prompt="programme",
-        conversation_ledger=conversations,
         system_context="current harness and role",
-        system_context_ledger=system_contexts,
+        conversation_state=conversation_state,
         sleep=lambda _seconds: None,
         poll_interval_seconds=600,
         jitter_seconds=0,
@@ -664,7 +615,7 @@ def test_changed_system_context_is_injected_once_without_rotating_uuid(
     assert "# Updated Senpai system context" in turns.calls[0][0]
     assert "current harness and role" in turns.calls[0][0]
     assert "# Updated Senpai system context" not in turns.calls[1][0]
-    assert system_contexts.is_current(
+    assert conversation_state.is_context_current(
         conversation_id,
         "current harness and role",
     )
@@ -765,6 +716,48 @@ def test_student_assignment_event_carries_durable_assignment_identity(
     assert event.kind == "student_assignment"
     assert event.payload["assignment_id"] == "assignment-17"
     assert event.payload["revision_id"] == "revision-2"
+
+
+def test_malformed_assignment_does_not_suppress_human_messages(
+    monkeypatch,
+):
+    student = GitHubMailbox(
+        repo="acme/widgets",
+        token=SecretStr("github-token"),
+        role="student",
+        advisor_branch="research",
+        student_name="student-1",
+        trusted_actor="senpai-bot",
+    )
+    malformed = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body="<!-- senpai-assignment:v1 not-json -->",
+    )
+    issue = {
+        "id": 700,
+        "number": 23,
+        "title": "Please investigate",
+        "html_url": "https://github.test/acme/widgets/issues/23",
+        "created_at": "2026-07-29T18:00:00Z",
+        "body": "The assignment marker looks broken.",
+        "user": {"login": "ada"},
+        "labels": [{"name": "human"}, {"name": "student:student-1"}],
+    }
+    monkeypatch.setattr(student, "_pulls", lambda: [malformed])
+    monkeypatch.setattr(student, "_issues", lambda: [issue])
+    monkeypatch.setattr(student, "_issue_comments", lambda _issue: [])
+
+    events = student.poll()
+
+    assert [event.kind for event in events] == [
+        "malformed_assignment",
+        "human_issue",
+    ]
+    error = events[0]
+    assert error.dedupe_key == f"malformed_assignment:17:{'a' * 40}"
+    assert error.payload["number"] == 17
+    assert "malformed" in str(error.payload["error"]).lower()
+    assert events[1].payload["human_message_id"] == 700
 
 
 def test_human_issue_event_tracks_the_exact_latest_human_message(

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import math
 import sqlite3
 import threading
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -15,6 +15,7 @@ from uuid import UUID
 from pydantic import Field
 
 from senpai_agent.models import Contract
+from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.training import TrainingResult, TrainingState
 
 
@@ -63,7 +64,7 @@ class MetricSample(Contract):
 
 
 class MonitorSignal(Contract):
-    """Compact event handed to the monitor triage child."""
+    """Compact event handed back to the student conversation."""
 
     kind: Literal[
         "metric_gate",
@@ -79,28 +80,12 @@ class MonitorSignal(Contract):
     detail: str = Field(min_length=1, max_length=1_000)
     hard_failure: bool = False
 
-    def to_prompt(self) -> str:
-        return json.dumps(
-            self.model_dump(mode="json"),
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-
-
 class MonitorEvaluation(Contract):
     signals: tuple[MonitorSignal, ...] = ()
 
     @property
     def dedupe_keys(self) -> tuple[str, ...]:
         return tuple(signal.dedupe_key for signal in self.signals)
-
-
-class MonitorDecision(Contract):
-    """Strict result expected from the no-context monitor triage child."""
-
-    wake_main: bool
-    summary: str = Field(min_length=1, max_length=2_000)
-    reason: str = Field(min_length=1, max_length=1_000)
 
 
 def evaluate_monitor(
@@ -110,6 +95,7 @@ def evaluate_monitor(
     *,
     previous: MetricSample | None,
     emitted: frozenset[str],
+    baseline: MetricSample | None = None,
     now: datetime | None = None,
 ) -> tuple[MonitorEvaluation, MetricSample | None]:
     """Evaluate one poll without invoking a model."""
@@ -158,6 +144,7 @@ def evaluate_monitor(
                 gate,
                 spec.direction,
                 previous,
+                baseline,
                 sample,
             ):
                 continue
@@ -204,6 +191,7 @@ def _gate_crossed(
     gate: MetricGate,
     direction: Literal["min", "max"] | None,
     previous: MetricSample | None,
+    baseline: MetricSample | None,
     sample: MetricSample,
 ) -> bool:
     if gate.operator == "lte":
@@ -214,12 +202,12 @@ def _gate_crossed(
         return sample.value >= gate.threshold and (
             previous is None or previous.value < gate.threshold
         )
-    if previous is None or direction is None:
+    if baseline is None or direction is None:
         return False
     improvement = (
-        previous.value - sample.value
+        baseline.value - sample.value
         if direction == "min"
-        else sample.value - previous.value
+        else sample.value - baseline.value
     )
     if gate.operator == "improved_by":
         return improvement >= gate.threshold
@@ -236,37 +224,51 @@ class MonitorStore:
         self.marker_dir.mkdir(exist_ok=True)
         self.connection = sqlite3.connect(path, check_same_thread=False)
         self._lock = threading.Lock()
-        self.connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS monitors (
-                training_id TEXT PRIMARY KEY,
-                spec_json TEXT NOT NULL,
-                active INTEGER NOT NULL DEFAULT 1,
-                previous_sample_json TEXT,
-                next_poll_at REAL NOT NULL DEFAULT 0
-            )
-            """
-        )
-        self.connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS monitor_signals (
-                dedupe_key TEXT PRIMARY KEY,
-                training_id TEXT NOT NULL,
-                signal_json TEXT NOT NULL,
-                decision_json TEXT,
-                handled INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        columns = {
-            row[1]
-            for row in self.connection.execute("PRAGMA table_info(monitor_signals)")
-        }
-        if "decision_json" not in columns:
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
             self.connection.execute(
-                "ALTER TABLE monitor_signals ADD COLUMN decision_json TEXT"
+                """
+                CREATE TABLE IF NOT EXISTS monitors (
+                    training_id TEXT PRIMARY KEY,
+                    spec_json TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    previous_sample_json TEXT,
+                    baseline_sample_json TEXT,
+                    next_poll_at REAL NOT NULL DEFAULT 0
+                )
+                """
             )
-        self.connection.commit()
+            self.connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS monitor_signals (
+                    dedupe_key TEXT PRIMARY KEY,
+                    training_id TEXT NOT NULL,
+                    signal_json TEXT NOT NULL,
+                    handled INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            monitor_columns = {
+                row[1]
+                for row in self.connection.execute("PRAGMA table_info(monitors)")
+            }
+            if "baseline_sample_json" not in monitor_columns:
+                self.connection.execute(
+                    "ALTER TABLE monitors ADD COLUMN baseline_sample_json TEXT"
+                )
+            self.connection.execute(
+                """
+                UPDATE monitors
+                SET baseline_sample_json = previous_sample_json
+                WHERE baseline_sample_json IS NULL
+                  AND previous_sample_json IS NOT NULL
+                """
+            )
+        except BaseException:
+            self.connection.rollback()
+            raise
+        else:
+            self.connection.commit()
 
     def register(self, spec: TrainingMonitorSpec) -> bool:
         with self._lock:
@@ -297,13 +299,15 @@ class MonitorStore:
                             spec_json,
                             active,
                             previous_sample_json,
+                            baseline_sample_json,
                             next_poll_at
                         )
-                        VALUES (?, ?, 1, NULL, 0)
+                        VALUES (?, ?, 1, NULL, NULL, 0)
                         ON CONFLICT(training_id) DO UPDATE SET
                             spec_json = excluded.spec_json,
                             active = 1,
                             previous_sample_json = NULL,
+                            baseline_sample_json = NULL,
                             next_poll_at = 0
                         """,
                         (spec.training_id, spec.model_dump_json()),
@@ -371,6 +375,15 @@ class MonitorStore:
             return None
         return MetricSample.model_validate_json(row[0])
 
+    def baseline_sample(self, training_id: str) -> MetricSample | None:
+        row = self.connection.execute(
+            "SELECT baseline_sample_json FROM monitors WHERE training_id = ?",
+            (training_id,),
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return MetricSample.model_validate_json(row[0])
+
     def record_poll(
         self,
         spec: TrainingMonitorSpec,
@@ -396,10 +409,13 @@ class MonitorStore:
         self.connection.execute(
             """
             UPDATE monitors
-            SET previous_sample_json = ?, next_poll_at = ?
+            SET previous_sample_json = ?,
+                baseline_sample_json = COALESCE(baseline_sample_json, ?),
+                next_poll_at = ?
             WHERE training_id = ?
             """,
             (
+                sample.model_dump_json() if sample is not None else None,
                 sample.model_dump_json() if sample is not None else None,
                 now.timestamp() + spec.poll_interval_seconds,
                 spec.training_id,
@@ -444,10 +460,13 @@ class MonitorStore:
                 UPDATE monitors
                 SET previous_sample_json = CASE WHEN ? THEN NULL
                                                ELSE previous_sample_json END,
+                    baseline_sample_json = CASE WHEN ? THEN NULL
+                                               ELSE baseline_sample_json END,
                     next_poll_at = ?
                 WHERE training_id = ?
                 """,
                 (
+                    clear_previous_sample,
                     clear_previous_sample,
                     now.timestamp() + spec.poll_interval_seconds,
                     spec.training_id,
@@ -464,30 +483,6 @@ class MonitorStore:
             """
         ).fetchall()
         return [MonitorSignal.model_validate_json(row[0]) for row in rows]
-
-    def decision(self, dedupe_key: str) -> MonitorDecision | None:
-        row = self.connection.execute(
-            "SELECT decision_json FROM monitor_signals WHERE dedupe_key = ?",
-            (dedupe_key,),
-        ).fetchone()
-        if row is None or row[0] is None:
-            return None
-        return MonitorDecision.model_validate_json(row[0])
-
-    def record_decision(
-        self,
-        dedupe_key: str,
-        decision: MonitorDecision,
-    ) -> None:
-        self.connection.execute(
-            """
-            UPDATE monitor_signals
-            SET decision_json = ?
-            WHERE dedupe_key = ?
-            """,
-            (decision.model_dump_json(), dedupe_key),
-        )
-        self.connection.commit()
 
     def acknowledge(self, dedupe_key: str) -> None:
         self.connection.execute(
@@ -616,6 +611,7 @@ class TrainingMonitorEngine:
                     sample,
                     previous=self.store.previous_sample(spec.training_id),
                     emitted=self.store.emitted(spec.training_id),
+                    baseline=self.store.baseline_sample(spec.training_id),
                     now=now,
                 )
                 self.store.record_poll(spec, evaluation, latest, now=now)
@@ -634,6 +630,37 @@ class TrainingMonitorEngine:
                 continue
             produced.extend(evaluation.signals)
         return tuple(produced)
+
+
+class MonitorMailbox:
+    """Resume a student for every signal its monitor policy requested."""
+
+    def __init__(self, engine: TrainingMonitorEngine, store: MonitorStore):
+        self.engine = engine
+        self.store = store
+
+    def poll(self) -> tuple[ControllerEvent, ...]:
+        self.engine.poll()
+        return tuple(
+            ControllerEvent(
+                kind="training_monitor",
+                dedupe_key=signal.dedupe_key,
+                payload={
+                    "conversation_id": str(
+                        self.store.spec(signal.training_id).conversation_id
+                    ),
+                    "training_id": signal.training_id,
+                    "summary": signal.detail,
+                    "reason": "The registered monitor policy emitted this signal.",
+                    "signal": signal.model_dump(mode="json"),
+                },
+            )
+            for signal in self.store.pending_signals()
+        )
+
+    def acknowledge(self, dedupe_keys: Sequence[str]) -> None:
+        for key in dedupe_keys:
+            self.store.acknowledge(key)
 
 
 def _same_monitor_policy(

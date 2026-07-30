@@ -12,6 +12,8 @@ from pathlib import Path
 import psutil
 from pydantic import BaseModel, ConfigDict, Field
 
+from senpai_agent.processes import signal_process_group, terminate_process_group
+
 _WANDB_RUN_URL_BYTES = re.compile(
     rb"https?://wandb\.ai/[^/\s]+/[^/\s]+/runs/([A-Za-z0-9_-]+)"
 )
@@ -58,7 +60,7 @@ class TrainingResult(BaseModel):
 @dataclass
 class _ActiveTraining:
     process: subprocess.Popen[bytes]
-    process_group_id: int | None
+    process_group_id: int
     process_start_time: float
     started: float
     timeout_seconds: int
@@ -139,7 +141,7 @@ class TrainingSupervisor:
                 start_new_session=True,
             )
         process_start_time = psutil.Process(process.pid).create_time()
-        process_group_id = process.pid if os.name != "nt" else None
+        process_group_id = process.pid
 
         result = TrainingResult(
             training_id=training_id,
@@ -295,29 +297,16 @@ class TrainingSupervisor:
     def _terminate_process_group(
         self,
         process: subprocess.Popen[bytes],
-        process_group_id: int | None,
+        process_group_id: int,
     ) -> None:
-        if os.name == "nt":
-            if process.poll() is not None:
-                return
-            process.terminate()
-            try:
-                process.wait(timeout=self.terminate_grace_seconds)
-                return
-            except subprocess.TimeoutExpired:
-                pass
-            process.kill()
-            process.wait()
-            return
-
-        if process_group_id is None:
-            raise RuntimeError("POSIX training process has no process group")
-        self._terminate_posix_process_group(process_group_id, process)
-        process.wait()
+        terminate_process_group(
+            process,
+            process_group_id=process_group_id,
+            grace_seconds=self.terminate_grace_seconds,
+            wait_full_grace=True,
+        )
 
     def _terminate_recovered_process(self, result: TrainingResult) -> bool:
-        if os.name == "nt":
-            return False
         if (
             result.pid is None
             or result.process_group_id is None
@@ -326,25 +315,8 @@ class TrainingSupervisor:
             return False
         if not self._process_identity_matches(result):
             return False
-        self._signal_process_group(result.process_group_id, signal.SIGKILL)
+        signal_process_group(result.process_group_id, signal.SIGKILL)
         return True
-
-    def _terminate_posix_process_group(
-        self,
-        process_group_id: int,
-        process: subprocess.Popen[bytes],
-    ) -> None:
-        if not self._signal_process_group(process_group_id, signal.SIGTERM):
-            return
-        deadline = time.monotonic() + self.terminate_grace_seconds
-        try:
-            process.wait(timeout=self.terminate_grace_seconds)
-        except subprocess.TimeoutExpired:
-            pass
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            time.sleep(remaining)
-        self._signal_process_group(process_group_id, signal.SIGKILL)
 
     @staticmethod
     def _process_identity_matches(result: TrainingResult) -> bool:
@@ -361,17 +333,6 @@ class TrainingSupervisor:
             )
         except (ProcessLookupError, psutil.NoSuchProcess):
             return False
-
-    @staticmethod
-    def _signal_process_group(
-        process_group_id: int,
-        sig: signal.Signals,
-    ) -> bool:
-        try:
-            os.killpg(process_group_id, sig)
-        except ProcessLookupError:
-            return False
-        return True
 
     def close(self) -> None:
         with self._lock:

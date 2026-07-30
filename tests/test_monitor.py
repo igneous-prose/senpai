@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,7 +11,6 @@ from pydantic import ValidationError
 from senpai_agent.monitor import (
     MetricGate,
     MetricSample,
-    MonitorDecision,
     MonitorEvaluation,
     MonitorSignal,
     MonitorStore,
@@ -238,7 +238,7 @@ def test_failed_monitor_poll_is_durable_and_does_not_block_other_monitors(
         assert error.state is (
             None if failure_site == "status" else TrainingState.RUNNING
         )
-        assert len(error.to_prompt()) < 2_000
+        assert len(error.model_dump_json()) < 2_000
         assert store.pending_signals() == list(produced)
         assert store.due(now + timedelta(seconds=59)) == []
 
@@ -349,6 +349,173 @@ def test_ordinary_polls_are_free_and_gate_signals_are_deduplicated(
     assert duplicate.signals == ()
 
 
+@pytest.mark.parametrize(
+    ("direction", "operator", "baseline_value", "middle_value", "crossed_value"),
+    [
+        ("min", "improved_by", 1.0, 0.96, 0.91),
+        ("min", "regressed_by", 1.0, 1.04, 1.09),
+        ("max", "improved_by", 0.5, 0.54, 0.59),
+        ("max", "regressed_by", 0.5, 0.46, 0.41),
+    ],
+)
+def test_change_gates_compare_with_the_first_observed_baseline(
+    tmp_path: Path,
+    direction: str,
+    operator: str,
+    baseline_value: float,
+    middle_value: float,
+    crossed_value: float,
+):
+    now = datetime.now(UTC)
+    spec = TrainingMonitorSpec(
+        training_id="train-1",
+        conversation_id=uuid4(),
+        metric="score",
+        direction=direction,
+        gates=(MetricGate(operator=operator, threshold=0.08),),
+    )
+    baseline = MetricSample(value=baseline_value, observed_at=now)
+    middle = MetricSample(
+        value=middle_value,
+        observed_at=now + timedelta(minutes=1),
+    )
+    crossed = MetricSample(
+        value=crossed_value,
+        observed_at=now + timedelta(minutes=2),
+    )
+
+    first, _ = evaluate_monitor(
+        spec,
+        result(tmp_path),
+        baseline,
+        previous=None,
+        baseline=None,
+        emitted=frozenset(),
+        now=now,
+    )
+    quiet, _ = evaluate_monitor(
+        spec,
+        result(tmp_path),
+        middle,
+        previous=baseline,
+        baseline=baseline,
+        emitted=frozenset(),
+        now=now + timedelta(minutes=1),
+    )
+    fired, _ = evaluate_monitor(
+        spec,
+        result(tmp_path),
+        crossed,
+        previous=middle,
+        baseline=baseline,
+        emitted=frozenset(),
+        now=now + timedelta(minutes=2),
+    )
+
+    assert first.signals == ()
+    assert quiet.signals == ()
+    assert [signal.kind for signal in fired.signals] == ["metric_gate"]
+
+
+def test_monitor_store_persists_the_first_sample_as_the_change_baseline(
+    tmp_path: Path,
+):
+    now = datetime.now(UTC)
+    spec = TrainingMonitorSpec(
+        training_id="train-1",
+        conversation_id=uuid4(),
+        metric="val/loss",
+        direction="min",
+        gates=(MetricGate(operator="improved_by", threshold=0.1),),
+    )
+    first = MetricSample(value=0.8, observed_at=now)
+    later = MetricSample(value=0.75, observed_at=now + timedelta(minutes=1))
+
+    with MonitorStore(tmp_path / "monitors.sqlite3") as store:
+        store.register(spec)
+        store.record_poll(spec, MonitorEvaluation(), first, now=now)
+        store.record_poll(
+            spec,
+            MonitorEvaluation(),
+            later,
+            now=now + timedelta(minutes=1),
+        )
+
+        assert store.baseline_sample(spec.training_id) == first
+        assert store.previous_sample(spec.training_id) == later
+
+
+@pytest.mark.parametrize("baseline_column_exists", [False, True])
+def test_legacy_schema_promotes_the_previous_sample_to_the_change_baseline(
+    tmp_path: Path,
+    baseline_column_exists: bool,
+):
+    now = datetime(2026, 7, 30, tzinfo=UTC)
+    spec = TrainingMonitorSpec(
+        training_id="train-1",
+        conversation_id=uuid4(),
+        metric="val/loss",
+        direction="min",
+        gates=(MetricGate(operator="improved_by", threshold=0.1),),
+        registered_at=now - timedelta(minutes=1),
+    )
+    previous = MetricSample(
+        value=1.0,
+        observed_at=now - timedelta(minutes=1),
+    )
+    current = MetricSample(value=0.89, observed_at=now)
+    database = tmp_path / "monitors.sqlite3"
+
+    baseline_column = (
+        "baseline_sample_json TEXT," if baseline_column_exists else ""
+    )
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            f"""
+            CREATE TABLE monitors (
+                training_id TEXT PRIMARY KEY,
+                spec_json TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                previous_sample_json TEXT,
+                {baseline_column}
+                next_poll_at REAL NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO monitors (
+                training_id,
+                spec_json,
+                previous_sample_json
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                spec.training_id,
+                spec.model_dump_json(),
+                previous.model_dump_json(),
+            ),
+        )
+
+    class Training:
+        def get_training_status(self, training_id):
+            return result(tmp_path).model_copy(update={"training_id": training_id})
+
+    class Metrics:
+        def latest(self, _run_id, _metric):
+            return current
+
+    with MonitorStore(database) as store:
+        assert store.baseline_sample(spec.training_id) == previous
+
+        produced = TrainingMonitorEngine(store, Training(), Metrics()).poll(now)
+
+        assert [signal.kind for signal in produced] == ["metric_gate"]
+        assert store.baseline_sample(spec.training_id) == previous
+        assert store.previous_sample(spec.training_id) == current
+
+
 def test_stale_and_terminal_changes_are_compact_actionable_signals(tmp_path: Path):
     now = datetime.now(UTC)
     spec = TrainingMonitorSpec(
@@ -383,7 +550,7 @@ def test_stale_and_terminal_changes_are_compact_actionable_signals(tmp_path: Pat
     assert stale.signals[0].kind == "metric_stale"
     assert [signal.kind for signal in terminal.signals] == ["training_status"]
     assert terminal.signals[0].hard_failure is True
-    assert len(terminal.signals[0].to_prompt()) < 2_000
+    assert len(terminal.signals[0].model_dump_json()) < 2_000
 
 
 def test_old_metric_sample_is_stale_even_when_wandb_still_returns_it(tmp_path: Path):
@@ -459,47 +626,3 @@ def test_wandb_metric_source_uses_the_latest_metric_history_timestamp(
         value=0.7,
         observed_at=datetime.fromtimestamp(200, UTC),
     )
-
-
-def test_monitor_triage_decision_is_typed():
-    decision = MonitorDecision.model_validate_json(
-        '{"wake_main":true,"summary":"Loss regressed.",'
-        '"reason":"The assigned acceptance gate was crossed."}'
-    )
-
-    assert decision.wake_main is True
-    assert decision.summary == "Loss regressed."
-
-
-def test_monitor_triage_decision_is_durable_until_signal_is_acknowledged(
-    tmp_path: Path,
-):
-    store_path = tmp_path / "monitors.sqlite3"
-    spec = TrainingMonitorSpec(
-        training_id="train-1",
-        conversation_id=uuid4(),
-    )
-    signal = MonitorSignal(
-        kind="training_status",
-        dedupe_key="train-1:status:finished",
-        training_id="train-1",
-        state=TrainingState.FINISHED,
-        detail="Training reached terminal state finished.",
-    )
-    decision = MonitorDecision(
-        wake_main=True,
-        summary="Training finished cleanly.",
-        reason="The student must inspect and report the result.",
-    )
-
-    with MonitorStore(store_path) as store:
-        store.register(spec)
-        store.record_poll(
-            spec,
-            MonitorEvaluation(signals=(signal,)),
-            sample=None,
-        )
-        store.record_decision(signal.dedupe_key, decision)
-
-    with MonitorStore(store_path) as reopened:
-        assert reopened.decision(signal.dedupe_key) == decision

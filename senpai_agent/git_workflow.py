@@ -10,6 +10,8 @@ from pathlib import Path
 
 from pydantic import SecretStr
 
+from senpai_agent.secrets import scrub_github_credentials
+
 
 class GitWorkflowPreconditionError(RuntimeError):
     """Local or remote Git state does not permit a safe push."""
@@ -226,8 +228,7 @@ def _validate_token(token: SecretStr | None) -> None:
 
 def _git_process_env(token: SecretStr | None) -> dict[str, str]:
     env = dict(os.environ)
-    env.pop("GITHUB_TOKEN", None)
-    env.pop("GH_TOKEN", None)
+    scrub_github_credentials(env)
     if token is None:
         return env
 

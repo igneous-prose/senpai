@@ -253,6 +253,7 @@ esac
             "TAGS_CSV": "track-a",
             "EXPECTED_PODS": "1",
             "EXPECTED_DEPLOYMENTS": "1",
+            "READINESS_TIMEOUT_SECONDS": "1800",
             "BUDGET_SECONDS": "0",
             "PVC_LOG_ROOT": str(state_root),
             "START_GATE_PATH": str(gate),
@@ -266,3 +267,98 @@ esac
     deleted = delete_log.read_text(encoding="utf-8")
     assert "delete deployments,configmaps,secrets" in deleted
     assert "research-tag in (track-a)" in deleted
+
+
+def test_generated_cutoff_arms_after_readiness_deadline_when_a_pod_never_readies(
+    tmp_path,
+):
+    captured_script = tmp_path / "cutoff-job.sh"
+    generator_kubectl = tmp_path / "generator-kubectl"
+    generator_kubectl.write_text(
+        """#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    --from-file=cutoff-job.sh=*)
+      cp "${arg#--from-file=cutoff-job.sh=}" "$CAPTURED_CUTOFF_SCRIPT"
+      ;;
+  esac
+done
+printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
+""",
+        encoding="utf-8",
+    )
+    generator_kubectl.chmod(0o755)
+    generated = run_cutoff(
+        "--run-slug",
+        "never-ready",
+        "--tags-csv",
+        "track-a",
+        "--expected-pods",
+        "1",
+        "--expected-deployments",
+        "1",
+        "--readiness-timeout-minutes",
+        "0",
+        "--budget-hours",
+        "0",
+        "--dry-run",
+        env={
+            "KUBECTL": str(generator_kubectl),
+            "CAPTURED_CUTOFF_SCRIPT": str(captured_script),
+        },
+    )
+    assert generated.returncode == 0, generated.stderr
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    delete_log = tmp_path / "delete.log"
+    runtime_kubectl = bin_dir / "kubectl"
+    runtime_kubectl.write_text(
+        """#!/bin/sh
+case "$*" in
+  *"get pods"*)
+    printf '%s\n' '{"items":[{"status":{"containerStatuses":[{"ready":false}]}}]}'
+    ;;
+  *"get deployments"*)
+    printf '%s\n' 'senpai-track-a'
+    ;;
+  *"delete deployments,configmaps,secrets"*)
+    printf '%s\n' "$*" > "$DELETE_LOG"
+    ;;
+  *)
+    printf 'unexpected kubectl call: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    runtime_kubectl.chmod(0o755)
+    state_root = tmp_path / "state"
+    gate = tmp_path / "start-gate"
+
+    result = subprocess.run(
+        ["bash", str(captured_script)],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "DELETE_LOG": str(delete_log),
+            "RUN_SLUG": "never-ready",
+            "TAGS_CSV": "track-a",
+            "EXPECTED_PODS": "1",
+            "EXPECTED_DEPLOYMENTS": "1",
+            "READINESS_TIMEOUT_SECONDS": "0",
+            "BUDGET_SECONDS": "0",
+            "PVC_LOG_ROOT": str(state_root),
+            "START_GATE_PATH": str(gate),
+            "NAMESPACE": "test-ns",
+        },
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Readiness deadline reached; arming cutoff anyway" in result.stdout
+    assert gate.is_file()
+    assert delete_log.is_file()
