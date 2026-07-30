@@ -134,14 +134,17 @@ def test_optional_process_deadline_kills_an_uncooperative_group(tmp_path: Path):
 def test_child_command_selects_agent_model_and_effort(tmp_path: Path):
     config = delegation_config(tmp_path)
 
-    fast = OpenHandsChildProcess(config, delegation_request())
+    fast = OpenHandsChildProcess(
+        config,
+        delegation_request(agent="bash-runner"),
+    )
     smart = OpenHandsChildProcess(
         config,
         delegation_request(agent="search", model="smart", search_mode="general-web"),
     )
 
     assert "--agent" in fast.command
-    assert fast.command[fast.command.index("--agent") + 1] == "explore"
+    assert fast.command[fast.command.index("--agent") + 1] == "bash-runner"
     assert "anthropic/claude-haiku-4-5" in fast.command
     assert fast.command[fast.command.index("--reasoning-effort") + 1] == "low"
     assert "anthropic/claude-opus-4-8" in smart.command

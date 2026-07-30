@@ -62,7 +62,7 @@ Applicable target `AGENTS.md` and compatible `CLAUDE.md` files are loaded as pro
 
 OpenHands retains its Browser, task tracker, Think, terminal, and file-editing facilities. Senpai adds:
 
-- `delegate_agent`: starts a file-defined `general-purpose`, `explore`, or `search` agent with a `smart` or `fast` model tier, optional parent context, and foreground or background delivery. Up to eight independent calls run concurrently.
+- `delegate_agent`: starts a file-defined `general-purpose`, `explore`, `search`, or `bash-runner` agent with a `smart` or `fast` model tier, optional parent context, and foreground or background delivery. Bash Runner isolates noisy tests, builds, linters, and CLI inspection and returns only counts and actionable failures. Up to eight independent calls run concurrently.
 - `get_prs`: reads explicit PR numbers, an inclusive date range, or a search result. It includes the PR body, every issue comment, submitted review, and inline review comment. Five PRs are returned inline by default. Larger results become one Markdown artifact outside the target checkout; raising the inline limit above five risks polluting model context.
 - `github_transition`: performs verified, idempotent assignments, branch publication, revision requests, human-Issue responses, result submission, label reconciliation, closure, and merging.
 - `run_training` and `get_training_status`: start and inspect a supervised process without streaming raw progress through model history.
@@ -70,7 +70,7 @@ OpenHands retains its Browser, task tracker, Think, terminal, and file-editing f
 
 The main advisor and student terminal denies raw GitHub mutations, `git push`, direct training launches, sleeps, polling loops, and log streams. Hooks provide early feedback and the in-process wrapper enforces the same policy.
 
-File-defined subagents receive the OpenHands terminal and file editor plus the tools declared by their definition. They receive no GitHub credential or GitHub mutation tools. Their findings return to the parent, which owns workflow transitions.
+File-defined subagents receive only the tools declared by their definition. Bash Runner is terminal-only; General Purpose, Explore, and Search also receive the file editor where their work requires it. They receive no GitHub credential or GitHub mutation tools. Their findings return to the parent, which owns workflow transitions.
 
 `EXA_API_KEY` powers the Search agent's two modes through `exa-py`: general web search and scholarly publication search. Senpai does not configure an Exa MCP server.
 

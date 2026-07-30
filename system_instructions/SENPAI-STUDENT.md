@@ -28,7 +28,8 @@ the assignment explicitly makes obsolete. On the main student, when
 analysis, evidence review, or literature check. Use foreground delegation when
 its result is needed before implementation and background delegation only when
 unrelated work can continue. Use `include_context=false` unless the child needs
-the complete evolving conversation.
+the complete evolving conversation. Use a fast Bash Runner when tests, builds,
+linters, or other CLI output would otherwise flood your context.
 
 Run cheap tests and a tiny debug execution when they materially reduce the risk
 of wasting a full training allocation. Fix experiment implementation bugs and
@@ -42,11 +43,10 @@ shell command. Supply the exact target working directory and an appropriate
 timeout within the launch limit. Immediately call `monitor_training` with the
 primary W&B metric, its direction, useful acceptance/regression gates, a stale
 update timeout, and terminal states. Then finish the turn. The deterministic
-controller polls while training runs; a small context-free child filters
-signals, and the controller resumes this exact student conversation when
-action is warranted. Use `get_training_status` only for an immediate bounded
-check; do not stream epoch logs, sleep in the terminal, or create background
-polling loops.
+controller polls while training runs and directly resumes this exact student
+conversation when the registered policy emits a signal. Use
+`get_training_status` only for an immediate bounded check; do not stream epoch
+logs, sleep in the terminal, or create background polling loops.
 
 Every real experiment must log the target-required configuration, metrics, and
 artifacts to W&B. Use groups only when the assignment calls for related arms.

@@ -292,7 +292,7 @@ mutation is resolved by reading and verifying desired state before any retry.
 ```text
 delegate_agent(
   task: str,
-  agent: general-purpose | explore | search = general-purpose,
+  agent: general-purpose | explore | search | bash-runner = general-purpose,
   model: smart | fast = smart,
   background: bool = false,
   include_context: bool = false,
@@ -314,31 +314,35 @@ still provide interruption and process recovery boundaries.
 
 `model=fast` selects `SENPAI_OPENHANDS_FAST_MODEL` (default
 `anthropic/claude-haiku-4-5` for the default Anthropic stack) for mechanical
-search and extraction. Without an explicit fast model, a non-Anthropic stack
-uses its smart model rather than sending that provider's API key elsewhere.
-`model=smart` selects the main configured model for review, literature
-research, and subtle synthesis. The file-defined agent may override reasoning
-effort independently.
+search, command execution, and extraction. Without an explicit fast model, a
+non-Anthropic stack uses its smart model rather than sending that provider's
+API key elsewhere. `model=smart` selects the main configured model for review,
+literature research, subtle synthesis, or ambiguous failure diagnosis. The
+file-defined agent may override reasoning effort independently.
 
 `explore` searches code, data, PR artifacts, and durable history and returns
 concise conclusions with paths and line numbers. `search` requires exactly one
 mode: `general-web` uses Exa's general index with agent-oriented defaults,
 while `research-publications` uses Exa's publication index and primary papers.
 `general-purpose` handles mixed investigation, editing, tests, and typed Senpai
-operations.
+operations. `bash-runner` has only the terminal and runs tests, builds, linters,
+formatters, dependency commands, Git inspection, or system checks. It normally
+uses the fast model and returns counts and actionable failures rather than raw
+command output.
 
 With `include_context=false`, the child receives the merged system prompt and
 task and may search the parent's durable history path. With
 `include_context=true`, it also receives the complete model-visible parent
 history, including progressively disclosed skill content.
 
-Children receive the raw OpenHands terminal, file editor, and progressively
-disclosed skills. General-purpose and Explore children can also delegate
-foreground work; Search cannot. Children receive neither GitHub credentials
-nor GitHub read/write tools; the parent prepares any large PR
-Markdown artifact and owns every typed GitHub operation. They do not receive
-training tools. Background nesting is rejected because a child may exit before
-a grandchild's durable result can be consumed.
+Each child receives only the tools and progressively disclosed skills declared
+by its Markdown definition. Bash Runner is terminal-only. General-purpose and
+Explore children can also delegate foreground work; Search and Bash Runner
+cannot. Children receive neither GitHub credentials nor GitHub read/write
+tools; the parent prepares any large PR Markdown artifact and owns every typed
+GitHub operation. They do not receive training tools. Background nesting is
+rejected because a child may exit before a grandchild's durable result can be
+consumed.
 
 When `review_ready` arrives during other advisor work, the role policy asks the
 advisor to launch a smart, full-context, background general-purpose review and

@@ -286,6 +286,12 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         assert defaults.include_context is False
         assert defaults.background is False
         assert defaults.model == "smart"
+        assert "bash-runner" in delegation_schema["properties"]["agent"]["enum"]
+        assert DelegateAgentAction(
+            task="Run the focused tests.",
+            agent="bash-runner",
+            model="fast",
+        ).agent == "bash-runner"
         assert "eight" in serialized_delegation
         assert "reviewer" not in serialized_delegation
         transition_schema = by_name["github_transition"].action_type.to_mcp_schema()

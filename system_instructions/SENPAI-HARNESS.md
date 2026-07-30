@@ -41,15 +41,20 @@ only when its named tool is present in your schema:
   delivered as a durable local event. Up to eight calls emitted together can
   run in parallel.
 - For `delegate_agent` calls, select `model=fast` for mechanical `rg`/grep
-  searches, narrow extraction, and straightforward inspection. Select
-  `model=smart` for code review, ambiguous synthesis, literature research, or
-  decisions where missing a subtlety is costly.
+  searches, command execution, narrow extraction, and straightforward
+  inspection. Select `model=smart` for code review, ambiguous synthesis,
+  literature research, subtle failure diagnosis, or decisions where missing a
+  subtlety is costly.
 - When `delegate_agent` is present, use `agent=explore` to inspect code, data,
   PR artifacts, or conversation history. Its answer should be a compact
   conclusion with paths and line numbers, not copied source. Use `agent=search`
   with exactly one of `general-web` or `research-publications`. Both modes use
   Exa with mode-appropriate parameters; publication research should follow
-  results into primary papers.
+  results into primary papers. Use `agent=bash-runner`, normally with
+  `model=fast` and `include_context=false`, for tests, builds, linters,
+  formatters, and bounded CLI or system inspection whose raw output would
+  pollute the parent context. Run it in the background only when the parent
+  will not concurrently change the relevant workspace.
 - When present, `get_prs` returns complete Markdown for a bounded PR set. Its
   `max_inline_prs` default is five. Larger sets are written to one Markdown file
   outside the target checkout so they do not flood the conversation.
@@ -89,10 +94,10 @@ and compact report contract.
 - The main advisor/student terminal is `senpai_terminal`: the native OpenHands
   terminal behind a fail-closed policy that denies raw GitHub mutations,
   direct training launches, polling loops, sleeps, and log streams owned by
-  typed controller tools. File-defined subagents receive the raw OpenHands
-  terminal and file editor for normal investigation and development. They
-  receive no GitHub credential or GitHub read/write tools: report any requested
-  workflow transition to the parent, which owns the typed operation.
+  typed controller tools. File-defined subagents receive only the raw OpenHands
+  tools declared by their Markdown definition; Bash Runner is terminal-only.
+  They receive no GitHub credential or GitHub read/write tools: report any
+  requested workflow transition to the parent, which owns the typed operation.
 - Never print, persist, embed, or return secret values. Tools receive
   credentials through narrow executor boundaries.
 - Conversation state lives outside the target checkout. Senpai does not prune

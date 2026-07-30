@@ -45,6 +45,7 @@ from senpai_agent.tools import register_senpai_tools
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
+BASH_RUNNER_AGENT = REPO_ROOT / ".agents" / "agents" / "bash-runner.md"
 EXPLORE_AGENT = REPO_ROOT / ".agents" / "agents" / "explore.md"
 SEARCH_AGENT = REPO_ROOT / ".agents" / "agents" / "search.md"
 
@@ -1015,7 +1016,12 @@ def test_markdown_agents_register_and_construct_through_native_openhands_loader(
         register_senpai_tools()
         workspace = Path(os.environ["SENPAI_TEST_WORKSPACE"])
         registered = register_file_agents(workspace)
-        assert set(registered) == {"general-purpose", "explore", "search"}
+        assert set(registered) == {
+            "bash-runner",
+            "general-purpose",
+            "explore",
+            "search",
+        }
         definitions = {
             definition.name: definition
             for definition in get_registered_agent_definitions()
@@ -1037,6 +1043,9 @@ def test_markdown_agents_register_and_construct_through_native_openhands_loader(
         assert {tool.name for tool in agents["search"].tools} == {
             "terminal",
             "file_editor",
+        }
+        assert {tool.name for tool in agents["bash-runner"].tools} == {
+            "terminal",
         }
         assert agents["search"].llm.reasoning_effort == "xhigh"
         assert agents["explore"].llm.reasoning_effort == "low"
@@ -1147,8 +1156,21 @@ def test_explore_agent_is_a_concise_low_effort_file_agent():
     assert "Large files and conversation logs" in definition.system_prompt
 
 
+def test_bash_runner_is_a_terminal_only_output_distillation_agent():
+    definition = AgentDefinition.load(BASH_RUNNER_AGENT)
+
+    assert definition.name == "bash-runner"
+    assert definition.model == "inherit"
+    assert definition.reasoning_effort is None
+    assert set(definition.tools) == {"terminal"}
+    assert "Never dump raw command output" in definition.system_prompt
+    assert "Never push" in definition.system_prompt
+    assert "passed, failed, skipped, and errored counts" in definition.system_prompt
+
+
 def test_delegated_agents_have_no_github_credentials_or_mutation_tools():
     for path in (
+        BASH_RUNNER_AGENT,
         EXPLORE_AGENT,
         SEARCH_AGENT,
         REPO_ROOT / ".agents/agents/general-purpose.md",
@@ -1165,6 +1187,7 @@ def test_entrypoint_installs_every_markdown_agent_definition(role):
         encoding="utf-8"
     )
 
+    assert '"$HOME/.agents/agents/bash-runner.md"' in entrypoint
     assert '"$HOME/.agents/agents/general-purpose.md"' in entrypoint
     assert '"$HOME/.agents/agents/explore.md"' in entrypoint
     assert '"$HOME/.agents/agents/search.md"' in entrypoint

@@ -77,10 +77,11 @@ each child a bounded question and a clear, compact report contract. Do not
 delegate a lookup one small typed call can answer. Use foreground children when
 their answers are inputs to your next decision; use background children when
 unrelated work can continue. Leave `include_context=false` for self-contained
-work. When a `review_ready` event arrives during other research, immediately
-launch a smart general-purpose review child with `background=true` and
-`include_context=true`, then continue the unrelated advisor work. Reconcile its
-result when it returns.
+work. Use a fast Bash Runner when tests, builds, linters, or other CLI output
+would otherwise flood your context. When a `review_ready` event arrives during
+other research, immediately launch a smart general-purpose review child with
+`background=true` and `include_context=true`, then continue the unrelated
+advisor work. Reconcile its result when it returns.
 
 Create assignments only through the typed assignment transition so the branch,
 base SHA, draft state, markers, and exact routing labels are reconciled and

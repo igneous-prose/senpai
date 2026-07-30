@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
 
 
-AgentKind = Literal["general-purpose", "explore", "search"]
+AgentKind = Literal["general-purpose", "explore", "search", "bash-runner"]
 ModelTier = Literal["smart", "fast"]
 SearchMode = Literal["general-web", "research-publications"]
 MAX_PARALLEL_AGENTS = 8
@@ -322,15 +322,17 @@ class DelegateAgentAction(Action):
         default="general-purpose",
         description=(
             "Agent specialization: general-purpose for mixed work, explore for "
-            "code/data/history inspection, or search for web and publication research."
+            "code/data/history inspection, search for web and publication research, "
+            "or bash-runner for tests, builds, linters, and other CLI output."
         ),
     )
     model: ModelTier = Field(
         default="smart",
         description=(
-            "Use fast for mechanical lookup, grep, and straightforward extraction. "
-            "Use smart for ambiguous synthesis, literature research, code review, "
-            "or decisions where missing a subtlety is costly."
+            "Use fast for mechanical lookup, command execution, grep, and "
+            "straightforward extraction. Use smart for ambiguous synthesis, "
+            "literature research, code review, or decisions where missing a "
+            "subtlety is costly."
         ),
     )
     background: bool = Field(
@@ -567,9 +569,10 @@ class DelegateAgentTool(ToolDefinition[DelegateAgentAction, DelegateAgentObserva
                 description=(
                     "Launch one file-defined Senpai subagent. Up to eight independent "
                     "calls in one response run concurrently. Choose fast for mechanical "
-                    "search/extraction and smart for subtle synthesis. Foreground is the "
-                    "default and returns the result inline; background returns a task ID "
-                    "and reports through the durable local event stream."
+                    "search, CLI execution, and extraction, and smart for subtle "
+                    "synthesis. Foreground is the default and returns the result inline; "
+                    "background returns a task ID and reports through the durable local "
+                    "event stream."
                 ),
                 action_type=DelegateAgentAction,
                 observation_type=DelegateAgentObservation,
