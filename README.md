@@ -186,7 +186,7 @@ deployed harness or role and injects the current text once without rotating the
 conversation UUID.
 
 The project pins both OpenHands SDK packages to commit
-`da7d76fe3d0b0f5b169ff47c5617a8ecf38a004c` in
+`527771ce74d68e2e031649cbb4eb9ebde6b5cf69` in
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk).
 That fork tracks OpenHands SDK 1.39.1 and adds a typed Anthropic
 `prompt_cache_ttl="1h"` option, durable OpenAI Responses continuation, and an
@@ -195,7 +195,8 @@ cache breakpoint, uses a stable cache key per role and agent kind, and leaves
 dynamic project context outside that boundary. It requests
 `prompt_cache_options.mode="explicit"` with a 30-minute TTL. Older compatible
 OpenAI models retain `prompt_cache_retention="24h"`. Senpai does not send
-Anthropic TTL arguments to OpenAI.
+Anthropic TTL arguments to OpenAI. The fork also makes Laminar an optional
+extra, so Senpai installs only its configured Weave observability integration.
 
 For direct `openai/*` models, Senpai explicitly selects OpenHands' Responses
 API path, stores each response, and passes the latest `previous_response_id`

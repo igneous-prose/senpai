@@ -177,7 +177,7 @@ intact pending native OpenHands support for skill-declared child configuration.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `da7d76fe3d0b0f5b169ff47c5617a8ecf38a004c`, based on OpenHands SDK
+at commit `527771ce74d68e2e031649cbb4eb9ebde6b5cf69`, based on OpenHands SDK
 1.39.1.
 
 `prompt_cache_configuration()` sets:
@@ -191,7 +191,9 @@ at commit `da7d76fe3d0b0f5b169ff47c5617a8ecf38a004c`, based on OpenHands SDK
 The fork emits an Anthropic cache-control `ttl` only when explicit Anthropic
 caching is active. Its tests prove the five-minute wire form remains unchanged,
 the one-hour TTL is forwarded, and OpenAI retention continues to work without
-receiving an Anthropic TTL parameter.
+receiving an Anthropic TTL parameter. Laminar is an optional SDK extra and is
+not part of Senpai's locked runtime; Weave is the agent observability
+integration.
 
 Direct `openai/*` models use a stored Responses API chain. The active branch's
 latest `resp_*` ID is recovered from the durable OpenHands event log after
