@@ -489,7 +489,7 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
         tool
         for tool in get_default_tools(
             enable_browser=config.enable_browser,
-            enable_sub_agents=False,
+            enable_sub_agents=True,
         )
         if tool.name != "terminal"
     ]

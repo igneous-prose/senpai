@@ -113,12 +113,13 @@ def test_browser_is_enabled_by_default_and_can_be_disabled():
     assert disabled_args.enable_browser is False
 
 
-def test_child_mode_is_explicit_and_removes_recursive_dispatch(tmp_path):
+def test_child_mode_keeps_native_subagents_without_senpai_dispatch(tmp_path):
     args = parse_runner_args(["--max-turns", "1", "--child"])
     config = runtime_config(tmp_path, child=True)
 
     assert args.child is True
     names = {tool.name for tool in build_main_tools(config)}
+    assert "task_tool_set" in names
     assert "dispatch_agent" not in names
     assert "senpai_training" not in names
 
@@ -388,7 +389,7 @@ def test_main_tools_replace_terminal_and_add_role_boundaries(
     by_name = {tool.name: tool for tool in tools}
 
     assert "terminal" not in by_name
-    assert "task_tool_set" not in by_name
+    assert "task_tool_set" in by_name
     assert expected_custom <= set(by_name)
     assert by_name["senpai_terminal"].params == {"role": role}
     assert by_name["dispatch_agent"].params == {

@@ -30,6 +30,8 @@ This document only defines Senpai's additional control-plane contract.
 
 Prefer typed Senpai tools over shell commands:
 
+- OpenHands' native `task` tool runs one registered subagent synchronously.
+  Use it when the current turn needs a bounded result before proceeding.
 - `get_prs` returns complete Markdown for a bounded PR set. Its
   `max_inline_prs` default is five. Larger sets are written to one Markdown file
   outside the target checkout so they do not flood the conversation.

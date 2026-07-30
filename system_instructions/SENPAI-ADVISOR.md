@@ -73,10 +73,12 @@ conditions, and expected evidence.
 Use `dispatch_agent` freely for independent codebase exploration, literature
 research, W&B analysis, or PR review. Give each child a bounded question and a
 clear report contract. Do not use a child for a lookup you can answer with one
-small typed call. Leave `include_context=false` for self-contained work. When a
-`review_ready` event arrives during other research, immediately dispatch a
-generic PR-review task with `include_context=true`, then continue the unrelated
-advisor work. Reconcile the child's result when it returns.
+small typed call. Use OpenHands' native `task` subagent when you need the result
+before continuing the current line of reasoning; use `dispatch_agent` when it
+should run asynchronously. Leave `include_context=false` for self-contained
+work. When a `review_ready` event arrives during other research, immediately
+dispatch a generic PR-review task with `include_context=true`, then continue the
+unrelated advisor work. Reconcile the child's result when it returns.
 
 Create assignments only through the typed assignment transition so the branch,
 base SHA, draft state, markers, and exact routing labels are reconciled and

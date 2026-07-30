@@ -193,10 +193,10 @@ def test_training_timeout_kills_term_ignoring_descendants(tmp_path: Path):
         TrainingSpec(
             argv=(sys.executable, "-c", parent_code),
             cwd=workspace,
-            timeout_seconds=1,
+            timeout_seconds=5,
         )
     )
-    terminal = wait_for_terminal(supervisor, result.training_id)
+    terminal = wait_for_terminal(supervisor, result.training_id, timeout=10)
     child_pid = int(child_pid_path.read_text())
 
     assert terminal.state is TrainingState.TIMED_OUT

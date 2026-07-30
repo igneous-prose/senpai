@@ -111,6 +111,9 @@ and disclosed only when invoked.
 OpenHands retains its normal Browser, task tracker, and Think facilities.
 Senpai wraps the terminal with a fail-closed policy and adds:
 
+- OpenHands' native `task` subagent tool is enabled for main advisors,
+  students, and Senpai-dispatched children. It runs a registered agent preset
+  synchronously and returns the result to the current turn.
 - `get_prs`: one read function for explicit numbers, an inclusive date range,
   or a search. It includes every PR body, issue comment, submitted review, and
   inline review comment. Five PRs are returned inline by default. Larger

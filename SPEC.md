@@ -294,17 +294,24 @@ disappears. It is not a hard-coded reviewer. When `review_ready` arrives during
 other advisor work, the role policy asks the advisor to dispatch a generic
 full-context PR review and continue unrelated work.
 
-Child agents receive neither training tools nor further dispatch.
+Child agents receive neither training tools nor Senpai's asynchronous
+`dispatch_agent`.
 Every child result records its parent conversation UUID. If a student child
 finishes after the parent turn, the controller wakes and resumes that exact
 student conversation before the event pump acknowledges the result.
 
-OpenHands' preset `task_tool_set` remains disabled. It runs a registered
-subagent synchronously inside the parent runtime and does not provide Senpai's
-asynchronous durable result path, hard process deadline, or explicit
-`include_context` boundary. The stock preset is not inherently recursive;
-Senpai's stronger non-recursion guarantee comes from withholding
-`dispatch_agent` from every child.
+OpenHands' native `task_tool_set` is enabled for main advisors, main students,
+and Senpai-dispatched children. It runs an agent registered from
+`.agents/agents` synchronously inside the current runtime and can resume its
+own task ID. Native agent definitions control their own tool sets, so deeper
+delegation is available when a definition includes `task_tool_set`; it is not
+silently forced onto every spawned preset.
+
+The native and Senpai primitives are intentionally complementary:
+`task_tool_set` is the direct, blocking OpenHands path when the caller needs a
+result before proceeding, while `dispatch_agent` is the asynchronous,
+process-isolated path with durable result delivery, a hard deadline, and an
+explicit `include_context` boundary.
 
 ### Training and monitoring
 

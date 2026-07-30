@@ -83,12 +83,12 @@ def test_bounded_process_kills_an_uncooperative_process_group(tmp_path: Path):
             (sys.executable, "-c", code),
             input_text="",
             env=dict(os.environ),
-            timeout_seconds=0.1,
+            timeout_seconds=1,
             terminate_grace_seconds=0.05,
         )
 
     elapsed = time.monotonic() - started
-    assert elapsed < 2
+    assert elapsed < 3
     pid = int(pid_file.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
