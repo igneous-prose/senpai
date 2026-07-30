@@ -12,6 +12,11 @@ from openhands.sdk.tool import Tool, resolve_tool
 from openhands.tools.terminal import TerminalAction, TerminalObservation
 from pydantic import SecretStr
 
+from senpai_agent.delegation import (
+    DelegateAgentAction,
+    DelegateAgentTool,
+    DelegationRequest,
+)
 from senpai_agent.git_workflow import PushResult
 from senpai_agent.github import (
     PRManifestEntry,
@@ -24,9 +29,7 @@ from senpai_agent.models import (
     ResultStatus,
 )
 from senpai_agent.tools import (
-    AgentDispatchRequest,
     CreateAssignmentTransition,
-    DispatchAgentAction,
     GetPRsAction,
     GetTrainingStatusAction,
     GitHubTransitionAction,
@@ -173,7 +176,7 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
     tools = create_senpai_tools(
         training=fake_training,
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=FakeGitHubWorkflow(),
     )
@@ -186,7 +189,7 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
             "monitor_training",
             "get_prs",
             "github_transition",
-            "dispatch_agent",
+            "delegate_agent",
         }
         assert (
             "spec" in by_name["run_training"].action_type.to_mcp_schema()["properties"]
@@ -211,17 +214,28 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         assert ">5" in inline_description
         assert "context pollution" in inline_description.lower()
         assert "artifact" in inline_description.lower()
-        dispatch_schema = by_name["dispatch_agent"].action_type.to_mcp_schema()
-        serialized_dispatch = json.dumps(
+        delegation_schema = by_name["delegate_agent"].action_type.to_mcp_schema()
+        serialized_delegation = json.dumps(
             {
-                "description": by_name["dispatch_agent"].description,
-                "schema": dispatch_schema,
+                "description": by_name["delegate_agent"].description,
+                "schema": delegation_schema,
             }
         ).lower()
-        assert set(dispatch_schema["properties"]) == {"task", "include_context"}
-        assert "include_context" not in dispatch_schema.get("required", ())
-        assert DispatchAgentAction(task="bounded").include_context is False
-        assert "reviewer" not in serialized_dispatch
+        assert set(delegation_schema["properties"]) == {
+            "task",
+            "agent",
+            "model",
+            "background",
+            "include_context",
+            "search_mode",
+        }
+        assert "include_context" not in delegation_schema.get("required", ())
+        defaults = DelegateAgentAction(task="bounded")
+        assert defaults.include_context is False
+        assert defaults.background is False
+        assert defaults.model == "smart"
+        assert "eight" in serialized_delegation
+        assert "reviewer" not in serialized_delegation
         transition_schema = by_name["github_transition"].action_type.to_mcp_schema()
         assert "transition" in transition_schema["properties"]
     finally:
@@ -254,7 +268,7 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
     tools = create_senpai_tools(
         training=fake_training,
         get_prs_fn=fake_get_prs,
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=FakeGitHubWorkflow(),
         pr_artifact_dir=tmp_path / "state" / "github",
@@ -318,7 +332,7 @@ def test_training_tool_interrupt_cancels_the_supervisor(tmp_path: Path):
     tools = create_senpai_tools(
         training=training,
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=FakeGitHubWorkflow(),
     )
@@ -337,7 +351,7 @@ def test_github_transition_delegates_a_typed_idempotent_operation(
     tools = create_senpai_tools(
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=github,
         role="advisor",
@@ -382,7 +396,7 @@ def test_request_revision_transition_carries_the_assignment_identity(
     tools = create_senpai_tools(
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=github,
         role="advisor",
@@ -428,7 +442,7 @@ def test_both_roles_can_respond_to_a_verified_human_message(
     tools = create_senpai_tools(
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=github,
         role=role,
@@ -468,7 +482,7 @@ def test_student_cannot_bypass_result_submission_with_direct_label_change(
     tools = create_senpai_tools(
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=github,
         role="student",
@@ -505,7 +519,7 @@ def test_student_cannot_use_the_standalone_push_transition(
     tools = create_senpai_tools(
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=FakeGitHubWorkflow(),
         role="student",
@@ -547,7 +561,7 @@ def test_student_result_is_preflighted_before_its_branch_is_pushed(
     tools = create_senpai_tools(
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=github,
         role="student",
@@ -608,7 +622,7 @@ def test_advisor_create_assignment_owns_git_and_pr_reconciliation(
     tools = create_senpai_tools(
         training=FakeTraining(training_result(tmp_path)),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: None,
+        child_runner_factory=lambda _request: None,
         event_sink=EventSink(),
         github_workflow=github,
         role="advisor",
@@ -756,29 +770,21 @@ class FakeChild:
         self.messages: list[str] = []
         self.closed = False
         self.interrupted = False
-        self.state = SimpleNamespace(view=View())
 
-    def send_message(self, message: str) -> None:
-        self.messages.append(message)
-
-    def run(self) -> None:
+    def run(self, task: str, timeout_seconds: float | None) -> str:
+        self.messages.append(task)
         self.started.set()
-        if not self.release.wait(2):
-            raise TimeoutError("test did not release child")
-        if self.fail:
-            raise RuntimeError("child disappeared")
-        self.state.view.events.append(
-            MessageEvent(
-                source="agent",
-                llm_message=Message(
-                    role="assistant",
-                    content=[TextContent(text="Child research result")],
-                ),
-            )
-        )
-
-    def close(self) -> None:
-        self.closed = True
+        try:
+            if not self.release.wait(timeout_seconds or 2):
+                self.interrupted = True
+                raise TimeoutError(
+                    f"subagent exceeded its {timeout_seconds:g}-second runtime"
+                )
+            if self.fail:
+                raise RuntimeError("child disappeared")
+            return "Child research result"
+        finally:
+            self.closed = True
 
     def interrupt(self) -> None:
         self.interrupted = True
@@ -811,11 +817,101 @@ def parent_conversation() -> SimpleNamespace:
     return SimpleNamespace(id=uuid.uuid4(), state=SimpleNamespace(view=view))
 
 
+def test_delegate_agent_foreground_returns_result_inline():
+    parent = parent_conversation()
+    release = threading.Event()
+    release.set()
+    child = FakeChild(
+        conversation_id=uuid.uuid4(),
+        release=release,
+        started=threading.Event(),
+    )
+    tools = create_senpai_tools(
+        training=FakeTraining(
+            TrainingResult(
+                training_id="unused",
+                state=TrainingState.RUNNING,
+                exit_code=None,
+                elapsed_seconds=0,
+                log_path="/tmp/unused",
+            )
+        ),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: child,
+        event_sink=EventSink(),
+        github_workflow=FakeGitHubWorkflow(),
+    )
+    delegate = {tool.name: tool for tool in tools}["delegate_agent"]
+
+    try:
+        observation = delegate(
+            DelegateAgentAction(
+                task="Locate the implementation.",
+                agent="explore",
+                model="fast",
+            ),
+            parent,
+        )
+
+        assert observation.status == "finished"
+        assert observation.result == "Child research result"
+        assert child.closed is True
+    finally:
+        close_tools(tools)
+
+
+def test_delegate_agent_allows_eight_parallel_background_children():
+    parent = parent_conversation()
+    release = threading.Event()
+    children: list[FakeChild] = []
+    sink = EventSink()
+
+    def child_factory(_request: DelegationRequest) -> FakeChild:
+        child = FakeChild(
+            conversation_id=uuid.uuid4(),
+            release=release,
+            started=threading.Event(),
+        )
+        children.append(child)
+        return child
+
+    delegate = DelegateAgentTool.create(
+        child_runner_factory=child_factory,
+        event_sink=sink,
+        max_workers=8,
+    )[0]
+
+    try:
+        for index in range(8):
+            observation = delegate(
+                DelegateAgentAction(
+                    task=f"Inspect area {index}.",
+                    agent="explore",
+                    model="fast",
+                    background=True,
+                ),
+                parent,
+            )
+            assert observation.status == "dispatched"
+
+        assert all(child.started.wait(1) for child in children)
+        with pytest.raises(RuntimeError, match="all eight"):
+            delegate(
+                DelegateAgentAction(task="Ninth task.", background=True),
+                parent,
+            )
+    finally:
+        release.set()
+        delegate.executor.close()
+
+    assert len(sink.events) == 8
+
+
 @pytest.mark.parametrize(
     ("include_context", "expected_roles"),
     [(False, []), (True, ["user", "assistant"])],
 )
-def test_dispatch_agent_is_nonblocking_and_context_is_explicit(
+def test_delegate_agent_background_is_nonblocking_and_context_is_explicit(
     include_context,
     expected_roles,
 ):
@@ -827,10 +923,10 @@ def test_dispatch_agent_is_nonblocking_and_context_is_explicit(
         release=release,
         started=started,
     )
-    requests: list[AgentDispatchRequest] = []
+    requests: list[DelegationRequest] = []
     sink = EventSink()
 
-    def child_factory(request: AgentDispatchRequest) -> FakeChild:
+    def child_factory(request: DelegationRequest) -> FakeChild:
         requests.append(request)
         return child
 
@@ -845,16 +941,19 @@ def test_dispatch_agent_is_nonblocking_and_context_is_explicit(
             )
         ),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=child_factory,
+        child_runner_factory=child_factory,
         event_sink=sink,
         github_workflow=FakeGitHubWorkflow(),
     )
-    dispatch = {tool.name: tool for tool in tools}["dispatch_agent"]
+    delegate = {tool.name: tool for tool in tools}["delegate_agent"]
 
     try:
-        observation = dispatch(
-            DispatchAgentAction(
+        observation = delegate(
+            DelegateAgentAction(
                 task="Compare the candidate runs.",
+                agent="explore",
+                model="fast",
+                background=True,
                 include_context=include_context,
             ),
             parent,
@@ -897,7 +996,7 @@ def test_dispatch_agent_is_nonblocking_and_context_is_explicit(
         close_tools(tools)
 
 
-def test_dispatch_agent_enqueues_error_when_child_disappears():
+def test_delegate_agent_background_enqueues_error_when_child_disappears():
     parent = parent_conversation()
     release = threading.Event()
     release.set()
@@ -919,15 +1018,18 @@ def test_dispatch_agent_enqueues_error_when_child_disappears():
             )
         ),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: child,
+        child_runner_factory=lambda _request: child,
         event_sink=sink,
         github_workflow=FakeGitHubWorkflow(),
     )
-    dispatch = {tool.name: tool for tool in tools}["dispatch_agent"]
+    delegate = {tool.name: tool for tool in tools}["delegate_agent"]
 
     try:
-        observation = dispatch(
-            DispatchAgentAction(task="Check one hypothesis."),
+        observation = delegate(
+            DelegateAgentAction(
+                task="Check one hypothesis.",
+                background=True,
+            ),
             parent,
         )
 
@@ -944,7 +1046,7 @@ def test_dispatch_agent_enqueues_error_when_child_disappears():
         close_tools(tools)
 
 
-def test_dispatch_agent_has_a_hard_runtime_and_interrupts_the_child():
+def test_delegate_agent_supports_an_explicit_runtime_limit():
     parent = parent_conversation()
     child = FakeChild(
         conversation_id=uuid.uuid4(),
@@ -963,16 +1065,19 @@ def test_dispatch_agent_has_a_hard_runtime_and_interrupts_the_child():
             )
         ),
         get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
-        child_factory=lambda _request: child,
+        child_runner_factory=lambda _request: child,
         event_sink=sink,
         github_workflow=FakeGitHubWorkflow(),
         max_agent_runtime_seconds=0.05,
     )
-    dispatch = {tool.name: tool for tool in tools}["dispatch_agent"]
+    delegate = {tool.name: tool for tool in tools}["delegate_agent"]
 
     try:
-        observation = dispatch(
-            DispatchAgentAction(task="Bound this investigation."),
+        observation = delegate(
+            DelegateAgentAction(
+                task="Bound this investigation.",
+                background=True,
+            ),
             parent,
         )
 
@@ -983,7 +1088,7 @@ def test_dispatch_agent_has_a_hard_runtime_and_interrupts_the_child():
         assert event.kind == "agent_error"
         assert event.dedupe_key == f"agent_result:{observation.task_id}"
         assert event.payload["error"] == (
-            "TimeoutError: child agent exceeded its 0.05-second runtime"
+            "TimeoutError: subagent exceeded its 0.05-second runtime"
         )
     finally:
         close_tools(tools)

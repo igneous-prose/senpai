@@ -111,9 +111,10 @@ and disclosed only when invoked.
 OpenHands retains its normal Browser, task tracker, and Think facilities.
 Senpai wraps the terminal with a fail-closed policy and adds:
 
-- OpenHands' native `task` subagent tool is enabled for main advisors,
-  students, and Senpai-dispatched children. It runs a registered agent preset
-  synchronously and returns the result to the current turn.
+- `delegate_agent`: the only subagent launch function. It selects a
+  file-defined `general-purpose`, `explore`, or `search` agent, a `smart` or
+  `fast` model tier, optional parent context, and foreground or background
+  delivery. Up to eight independent calls run concurrently.
 - `get_prs`: one read function for explicit numbers, an inclusive date range,
   or a search. It includes every PR body, issue comment, submitted review, and
   inline review comment. Five PRs are returned inline by default. Larger
@@ -123,21 +124,17 @@ Senpai wraps the terminal with a fail-closed policy and adds:
   requests revisions, responds idempotently to exact human Issue messages,
   submits authenticated structured results, reconciles labels, closes, and
   merges.
-- `dispatch_agent(task, include_context=false)`: lets either a main advisor or
-  main student start a generic, independently bounded child and returns
-  immediately. A context-free child receives only the normal system prompt and
-  task. With `include_context=true`, it also receives the complete model-visible
-  parent history.
 - `run_training` and `get_training_status`: start and inspect a supervised
   process without streaming raw progress through model history.
 - `monitor_training`: records the selected W&B metric, direction, threshold or
   change gates, staleness policy, terminal states, and current conversation
   UUID.
 
-The model-facing terminal denies raw GitHub mutations, `git push`, direct
-training launches, sleeps, polling loops, and log streams. Native OpenHands
-hooks provide early feedback; the in-process wrapper enforces the same policy
-if hooks are bypassed or fail.
+The main advisor/student terminal denies raw GitHub mutations, `git push`,
+direct training launches, sleeps, polling loops, and log streams. Native
+OpenHands hooks provide early feedback; the in-process wrapper enforces the
+same policy if hooks are bypassed or fail. File-defined subagents receive the
+raw OpenHands terminal and file editor alongside applicable Senpai tools.
 
 ## Conversations and monitoring
 
@@ -164,7 +161,7 @@ While an advisor turn is active, its GitHub watcher can append a new
 instructed to dispatch a generic full-context review child and continue its
 unrelated research. Child results return through a local SQLite event store;
 they are not cross-node messages. A main student uses the same asynchronous
-dispatch and local event path for bounded codebase, evidence, and history work.
+delegation and local event path for bounded codebase, evidence, and history work.
 A result that arrives after a student turn ends wakes and resumes the exact
 parent conversation UUID.
 

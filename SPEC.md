@@ -173,14 +173,15 @@ harness or role and injects the current text once into the same conversation
 UUID. Current time is rendered for every controller wake.
 
 File-based subagents are discovered from `.agents/agents`. Skill bodies are not
-concatenated into agent definitions. Skill model/effort frontmatter remains
-intact pending native OpenHands support for skill-declared child configuration.
+concatenated into agent definitions. The pinned OpenHands fork applies each
+agent definition's `reasoning_effort` override after resolving its inherited
+LLM or stored model profile.
 
 ## Prompt caching
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `4ed3504d4fdae153e8364bc3ab5ce455e4bf7079`, based on OpenHands SDK
+at commit `6822ab324b7c207dce55fe25ab927dab5d874c2b`, based on OpenHands SDK
 1.39.1.
 
 `prompt_cache_configuration()` sets:
@@ -274,44 +275,60 @@ cross-node notification.
 Definitive HTTP failures fail clearly. An ambiguous transport failure after a
 mutation is resolved by reading and verifying desired state before any retry.
 
-### `dispatch_agent`
+### `delegate_agent`
 
 ```text
-dispatch_agent(task: str, include_context: bool = false)
-  -> {task_id, status}
+delegate_agent(
+  task: str,
+  agent: general-purpose | explore | search = general-purpose,
+  model: smart | fast = smart,
+  background: bool = false,
+  include_context: bool = false,
+  search_mode: general-web | research-publications | null = null,
+) -> {task_id, status, result?}
 ```
 
-Each main advisor and student has one generic asynchronous delegation
-primitive. With
-`include_context=false`, the fresh child receives only the normal merged system
-prompt and the task. With `include_context=true`, it also receives a snapshot of
-the complete model-visible parent history, including progressively disclosed
-skill content.
+This is the only model-facing subagent mechanism. Every call launches the
+selected Markdown-defined agent in its own process group and fresh OpenHands
+conversation. The parent can emit eight independent calls in one response;
+OpenHands' parallel tool executor and the delegation semaphore both cap active
+children at eight.
 
-The child runs in a separate process group with a hard ten-minute runtime,
-reports `agent_result` or `agent_error` to the local event store, closes, and
-disappears. It is not a hard-coded reviewer. When `review_ready` arrives during
-other advisor work, the role policy asks the advisor to dispatch a generic
-full-context PR review and continue unrelated work.
+`background=false` waits and returns the compact report inline.
+`background=true` returns a task ID immediately, then reports `agent_result` or
+`agent_error` through the local durable event store. No child-specific runtime
+deadline is imposed by default; parent conversation and controller supervision
+still provide interruption and process recovery boundaries.
 
-Child agents receive neither training tools nor Senpai's asynchronous
-`dispatch_agent`.
-Every child result records its parent conversation UUID. If a student child
-finishes after the parent turn, the controller wakes and resumes that exact
-student conversation before the event pump acknowledges the result.
+`model=fast` selects `SENPAI_OPENHANDS_FAST_MODEL` (default
+`anthropic/claude-haiku-4-5` for the default Anthropic stack) for mechanical
+search and extraction. Without an explicit fast model, a non-Anthropic stack
+uses its smart model rather than sending that provider's API key elsewhere.
+`model=smart` selects the main configured model for review, literature
+research, and subtle synthesis. The file-defined agent may override reasoning
+effort independently.
 
-OpenHands' native `task_tool_set` is enabled for main advisors, main students,
-and Senpai-dispatched children. It runs an agent registered from
-`.agents/agents` synchronously inside the current runtime and can resume its
-own task ID. Native agent definitions control their own tool sets, so deeper
-delegation is available when a definition includes `task_tool_set`; it is not
-silently forced onto every spawned preset.
+`explore` searches code, data, PR artifacts, and durable history and returns
+concise conclusions with paths and line numbers. `search` requires exactly one
+mode: `general-web` uses browser/web sources, while `research-publications`
+uses the Exa publications skill and primary papers. `general-purpose` handles
+mixed investigation, editing, tests, and typed Senpai operations.
 
-The native and Senpai primitives are intentionally complementary:
-`task_tool_set` is the direct, blocking OpenHands path when the caller needs a
-result before proceeding, while `dispatch_agent` is the asynchronous,
-process-isolated path with durable result delivery, a hard deadline, and an
-explicit `include_context` boundary.
+With `include_context=false`, the child receives the merged system prompt and
+task and may search the parent's durable history path. With
+`include_context=true`, it also receives the complete model-visible parent
+history, including progressively disclosed skill content.
+
+Children receive the raw OpenHands terminal, file editor, applicable Senpai
+tools, and the same `delegate_agent` function for nested foreground work. They
+do not receive training tools. Background nesting is rejected because a child
+may exit before a grandchild's durable result can be consumed.
+
+When `review_ready` arrives during other advisor work, the role policy asks the
+advisor to launch a smart, full-context, background general-purpose review and
+continue unrelated work. Every background result records its parent
+conversation UUID, allowing the controller to resume the exact student
+conversation when a result arrives after its turn.
 
 ### Training and monitoring
 

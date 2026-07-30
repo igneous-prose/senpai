@@ -2618,7 +2618,7 @@ wheels = [
 [[package]]
 name = "openhands-sdk"
 version = "1.39.1"
-source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=4ed3504d4fdae153e8364bc3ab5ce455e4bf7079#4ed3504d4fdae153e8364bc3ab5ce455e4bf7079" }
+source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=6822ab324b7c207dce55fe25ab927dab5d874c2b#6822ab324b7c207dce55fe25ab927dab5d874c2b" }
 dependencies = [
     { name = "agent-client-protocol" },
     { name = "deprecation" },
@@ -2641,7 +2641,7 @@ dependencies = [
 [[package]]
 name = "openhands-tools"
 version = "1.39.1"
-source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=4ed3504d4fdae153e8364bc3ab5ce455e4bf7079#4ed3504d4fdae153e8364bc3ab5ce455e4bf7079" }
+source = { git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=6822ab324b7c207dce55fe25ab927dab5d874c2b#6822ab324b7c207dce55fe25ab927dab5d874c2b" }
 dependencies = [
     { name = "binaryornot" },
     { name = "browser-use" },
@@ -6065,8 +6065,8 @@ requires-dist = [
     { name = "jupyter", marker = "extra == 'dev'" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "openhands-sdk", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=4ed3504d4fdae153e8364bc3ab5ce455e4bf7079" },
-    { name = "openhands-tools", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=4ed3504d4fdae153e8364bc3ab5ce455e4bf7079" },
+    { name = "openhands-sdk", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-sdk&rev=6822ab324b7c207dce55fe25ab927dab5d874c2b" },
+    { name = "openhands-tools", git = "https://github.com/morganmcg1/software-agent-sdk.git?subdirectory=openhands-tools&rev=6822ab324b7c207dce55fe25ab927dab5d874c2b" },
     { name = "psutil" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-dotenv" },

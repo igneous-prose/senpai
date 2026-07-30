@@ -22,24 +22,31 @@ This document only defines Senpai's additional control-plane contract.
   excerpts; never dump the whole directory into model context.
 - A dispatched child also receives
   `$SENPAI_PARENT_CONVERSATION_HISTORY_DIR`. When broad history recovery is
-  needed and `dispatch_agent` is available, prefer a context-free child with a
-  precise search question. The child can search that parent log and return a
-  compact conclusion.
+  needed, prefer a context-free fast Explore child with a precise search
+  question. It can search that parent log and return a compact conclusion with
+  file pointers.
 
 ## Senpai tools
 
 Prefer typed Senpai tools over shell commands:
 
-- OpenHands' native `task` tool runs one registered subagent synchronously.
-  Use it when the current turn needs a bounded result before proceeding.
+- `delegate_agent` is the only subagent launch API. It starts one registered
+  file-defined agent in a separate process. Use `background=false` to wait for
+  its answer or `background=true` to continue while its result is delivered as
+  a durable local event. Up to eight calls emitted together can run in
+  parallel.
+- Select `model=fast` for mechanical `rg`/grep searches, narrow extraction, and
+  straightforward inspection. Select `model=smart` for code review, ambiguous
+  synthesis, literature research, or decisions where missing a subtlety is
+  costly.
+- Use `agent=explore` to inspect code, data, PR artifacts, or conversation
+  history. Its answer should be a compact conclusion with paths and line
+  numbers, not copied source. Use `agent=search` with exactly one of
+  `general-web` or `research-publications`. The publications mode uses the Exa
+  publications skill and primary papers.
 - `get_prs` returns complete Markdown for a bounded PR set. Its
   `max_inline_prs` default is five. Larger sets are written to one Markdown file
   outside the target checkout so they do not flood the conversation.
-- `dispatch_agent` starts a generic, short-lived agent and returns immediately.
-  By default it receives only this system prompt and your task. Set
-  `include_context=true` when it needs the complete model-visible parent
-  history. Use context-free children for cheaper bounded lookups and
-  full-context children for decisions coupled to the parent's evolving work.
 - `run_training` supervises a training process, timeout, log, terminal state,
   and discovered W&B run IDs. `get_training_status` returns its typed status.
   `monitor_training` records metric gates, staleness policy, terminal states,
@@ -61,11 +68,11 @@ controller polls that durable state and appends new events at a safe
 conversation boundary. No Senpai service, cluster DNS, shared port, or
 cross-node token is required.
 
-When a new item benefits from parallel attention, call `dispatch_agent` with a
-precise generic task. The child may inspect any relevant evidence and report a
-recommendation or completed bounded action through the parent's local durable
-event store. It is not a special-purpose review agent and it disappears after
-reporting.
+When a new item benefits from parallel attention, emit up to eight independent
+`delegate_agent` calls in one response. Use foreground calls when you need all
+results before reasoning further. Use background calls only when unrelated
+work can continue. Every task needs a precise deliverable and compact report
+contract.
 
 ## Runtime boundaries
 
@@ -73,6 +80,12 @@ reporting.
   monitors in the terminal. The controller and typed status tools own cadence.
 - Hooks provide early feedback, and the terminal executor enforces the same
   policy in process. Do not try to work around a denied command.
+- The main advisor/student terminal is `senpai_terminal`: the native OpenHands
+  terminal behind a fail-closed policy that denies raw GitHub mutations,
+  direct training launches, polling loops, sleeps, and log streams owned by
+  typed controller tools. File-defined subagents receive the raw OpenHands
+  terminal and file editor for normal investigation and development, but must
+  still use typed Senpai tools for GitHub workflow transitions.
 - Never print, persist, embed, or return secret values. Tools receive
   credentials through narrow executor boundaries.
 - Conversation state lives outside the target checkout. Senpai does not prune

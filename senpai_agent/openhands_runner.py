@@ -24,9 +24,10 @@ from senpai_agent.advisor import (
     advisor_conversation_id,
     compose_system_instructions,
 )
-from senpai_agent.child_process import (
-    ChildProcessConfig,
-    configure_child_process,
+from senpai_agent.delegation import (
+    MAX_PARALLEL_AGENTS,
+    DelegationConfig,
+    configure_delegation,
 )
 from senpai_agent.weave_monitoring import (
     finish_weave_monitoring,
@@ -44,6 +45,7 @@ from openhands.sdk.subagent import (
     AgentDefinition,
     agent_definition_to_factory,
     discover_agents,
+    register_file_agents,
 )
 from openhands.tools.preset.default import (
     get_default_condenser,
@@ -60,8 +62,10 @@ from senpai_agent.tools import (
 )
 
 DEFAULT_MODEL = "anthropic/claude-opus-4-8"
+DEFAULT_FAST_MODEL = "anthropic/claude-haiku-4-5"
 DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_REASONING_EFFORT = "xhigh"
+DEFAULT_FAST_REASONING_EFFORT = "low"
 REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra", "none")
 SENPAI_CONTINUATION_FILE = "current_conversation_id"
 COMMAND_SECRET_ENV_NAMES = (
@@ -111,6 +115,9 @@ class RunnerConfig:
     github_trusted_actor: str | None
     command_secrets: Mapping[str, str]
     reasoning_effort: str
+    smart_model: str
+    fast_model: str
+    fast_reasoning_effort: str
     workspace: Path
     state_dir: Path
     conversation_id: uuid.UUID
@@ -314,10 +321,22 @@ def resolve_config(
         ) from error
     if timeout_seconds <= 0:
         raise RuntimeError("SENPAI_OPENHANDS_TIMEOUT_SECONDS must be positive")
+    model = env_value(args.model, env, "SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL)
+    if not model:
+        model = DEFAULT_MODEL
+    smart_model = env.get("SENPAI_OPENHANDS_SMART_MODEL") or (
+        env.get("SENPAI_OPENHANDS_MODEL") if args.child else model
+    )
+    if not smart_model:
+        smart_model = DEFAULT_MODEL
+    fast_model = env.get("SENPAI_OPENHANDS_FAST_MODEL") or (
+        DEFAULT_FAST_MODEL
+        if smart_model.partition("/")[0].lower() == "anthropic"
+        else smart_model
+    )
     return RunnerConfig(
         max_turns=args.max_turns,
-        model=env_value(args.model, env, "SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL)
-        or DEFAULT_MODEL,
+        model=model,
         api_key_env=api_key_env,
         api_key=resolve_api_key(env, api_key_env),
         github_repo=github_repo(env),
@@ -331,6 +350,12 @@ def resolve_config(
             DEFAULT_REASONING_EFFORT,
         )
         or DEFAULT_REASONING_EFFORT,
+        smart_model=smart_model,
+        fast_model=fast_model,
+        fast_reasoning_effort=env.get(
+            "SENPAI_OPENHANDS_FAST_REASONING_EFFORT",
+            DEFAULT_FAST_REASONING_EFFORT,
+        ),
         workspace=workspace,
         state_dir=state_dir,
         conversation_id=(
@@ -489,7 +514,7 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
         tool
         for tool in get_default_tools(
             enable_browser=config.enable_browser,
-            enable_sub_agents=True,
+            enable_sub_agents=False,
         )
         if tool.name != "terminal"
     ]
@@ -503,13 +528,12 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
             Tool(name="github_transition", params={"role": config.role}),
         )
     )
-    if not config.child:
-        tools.append(
-            Tool(
-                name="dispatch_agent",
-                params={"event_db_path": str(local_event_db_path(config))},
-            )
+    tools.append(
+        Tool(
+            name="delegate_agent",
+            params={"event_db_path": str(local_event_db_path(config))},
         )
+    )
     if config.role == "student" and not config.child:
         training_params: dict[str, str | int] = {
             "state_dir": str(config.state_dir / "training"),
@@ -519,24 +543,27 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
     return tools
 
 
-def child_process_config(config: RunnerConfig) -> ChildProcessConfig:
-    return ChildProcessConfig(
+def delegation_config(config: RunnerConfig) -> DelegationConfig:
+    return DelegationConfig(
         python_executable=Path(sys.executable),
         workspace=config.workspace,
         state_dir=config.state_dir,
-        model=config.model,
+        smart_model=config.smart_model,
+        fast_model=config.fast_model,
         api_key_env=config.api_key_env,
         api_key=config.api_key.get_secret_value(),
         github_repo=config.github_repo,
         github_token=config.github_token.get_secret_value(),
         github_trusted_actor=config.github_trusted_actor,
-        reasoning_effort=config.reasoning_effort,
+        smart_reasoning_effort=config.reasoning_effort,
+        fast_reasoning_effort=config.fast_reasoning_effort,
         role_file=config.role_file,
         harness_file=config.harness_file,
         plugin_dir=config.plugin_dir,
         enable_browser=config.enable_browser,
         command_secrets=config.command_secrets,
         role=config.role,
+        background_allowed=not config.child,
     )
 
 
@@ -641,6 +668,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
     role_instructions = read_role_instructions(config.role_file)
     register_senpai_tools()
     file_agents = discover_agents(config.workspace)
+    register_file_agents(config.workspace)
     available_agents = [definition.name for definition in file_agents]
     os.environ["SENPAI_CONVERSATION_ID"] = config.conversation_id.hex
 
@@ -654,6 +682,8 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "continue": config.continue_session,
                 "role": config.role,
                 "model": config.model,
+                "smart_model": config.smart_model,
+                "fast_model": config.fast_model,
                 "prompt_cache": (
                     prompt_cache_configuration(config.model)
                     or {"provider_default": True}
@@ -680,9 +710,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         config.github_token,
         trusted_actor=config.github_trusted_actor,
     )
-    configure_child_process(
-        child_process_config(config) if not config.child else None
-    )
+    configure_delegation(delegation_config(config))
     for name in (
         *GITHUB_SECRET_ENV_NAMES,
         "SENPAI_GITHUB_TOKEN_FILE",
@@ -711,6 +739,9 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 harness_instructions,
                 role_instructions,
             )
+            agent = agent.model_copy(
+                update={"tool_concurrency_limit": MAX_PARALLEL_AGENTS}
+            )
             if (
                 llm.responses_use_previous_response_id
                 or llm.uses_anthropic_compaction()
@@ -736,6 +767,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 ),
                 system_prompt_kwargs={"cli_mode": True},
                 condenser=condenser,
+                tool_concurrency_limit=MAX_PARALLEL_AGENTS,
             )
         conversation = Conversation(
             agent=agent,
@@ -756,7 +788,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             conversation.send_message(prompt)
         finally:
             clear_github_credentials()
-            configure_child_process(None)
+            configure_delegation(None)
         with (
             graceful_interrupts(conversation),
             turn_deadline(
@@ -788,7 +820,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         )
     finally:
         clear_github_credentials()
-        configure_child_process(None)
+        configure_delegation(None)
         if conversation is not None:
             conversation.close()
 

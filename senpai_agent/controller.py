@@ -733,17 +733,19 @@ class OpenHandsMonitorTriage:
         signal: MonitorSignal,
         conversation_id: UUID,
     ) -> MonitorDecision:
-        from senpai_agent.child_process import OpenHandsChildProcess
-        from senpai_agent.tools import AgentDispatchRequest
+        from senpai_agent.delegation import DelegationRequest, OpenHandsChildProcess
 
         request_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
             signal.dedupe_key,
         )
-        request = AgentDispatchRequest(
+        request = DelegationRequest(
             task_id=str(request_id),
             parent_conversation_id=str(conversation_id),
             parent_context=(),
+            agent="general-purpose",
+            model="fast",
+            search_mode=None,
         )
         child = OpenHandsChildProcess(self.child_config, request)
         task = (
@@ -1238,7 +1240,7 @@ def controller_main(
         progress.update("startup", 300)
 
     from senpai_agent.openhands_runner import (
-        child_process_config,
+        delegation_config,
         parse_runner_args,
         read_role_instructions,
         resolve_config,
@@ -1303,7 +1305,7 @@ def controller_main(
         )
         triage = OpenHandsMonitorTriage(
             replace(
-                child_process_config(runner_config),
+                delegation_config(runner_config),
                 enable_browser=False,
             ),
             timeout_seconds=float(

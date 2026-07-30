@@ -24,10 +24,11 @@ allowed files, metric contract, run limits, and any requested revision.
 Inspect the current baseline and command help before changing code. Keep one
 clear experiment path, use existing conventions, and remove scaffolding that
 the assignment explicitly makes obsolete. For a substantial hypothesis, use
-`dispatch_agent` for a bounded independent plan, code-path analysis, evidence
-review, or literature check. Use `include_context=false` unless the child needs
-the complete evolving conversation. Use OpenHands' native `task` subagent
-instead when you need its result before continuing the current turn.
+`delegate_agent` for a bounded independent plan, code-path analysis, evidence
+review, or literature check. Use foreground delegation when its result is
+needed before implementation and background delegation only when unrelated
+work can continue. Use `include_context=false` unless the child needs the
+complete evolving conversation.
 
 Run cheap tests and a tiny debug execution when they materially reduce the risk
 of wasting a full training allocation. Fix experiment implementation bugs and

@@ -5,21 +5,13 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import threading
-import uuid
 from collections.abc import Callable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Protocol, Self
 
-from openhands.sdk.event import (
-    ActionEvent,
-    LLMConvertibleEvent,
-    MessageEvent,
-)
-from openhands.sdk.llm import Message, TextContent
+from openhands.sdk.llm import TextContent
 from openhands.sdk.tool import (
     Action,
     Observation,
@@ -35,7 +27,11 @@ from openhands.tools.terminal import (
 )
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
+from senpai_agent.delegation import (
+    AdvisorEventSink,
+    ChildAgentRunnerFactory,
+    DelegateAgentTool,
+)
 from senpai_agent.git_workflow import (
     create_assignment_branch,
     push_assignment_branch,
@@ -68,10 +64,6 @@ class TrainingService(Protocol):
     def close(self) -> None: ...
 
     def drain(self) -> None: ...
-
-
-class AdvisorEventSink(Protocol):
-    def enqueue(self, event: AdvisorEvent) -> bool: ...
 
 
 class GitHubWorkflowService(Protocol):
@@ -147,83 +139,6 @@ class GitHubWorkflowService(Protocol):
         assignment_id: str,
         merge_method: Literal["merge", "squash", "rebase"] = "squash",
     ) -> MutationResult: ...
-
-
-class ChildConversation(Protocol):
-    id: object
-    state: object
-
-    def send_message(self, message: str) -> None: ...
-
-    def run(self) -> None: ...
-
-    def close(self) -> None: ...
-
-    def interrupt(self) -> None: ...
-
-
-@dataclass(frozen=True)
-class AgentDispatchRequest:
-    """Snapshot supplied to a factory that creates one fresh child conversation.
-
-    ``parent_context`` is the complete message stream visible to the parent
-    model before its dispatch call, including progressively disclosed skill
-    content. The factory must seed the fresh child with that context.
-    """
-
-    task_id: str
-    parent_conversation_id: str
-    parent_context: tuple[Message, ...]
-
-
-class ChildConversationFactory(Protocol):
-    def __call__(self, request: AgentDispatchRequest) -> ChildConversation: ...
-
-
-class ChildAgentRunner(Protocol):
-    def run(self, task: str, timeout_seconds: float) -> str: ...
-
-    def interrupt(self) -> None: ...
-
-
-class ChildAgentRunnerFactory(Protocol):
-    def __call__(self, request: AgentDispatchRequest) -> ChildAgentRunner: ...
-
-
-class _ConversationChildRunner:
-    """Compatibility adapter for injected SDK-conversation tests.
-
-    Production dispatch uses ``OpenHandsChildProcess`` below. This adapter
-    remains useful for deterministic unit tests and embedding callers.
-    """
-
-    def __init__(self, child: ChildConversation):
-        self.child = child
-
-    def run(self, task: str, timeout_seconds: float) -> str:
-        timed_out = threading.Event()
-
-        def interrupt_on_timeout() -> None:
-            timed_out.set()
-            self.child.interrupt()
-
-        timer = threading.Timer(timeout_seconds, interrupt_on_timeout)
-        timer.daemon = True
-        timer.start()
-        try:
-            self.child.send_message(task)
-            self.child.run()
-            if timed_out.is_set():
-                raise TimeoutError(
-                    f"child agent exceeded its {timeout_seconds:g}-second runtime"
-                )
-            return _last_agent_result(self.child)
-        finally:
-            timer.cancel()
-            self.child.close()
-
-    def interrupt(self) -> None:
-        self.child.interrupt()
 
 
 @dataclass(frozen=True)
@@ -1078,9 +993,10 @@ class GitHubTransitionTool(
         conv_state: object | None = None,
         workflow: GitHubWorkflowService | None = None,
         *,
-        role: str,
+        role: str | None = None,
         workspace: str | Path | None = None,
     ) -> Sequence[Self]:
+        role = role or os.environ.get("SENPAI_ROLE")
         if role not in {"advisor", "student"}:
             raise ValueError("role must be advisor or student")
         git_token: SecretStr | None = None
@@ -1128,249 +1044,6 @@ class GitHubTransitionTool(
                 ),
             )
         ]
-
-
-class DispatchAgentAction(Action):
-    task: str = Field(
-        min_length=1,
-        description=(
-            "Self-contained task for a fresh child agent. State the desired "
-            "deliverable and constraints."
-        ),
-    )
-    include_context: bool = Field(
-        default=False,
-        description=(
-            "Copy the complete model-visible parent history into the child. "
-            "Leave false for a cheaper context-free child that receives only "
-            "the Senpai system prompt and this task."
-        ),
-    )
-
-
-class DispatchAgentObservation(Observation):
-    task_id: str
-    status: Literal["dispatched"] = "dispatched"
-
-    @property
-    def to_llm_content(self) -> Sequence[TextContent]:
-        return [
-            TextContent(
-                text=(
-                    f"Child task {self.task_id} was dispatched. Its result or "
-                    "error will arrive as a durable local event."
-                )
-            )
-        ]
-
-
-class _DispatchAgentExecutor(
-    ToolExecutor[DispatchAgentAction, DispatchAgentObservation]
-):
-    def __init__(
-        self,
-        child_factory: ChildConversationFactory | None,
-        child_runner_factory: ChildAgentRunnerFactory | None,
-        event_sink: AdvisorEventSink | None,
-        *,
-        event_db_path: Path | None,
-        max_workers: int,
-        max_runtime_seconds: float,
-    ):
-        if max_workers <= 0:
-            raise ValueError("max_workers must be positive")
-        if max_runtime_seconds <= 0:
-            raise ValueError("max_runtime_seconds must be positive")
-        self.child_factory = child_factory
-        self.child_runner_factory = child_runner_factory
-        self.event_sink = event_sink
-        self.event_db_path = event_db_path
-        self.max_workers = max_workers
-        self.max_runtime_seconds = max_runtime_seconds
-        self._pool = ThreadPoolExecutor(
-            max_workers=max_workers,
-            thread_name_prefix="senpai-child-agent",
-        )
-        self._futures: dict[Future[None], ChildAgentRunner] = {}
-        self._futures_lock = threading.Lock()
-
-    def __call__(
-        self,
-        action: DispatchAgentAction,
-        conversation: LocalConversation | None = None,
-    ) -> DispatchAgentObservation:
-        if conversation is None:
-            raise ValueError("dispatch_agent requires its parent conversation")
-
-        task_id = str(uuid.uuid4())
-        request = AgentDispatchRequest(
-            task_id=task_id,
-            parent_conversation_id=str(conversation.id),
-            parent_context=(
-                _model_visible_context(conversation) if action.include_context else ()
-            ),
-        )
-        with self._futures_lock:
-            if len(self._futures) >= self.max_workers:
-                raise RuntimeError(
-                    "all child-agent slots are active; wait for a result event"
-                )
-            if self.child_runner_factory is not None:
-                runner = self.child_runner_factory(request)
-            else:
-                child = (
-                    self.child_factory(request)
-                    if self.child_factory is not None
-                    else conversation.fork(
-                        title=f"Senpai child: {action.task[:80]}",
-                        tags={"runtime": "senpai-child"},
-                    )
-                )
-                if str(child.id) == request.parent_conversation_id:
-                    raise RuntimeError("child factory returned the parent conversation")
-                runner = _ConversationChildRunner(child)
-            future = self._pool.submit(
-                self._run_child,
-                request,
-                action.task,
-                runner,
-            )
-            self._futures[future] = runner
-        future.add_done_callback(self._forget_future)
-        return DispatchAgentObservation(task_id=task_id)
-
-    def _forget_future(self, future: Future[None]) -> None:
-        with self._futures_lock:
-            self._futures.pop(future, None)
-
-    def _run_child(
-        self,
-        request: AgentDispatchRequest,
-        task: str,
-        runner: ChildAgentRunner,
-    ) -> None:
-        result: str | None = None
-        error: BaseException | None = None
-        try:
-            result = runner.run(task, self.max_runtime_seconds)
-        except BaseException as child_error:  # noqa: BLE001
-            error = child_error
-
-        if error is None:
-            event = AdvisorEvent(
-                kind="agent_result",
-                dedupe_key=f"agent_result:{request.task_id}",
-                payload={
-                    "task_id": request.task_id,
-                    "parent_conversation_id": request.parent_conversation_id,
-                    "task": task,
-                    "result": result or "",
-                },
-            )
-        else:
-            event = AdvisorEvent(
-                kind="agent_error",
-                dedupe_key=f"agent_result:{request.task_id}",
-                payload={
-                    "task_id": request.task_id,
-                    "parent_conversation_id": request.parent_conversation_id,
-                    "task": task,
-                    "error": f"{type(error).__name__}: {error}",
-                },
-            )
-        if self.event_sink is not None:
-            self.event_sink.enqueue(event)
-        elif self.event_db_path is not None:
-            with AdvisorEventStore(self.event_db_path) as event_sink:
-                event_sink.enqueue(event)
-        else:
-            raise RuntimeError("dispatch_agent has no event sink")
-
-    def close(self) -> None:
-        self._pool.shutdown(wait=True, cancel_futures=False)
-
-    def interrupt(self) -> None:
-        with self._futures_lock:
-            runners = tuple(self._futures.values())
-        for runner in runners:
-            runner.interrupt()
-
-
-class DispatchAgentTool(ToolDefinition[DispatchAgentAction, DispatchAgentObservation]):
-    @classmethod
-    def create(
-        cls,
-        conv_state: object | None = None,
-        child_factory: ChildConversationFactory | None = None,
-        child_runner_factory: ChildAgentRunnerFactory | None = None,
-        event_sink: AdvisorEventSink | None = None,
-        *,
-        event_db_path: str | Path | None = None,
-        max_workers: int = 2,
-        max_runtime_seconds: float = 600,
-    ) -> Sequence[Self]:
-        resolved_event_path = Path(event_db_path) if event_db_path is not None else None
-        if event_sink is None and resolved_event_path is None:
-            raise ValueError("event_sink or event_db_path is required")
-        if child_factory is None and child_runner_factory is None:
-            from senpai_agent.child_process import (
-                configured_child_process_factory,
-            )
-
-            child_runner_factory = configured_child_process_factory()
-        return [
-            cls(
-                description=(
-                    "Dispatch one independent child-agent task without blocking. "
-                    "By default the child receives only the normal system prompt "
-                    "and task. Set include_context=true only when the full parent "
-                    "history is necessary; it can be expensive. Completion or "
-                    "failure returns later as a durable local parent event."
-                ),
-                action_type=DispatchAgentAction,
-                observation_type=DispatchAgentObservation,
-                annotations=ToolAnnotations(
-                    title="Dispatch agent",
-                    readOnlyHint=False,
-                    destructiveHint=False,
-                    idempotentHint=False,
-                    openWorldHint=False,
-                ),
-                executor=_DispatchAgentExecutor(
-                    child_factory,
-                    child_runner_factory,
-                    event_sink,
-                    event_db_path=resolved_event_path,
-                    max_workers=max_workers,
-                    max_runtime_seconds=max_runtime_seconds,
-                ),
-            )
-        ]
-
-
-def _model_visible_context(conversation: LocalConversation) -> tuple[Message, ...]:
-    events = list(conversation.state.view.events)
-    while events and isinstance(events[-1], ActionEvent):
-        events.pop()
-    messages = LLMConvertibleEvent.events_to_messages(events)
-    return tuple(message.model_copy(deep=True) for message in messages)
-
-
-def _last_agent_result(child: ChildConversation) -> str:
-    for event in reversed(child.state.view.events):
-        if isinstance(event, MessageEvent) and event.source == "agent":
-            text = "".join(
-                content.text
-                for content in event.to_llm_message().content
-                if isinstance(content, TextContent)
-            ).strip()
-            if text:
-                return text
-        if isinstance(event, ActionEvent):
-            message = getattr(event.action, "message", None)
-            if isinstance(message, str) and message.strip():
-                return message.strip()
-    raise RuntimeError("child finished without a model-visible result")
 
 
 class SenpaiTerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
@@ -1436,13 +1109,13 @@ def _terminal_denial(
 def create_senpai_tools(
     *,
     training: TrainingService,
-    child_factory: ChildConversationFactory,
+    child_runner_factory: ChildAgentRunnerFactory,
     event_sink: AdvisorEventSink,
     github_workflow: GitHubWorkflowService,
     role: str = "advisor",
     get_prs_fn: Callable[..., PRRetrievalResult] = get_prs,
-    max_agent_workers: int = 2,
-    max_agent_runtime_seconds: float = 600,
+    max_agent_workers: int = 8,
+    max_agent_runtime_seconds: float | None = None,
     pr_artifact_dir: str | Path | None = None,
     workspace: str | Path | None = None,
 ) -> tuple[ToolDefinition, ...]:
@@ -1467,8 +1140,8 @@ def create_senpai_tools(
             workflow=github_workflow,
             role=role,
         ),
-        *DispatchAgentTool.create(
-            child_factory=child_factory,
+        *DelegateAgentTool.create(
+            child_runner_factory=child_runner_factory,
             event_sink=event_sink,
             max_workers=max_agent_workers,
             max_runtime_seconds=max_agent_runtime_seconds,
@@ -1515,6 +1188,6 @@ def register_senpai_tools() -> None:
     register_tool("senpai_training", TrainingToolSet)
     register_tool("get_prs", GetPRsTool)
     register_tool("github_transition", GitHubTransitionTool)
-    register_tool("dispatch_agent", DispatchAgentTool)
+    register_tool("delegate_agent", DelegateAgentTool)
     register_tool("senpai_terminal", SenpaiTerminalTool)
     _TOOLS_REGISTERED = True

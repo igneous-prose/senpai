@@ -40,7 +40,8 @@ from senpai_agent.tools import register_senpai_tools
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
-RESEARCHER_AGENT = REPO_ROOT / ".agents" / "agents" / "researcher-agent.md"
+EXPLORE_AGENT = REPO_ROOT / ".agents" / "agents" / "explore.md"
+SEARCH_AGENT = REPO_ROOT / ".agents" / "agents" / "search.md"
 
 
 def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
@@ -58,6 +59,9 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "github_trusted_actor": None,
         "command_secrets": {"WANDB_API_KEY": "wandb-key"},
         "reasoning_effort": "xhigh",
+        "smart_model": "anthropic/claude-opus-4-8",
+        "fast_model": "anthropic/claude-haiku-4-5",
+        "fast_reasoning_effort": "low",
         "workspace": tmp_path,
         "state_dir": tmp_path / "state",
         "conversation_id": uuid.uuid4(),
@@ -113,14 +117,14 @@ def test_browser_is_enabled_by_default_and_can_be_disabled():
     assert disabled_args.enable_browser is False
 
 
-def test_child_mode_keeps_native_subagents_without_senpai_dispatch(tmp_path):
+def test_child_mode_keeps_one_foreground_delegation_path(tmp_path):
     args = parse_runner_args(["--max-turns", "1", "--child"])
     config = runtime_config(tmp_path, child=True)
 
     assert args.child is True
     names = {tool.name for tool in build_main_tools(config)}
-    assert "task_tool_set" in names
-    assert "dispatch_agent" not in names
+    assert "task_tool_set" not in names
+    assert "delegate_agent" in names
     assert "senpai_training" not in names
 
 
@@ -326,13 +330,13 @@ def test_openai_conversations_share_stable_role_and_agent_cache_keys(tmp_path):
         tmp_path,
         model="openai/gpt-5.6",
         role="advisor",
-        agent_name="researcher-agent",
+        agent_name="explore",
     )
     anthropic = runtime_config(tmp_path, model="anthropic/claude-opus-4-8")
 
     assert conversation_prompt_cache_key(main) == "senpai:student:main"
     assert conversation_prompt_cache_key(child) == "senpai:advisor:child"
-    assert conversation_prompt_cache_key(named) == "senpai:advisor:researcher-agent"
+    assert conversation_prompt_cache_key(named) == "senpai:advisor:explore"
     assert conversation_prompt_cache_key(anthropic) is None
 
 
@@ -360,7 +364,7 @@ def test_event_summary_preserves_bounded_reasoning_and_action():
                 "senpai_terminal",
                 "get_prs",
                 "github_transition",
-                "dispatch_agent",
+                "delegate_agent",
             },
         ),
         (
@@ -369,7 +373,7 @@ def test_event_summary_preserves_bounded_reasoning_and_action():
                 "senpai_terminal",
                 "get_prs",
                 "github_transition",
-                "dispatch_agent",
+                "delegate_agent",
                 "senpai_training",
             },
         ),
@@ -389,10 +393,10 @@ def test_main_tools_replace_terminal_and_add_role_boundaries(
     by_name = {tool.name: tool for tool in tools}
 
     assert "terminal" not in by_name
-    assert "task_tool_set" in by_name
+    assert "task_tool_set" not in by_name
     assert expected_custom <= set(by_name)
     assert by_name["senpai_terminal"].params == {"role": role}
-    assert by_name["dispatch_agent"].params == {
+    assert by_name["delegate_agent"].params == {
         "event_db_path": str(config.state_dir / f"{role}-events.sqlite3")
     }
     if role == "student":
@@ -439,6 +443,29 @@ def test_config_keeps_llm_key_secret_and_registers_only_command_secrets(tmp_path
     assert "ANTHROPIC_API_KEY" not in config.command_secrets
     assert config.state_dir == state_dir
     assert config.training_max_timeout_seconds == 30
+
+
+def test_fast_model_defaults_to_same_provider_without_an_explicit_override(
+    tmp_path,
+):
+    env = {
+        "OPENAI_API_KEY": "openai-key",
+        "GITHUB_TOKEN": "github-key",
+        "GH_REPO": "acme/widgets",
+        "SENPAI_ROLE": "advisor",
+        "SENPAI_OPENHANDS_API_KEY_ENV": "OPENAI_API_KEY",
+        "SENPAI_OPENHANDS_MODEL": "openai/gpt-5.6",
+        "SENPAI_OPENHANDS_WORKSPACE": str(tmp_path),
+        "SENPAI_OPENHANDS_STATE_DIR": str(tmp_path.parent / "state"),
+        "SENPAI_OPENHANDS_ROLE_FILE": str(runtime_config(tmp_path).role_file),
+        "SENPAI_OPENHANDS_HARNESS_FILE": str(runtime_config(tmp_path).harness_file),
+        "SENPAI_PLUGIN": str(PLUGIN_DIR),
+    }
+
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert config.smart_model == "openai/gpt-5.6"
+    assert config.fast_model == "openai/gpt-5.6"
 
 
 def test_config_consumes_private_one_use_github_token_file(tmp_path):
@@ -597,6 +624,7 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
 
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
+    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
     config = runtime_config(tmp_path)
 
     assert run_openhands("first task", config) == 0
@@ -651,6 +679,7 @@ def test_child_conversation_is_ephemeral_and_emits_its_terminal_report(
 
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
+    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
     assert run_openhands("child task", runtime_config(tmp_path, child=True)) == 0
 
@@ -673,6 +702,7 @@ def test_main_student_conversation_is_persisted_for_monitor_wake(
         def __init__(self, **kwargs):
             self.id = kwargs["conversation_id"]
             captured["delete_on_close"] = kwargs["delete_on_close"]
+            captured["tool_concurrency_limit"] = kwargs["agent"].tool_concurrency_limit
             self.state = SimpleNamespace(
                 execution_status=ConversationExecutionStatus.FINISHED
             )
@@ -688,7 +718,8 @@ def test_main_student_conversation_is_persisted_for_monitor_wake(
 
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
-    monkeypatch.setattr(runner, "configure_child_process", child_runtime.append)
+    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
+    monkeypatch.setattr(runner, "configure_delegation", child_runtime.append)
 
     assert (
         run_openhands(
@@ -698,6 +729,7 @@ def test_main_student_conversation_is_persisted_for_monitor_wake(
         == 0
     )
     assert captured["delete_on_close"] is False
+    assert captured["tool_concurrency_limit"] == 8
     assert child_runtime[0].role == "student"
     assert child_runtime[-1] is None
 
@@ -727,6 +759,7 @@ def test_github_tokens_never_reach_the_agent_environment(
     monkeypatch.setenv("GITHUB_TOKEN", "stale-env-secret")
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
+    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
     assert (
         run_openhands(
@@ -771,6 +804,7 @@ def test_only_finished_conversations_succeed(status, tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
+    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
     assert run_openhands("task", runtime_config(tmp_path)) == 1
 
@@ -793,6 +827,7 @@ def test_conversation_closes_when_execution_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
+    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
     with pytest.raises(RuntimeError, match="execution failed"):
         run_openhands("task", runtime_config(tmp_path))
@@ -825,6 +860,7 @@ def test_openhands_turn_has_a_hard_runtime_deadline(tmp_path, monkeypatch):
 
     monkeypatch.setattr(runner, "Conversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
+    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
     assert (
         run_openhands(
@@ -909,7 +945,7 @@ def test_openhands_loads_the_native_senpai_plugin():
     assert not (PLUGIN_DIR / ".mcp.json").exists()
 
 
-def test_researcher_agent_uses_native_profile_tools_and_progressive_skills(
+def test_search_agent_applies_reasoning_effort_and_progressive_skills(
     monkeypatch,
 ):
     import openhands.sdk.skills.skill as skill_module
@@ -922,29 +958,28 @@ def test_researcher_agent_uses_native_profile_tools_and_progressive_skills(
     monkeypatch.setenv("SENPAI_ROLE", "advisor")
     register_default_tools(enable_browser=True)
     register_senpai_tools()
-    definition = AgentDefinition.load(RESEARCHER_AGENT)
+    definition = AgentDefinition.load(SEARCH_AGENT)
     agent = agent_definition_to_factory(definition, work_dir=REPO_ROOT)(
         LLM(
             model="anthropic/claude-opus-4-8",
             api_key=SecretStr("test-key"),
+            reasoning_effort="low",
         )
     )
 
     assert definition.model == "inherit"
-    assert "effort: max" in RESEARCHER_AGENT.read_text(encoding="utf-8")
+    assert definition.reasoning_effort == "xhigh"
+    assert agent.llm.reasoning_effort == "xhigh"
     assert definition.skills == [
-        "survey-prs",
-        "list-experiments",
-        "wandb-primary",
         "exa-publication-search",
         "alphaxiv-paper-lookup",
     ]
     assert set(definition.tools) == {
-        "senpai_terminal",
+        "terminal",
         "browser_tool_set",
         "file_editor",
-        "task_tracker",
         "get_prs",
+        "delegate_agent",
     }
     assert {skill.name for skill in agent.agent_context.skills} == set(
         definition.skills
@@ -956,6 +991,19 @@ def test_researcher_agent_uses_native_profile_tools_and_progressive_skills(
     )
     assert "# Referenced skills" not in agent.agent_context.system_message_suffix
     assert not definition.mcp_config
+
+
+def test_explore_agent_is_a_concise_low_effort_file_agent():
+    definition = AgentDefinition.load(EXPLORE_AGENT)
+
+    assert definition.name == "explore"
+    assert definition.model == "inherit"
+    assert definition.reasoning_effort == "low"
+    assert {"terminal", "file_editor", "get_prs", "delegate_agent"} == set(
+        definition.tools
+    )
+    assert "line numbers" in definition.system_prompt
+    assert "Large files and conversation logs" in definition.system_prompt
 
 
 @pytest.mark.parametrize("role", ["advisor", "student"])
