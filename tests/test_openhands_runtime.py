@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from litellm import get_optional_params
 from openhands.sdk import LLM, load_project_skills
 from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.llm import Message, TextContent
@@ -20,6 +21,7 @@ from senpai_agent.openhands_runner import (
     RunnerConfig,
     build_main_agent_context,
     build_main_tools,
+    conversation_prompt_cache_key,
     event_summary,
     find_role_file,
     graceful_interrupts,
@@ -85,6 +87,21 @@ def test_reasoning_effort_uses_highest_supported_value(effort, model, expected):
 
     assert args.reasoning_effort == effort
     assert openhands_reasoning_effort(args.reasoning_effort, model) == expected
+
+
+def test_default_reasoning_effort_is_xhigh():
+    assert runner.DEFAULT_REASONING_EFFORT == "xhigh"
+
+
+def test_anthropic_xhigh_enables_adaptive_thinking():
+    options = get_optional_params(
+        model="claude-opus-4-8",
+        custom_llm_provider="anthropic",
+        reasoning_effort="xhigh",
+    )
+
+    assert options["thinking"] == {"type": "adaptive"}
+    assert options["output_config"] == {"effort": "xhigh"}
 
 
 def test_browser_is_enabled_by_default_and_can_be_disabled():
@@ -180,8 +197,12 @@ def test_role_is_system_context_loaded_before_project_skills():
             "openai/gpt-5.6",
             {
                 "prompt_cache_retention": None,
+                "responses_prompt_cache_breakpoint": True,
                 "litellm_extra_body": {
-                    "prompt_cache_options": {"ttl": "30m"},
+                    "prompt_cache_options": {
+                        "mode": "explicit",
+                        "ttl": "30m",
+                    },
                 },
             },
         ),
@@ -234,8 +255,70 @@ def test_openai_uses_stored_responses_with_provider_compaction():
     assert "include" not in call_kwargs
 
 
+def test_gpt56_marks_only_the_stable_system_cache_boundary():
+    llm = LLM(
+        model="openai/gpt-5.6",
+        api_key=SecretStr("test-key"),
+        **prompt_cache_configuration("openai/gpt-5.6"),
+        **openai_responses_configuration("openai/gpt-5.6"),
+    )
+    instructions, inputs = llm.format_messages_for_responses(
+        [
+            Message(
+                role="system",
+                content=[
+                    TextContent(text="stable harness and role"),
+                    TextContent(text="dynamic project context"),
+                ],
+            ),
+            Message(role="user", content=[TextContent(text="Investigate")]),
+        ]
+    )
+
+    assert instructions is None
+    assert inputs[0]["content"] == [
+        {
+            "type": "input_text",
+            "text": "stable harness and role",
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        },
+        {
+            "type": "input_text",
+            "text": "dynamic project context",
+        },
+    ]
+    assert llm.litellm_extra_body == {
+        "prompt_cache_options": {
+            "mode": "explicit",
+            "ttl": "30m",
+        }
+    }
+
+
 def test_non_openai_models_do_not_force_the_responses_api():
     assert openai_responses_configuration("anthropic/claude-opus-4-8") == {}
+
+
+def test_openai_conversations_share_stable_role_and_agent_cache_keys(tmp_path):
+    main = runtime_config(tmp_path, model="openai/gpt-5.6", role="student")
+    child = runtime_config(
+        tmp_path,
+        model="openai/gpt-5.6",
+        role="advisor",
+        child=True,
+    )
+    named = runtime_config(
+        tmp_path,
+        model="openai/gpt-5.6",
+        role="advisor",
+        agent_name="researcher-agent",
+    )
+    anthropic = runtime_config(tmp_path, model="anthropic/claude-opus-4-8")
+
+    assert conversation_prompt_cache_key(main) == "senpai:student:main"
+    assert conversation_prompt_cache_key(child) == "senpai:advisor:child"
+    assert conversation_prompt_cache_key(named) == "senpai:advisor:researcher-agent"
+    assert conversation_prompt_cache_key(anthropic) is None
 
 
 def test_event_summary_preserves_bounded_reasoning_and_action():
@@ -261,6 +344,7 @@ def test_event_summary_preserves_bounded_reasoning_and_action():
             {
                 "senpai_terminal",
                 "get_prs",
+                "search_conversation_history",
                 "github_transition",
                 "dispatch_agent",
             },
@@ -270,6 +354,7 @@ def test_event_summary_preserves_bounded_reasoning_and_action():
             {
                 "senpai_terminal",
                 "get_prs",
+                "search_conversation_history",
                 "github_transition",
                 "senpai_training",
             },

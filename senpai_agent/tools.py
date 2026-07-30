@@ -652,6 +652,158 @@ class GetPRsAction(Action):
     )
 
 
+class SearchConversationHistoryAction(Action):
+    query: str = Field(
+        min_length=2,
+        description="Case-insensitive fixed text to find in the active conversation.",
+    )
+    max_results: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        description="Maximum newest-first matches to return. Keep this small.",
+    )
+    context_chars: int = Field(
+        default=500,
+        ge=100,
+        le=2000,
+        description="Maximum characters returned around each match.",
+    )
+
+
+class ConversationHistoryMatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_index: int
+    source: str
+    text: str
+
+
+class SearchConversationHistoryObservation(Observation):
+    query: str
+    matches: tuple[ConversationHistoryMatch, ...]
+    truncated: bool
+
+    @property
+    def to_llm_content(self) -> Sequence[TextContent]:
+        if not self.matches:
+            return [
+                TextContent(text=f"No conversation history matched {self.query!r}.")
+            ]
+        rendered = "\n\n".join(
+            f"### Event {match.event_index} ({match.source})\n{match.text}"
+            for match in self.matches
+        )
+        suffix = "\n\nMore matches exist; narrow the query." if self.truncated else ""
+        return [
+            TextContent(
+                text=(
+                    f"Conversation history matches for {self.query!r}, newest first:\n\n"
+                    f"{rendered}{suffix}"
+                )
+            )
+        ]
+
+
+def _searchable_event_text(event: LLMConvertibleEvent) -> str:
+    message = event.to_llm_message()
+    parts = [
+        content.text
+        for content in message.content
+        if isinstance(content, TextContent) and content.text
+    ]
+    parts.extend(f"{call.name}({call.arguments})" for call in message.tool_calls or ())
+    return "\n".join(parts)
+
+
+def _matching_excerpt(text: str, query: str, limit: int) -> str:
+    match = text.casefold().find(query.casefold())
+    start = max(0, match - limit // 2)
+    end = min(len(text), start + limit)
+    start = max(0, end - limit)
+    prefix = "…" if start else ""
+    suffix = "…" if end < len(text) else ""
+    return f"{prefix}{text[start:end]}{suffix}"
+
+
+class _SearchConversationHistoryExecutor(
+    ToolExecutor[
+        SearchConversationHistoryAction,
+        SearchConversationHistoryObservation,
+    ]
+):
+    def __call__(
+        self,
+        action: SearchConversationHistoryAction,
+        conversation: LocalConversation | None = None,
+    ) -> SearchConversationHistoryObservation:
+        if conversation is None:
+            raise RuntimeError("conversation history search requires a conversation")
+        matches: list[ConversationHistoryMatch] = []
+        events = conversation.state.active_branch()
+        truncated = False
+        for index in range(len(events) - 1, -1, -1):
+            event = events[index]
+            if not isinstance(event, LLMConvertibleEvent):
+                continue
+            text = _searchable_event_text(event)
+            if action.query.casefold() not in text.casefold():
+                continue
+            if len(matches) == action.max_results:
+                truncated = True
+                break
+            matches.append(
+                ConversationHistoryMatch(
+                    event_index=index,
+                    source=str(event.source),
+                    text=_matching_excerpt(
+                        text,
+                        action.query,
+                        action.context_chars,
+                    ),
+                )
+            )
+        return SearchConversationHistoryObservation(
+            query=action.query,
+            matches=tuple(matches),
+            truncated=truncated,
+        )
+
+
+class SearchConversationHistoryTool(
+    ToolDefinition[
+        SearchConversationHistoryAction,
+        SearchConversationHistoryObservation,
+    ]
+):
+    name = "search_conversation_history"
+
+    @classmethod
+    def create(
+        cls,
+        conv_state: object | None = None,
+    ) -> Sequence[Self]:
+        return [
+            cls(
+                description=(
+                    "Search the complete active OpenHands event history without "
+                    "replaying it into context. Returns bounded newest-first snippets "
+                    "from model-visible messages and tool calls."
+                ),
+                action_type=SearchConversationHistoryAction,
+                observation_type=SearchConversationHistoryObservation,
+                annotations=ToolAnnotations(
+                    title="Search conversation history",
+                    readOnlyHint=True,
+                    destructiveHint=False,
+                    idempotentHint=True,
+                    openWorldHint=False,
+                ),
+                executor=_SearchConversationHistoryExecutor(),
+            )
+        ]
+
+
 class PRManifestObservation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1461,6 +1613,7 @@ def create_senpai_tools(
             state_dir=pr_artifact_dir,
             workspace=workspace,
         ),
+        *SearchConversationHistoryTool.create(),
         *GitHubTransitionTool.create(
             workflow=github_workflow,
             role=role,
@@ -1512,6 +1665,7 @@ def register_senpai_tools() -> None:
         return
     register_tool("senpai_training", TrainingToolSet)
     register_tool("get_prs", GetPRsTool)
+    register_tool("search_conversation_history", SearchConversationHistoryTool)
     register_tool("github_transition", GitHubTransitionTool)
     register_tool("dispatch_agent", DispatchAgentTool)
     register_tool("senpai_terminal", SenpaiTerminalTool)

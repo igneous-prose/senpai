@@ -177,13 +177,14 @@ intact pending native OpenHands support for skill-declared child configuration.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `2fccbe83a19332b4ce1dba8bd18fc505dabac053`, based on OpenHands SDK
+at commit `da7d76fe3d0b0f5b169ff47c5617a8ecf38a004c`, based on OpenHands SDK
 1.39.1.
 
 `prompt_cache_configuration()` sets:
 
 - Anthropic: `prompt_cache_ttl="1h"`;
-- GPT-5.6: `prompt_cache_options.ttl="30m"`;
+- GPT-5.6: one explicit cache breakpoint on the stable system block,
+  `prompt_cache_options.mode="explicit"`, and a 30-minute TTL;
 - older compatible OpenAI models: `prompt_cache_retention="24h"`; and
 - other providers: no provider-specific cache option.
 
@@ -200,13 +201,23 @@ explicit on every request.
 
 Senpai sets `reasoning_context="all_turns"` and `reasoning_summary="auto"` so
 supported models can reuse server-side private reasoning and return the most
-detailed available summary. Its default `max` effort maps to GPT-5.6's native
-maximum and to `xhigh` for models and providers whose scale ends there. It
-enables automatic OpenAI compaction at 200,000 rendered tokens and disables the
-OpenHands condenser for that chain. Other providers retain the high-quality
+detailed available summary. The default effort is `xhigh`; GPT-5.6 still
+accepts an explicit `max` override. Automatic OpenAI compaction starts at
+200,000 rendered tokens. The OpenHands condenser is disabled for that provider
+chain, but its complete local event log remains durable and is used to recover
+the latest response ID after restart. Other providers retain the high-quality
 OpenHands condenser.
 
 ## Typed tools
+
+### `search_conversation_history`
+
+This read-only tool performs a case-insensitive fixed-text search over the
+complete active OpenHands event branch. It searches model-visible message text
+and tool calls, then returns at most 20 bounded snippets newest first. It does
+not expose raw storage, abandoned branches, or automatically reinsert the whole
+history into the model context. This preserves the usefulness of a durable
+transcript without undoing provider compaction or creating a large token spike.
 
 ### `get_prs`
 

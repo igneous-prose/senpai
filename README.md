@@ -116,6 +116,9 @@ Senpai wraps the terminal with a fail-closed policy and adds:
   inline review comment. Five PRs are returned inline by default. Larger
   results become one Markdown artifact outside the target checkout; raising the
   inline limit above five warns about context pollution.
+- `search_conversation_history`: searches the complete active durable event
+  branch and returns bounded newest-first snippets. It is an on-demand recovery
+  aid, not an automatic replay of old context.
 - `github_transition`: creates assignments, performs lease-guarded pushes,
   requests revisions, responds idempotently to exact human Issue messages,
   submits authenticated structured results, reconciles labels, closes, and
@@ -183,11 +186,14 @@ deployed harness or role and injects the current text once without rotating the
 conversation UUID.
 
 The project pins both OpenHands SDK packages to commit
-`2fccbe83a19332b4ce1dba8bd18fc505dabac053` in
+`da7d76fe3d0b0f5b169ff47c5617a8ecf38a004c` in
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk).
 That fork tracks OpenHands SDK 1.39.1 and adds a typed Anthropic
-`prompt_cache_ttl="1h"` option plus durable OpenAI Responses continuation.
-GPT-5.6 uses its current `prompt_cache_options.ttl="30m"` API; older compatible
+`prompt_cache_ttl="1h"` option, durable OpenAI Responses continuation, and an
+explicit GPT-5.6 cache boundary. GPT-5.6 marks the stable system block as the
+cache breakpoint, uses a stable cache key per role and agent kind, and leaves
+dynamic project context outside that boundary. It requests
+`prompt_cache_options.mode="explicit"` with a 30-minute TTL. Older compatible
 OpenAI models retain `prompt_cache_retention="24h"`. Senpai does not send
 Anthropic TTL arguments to OpenAI.
 
@@ -200,11 +206,12 @@ server-side chain. System instructions and tools are still sent on every call.
 Senpai requests `reasoning_context="all_turns"` and
 `reasoning_summary="auto"`. This allows supported OpenAI models to reuse
 private reasoning from earlier turns while returning the most detailed
-available reasoning summary. The default `max` setting maps to GPT-5.6's
-highest reasoning effort and to `xhigh` on providers and models whose highest
-supported value is `xhigh`. OpenAI's automatic Responses compaction starts at
-200,000 rendered tokens. The OpenHands condenser is disabled for this stored
-chain so the two context managers cannot produce conflicting histories.
+available reasoning summary. The default reasoning effort is `xhigh`; operators
+can still request `max` explicitly for GPT-5.6. OpenAI's automatic Responses
+compaction starts at 200,000 rendered tokens. The OpenHands condenser is
+disabled only for this stored chain: OpenAI owns the active model context while
+OpenHands retains the complete durable event log for restart recovery,
+observability, and debugging.
 
 ## Images
 

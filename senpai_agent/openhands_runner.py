@@ -61,7 +61,7 @@ from senpai_agent.tools import (
 
 DEFAULT_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
-DEFAULT_REASONING_EFFORT = "max"
+DEFAULT_REASONING_EFFORT = "xhigh"
 REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra", "none")
 SENPAI_CONTINUATION_FILE = "current_conversation_id"
 COMMAND_SECRET_ENV_NAMES = (
@@ -438,10 +438,23 @@ def prompt_cache_configuration(model: str) -> dict[str, object]:
         if model_name.startswith("gpt-5.6"):
             return {
                 "prompt_cache_retention": None,
-                "litellm_extra_body": {"prompt_cache_options": {"ttl": "30m"}},
+                "responses_prompt_cache_breakpoint": True,
+                "litellm_extra_body": {
+                    "prompt_cache_options": {
+                        "mode": "explicit",
+                        "ttl": "30m",
+                    }
+                },
             }
         return {"prompt_cache_retention": "24h"}
     return {}
+
+
+def conversation_prompt_cache_key(config: RunnerConfig) -> str | None:
+    if config.model.split("/", 1)[0].lower() != "openai":
+        return None
+    agent_kind = config.agent_name or ("child" if config.child else "main")
+    return f"senpai:{config.role}:{agent_kind}"
 
 
 def openai_responses_configuration(model: str) -> dict[str, str | bool | int]:
@@ -477,6 +490,7 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
                 name="get_prs",
                 params={"state_dir": str(config.state_dir / "github")},
             ),
+            Tool(name="search_conversation_history"),
             Tool(name="github_transition", params={"role": config.role}),
         )
     )
@@ -725,6 +739,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             secrets=dict(config.command_secrets),
             tags={"runtime": "senpai-openhands"},
             delete_on_close=config.child,
+            prompt_cache_key=conversation_prompt_cache_key(config),
         )
         try:
             # send_message performs OpenHands' lazy tool initialization.

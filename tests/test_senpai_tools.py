@@ -35,6 +35,7 @@ from senpai_agent.tools import (
     RequestRevisionTransition,
     RespondToIssueTransition,
     RunTrainingAction,
+    SearchConversationHistoryAction,
     SenpaiTerminalExecutor,
     SubmitResultTransition,
     clear_github_credentials,
@@ -185,6 +186,7 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
             "get_training_status",
             "monitor_training",
             "get_prs",
+            "search_conversation_history",
             "github_transition",
             "dispatch_agent",
         }
@@ -211,6 +213,14 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         assert ">5" in inline_description
         assert "context pollution" in inline_description.lower()
         assert "artifact" in inline_description.lower()
+        history_schema = by_name[
+            "search_conversation_history"
+        ].action_type.to_mcp_schema()
+        assert set(history_schema["properties"]) == {
+            "query",
+            "max_results",
+            "context_chars",
+        }
 
         dispatch_schema = by_name["dispatch_agent"].action_type.to_mcp_schema()
         serialized_dispatch = json.dumps(
@@ -225,6 +235,56 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         assert "reviewer" not in serialized_dispatch
         transition_schema = by_name["github_transition"].action_type.to_mcp_schema()
         assert "transition" in transition_schema["properties"]
+    finally:
+        close_tools(tools)
+
+
+def test_conversation_history_search_is_bounded_and_newest_first(tmp_path):
+    tools = create_senpai_tools(
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult(
+            manifest=(),
+            markdown="",
+            path=None,
+        ),
+        child_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=FakeGitHubWorkflow(),
+        pr_artifact_dir=tmp_path / "state" / "github",
+        workspace=tmp_path / "target",
+    )
+    history = next(tool for tool in tools if tool.name == "search_conversation_history")
+    events = [
+        MessageEvent(
+            source="user",
+            llm_message=Message(
+                role="user",
+                content=[TextContent(text="alpha observation from early work")],
+            ),
+        ),
+        MessageEvent(
+            source="agent",
+            llm_message=Message(
+                role="assistant",
+                content=[TextContent(text="later ALPHA decision with details")],
+            ),
+        ),
+    ]
+    conversation = SimpleNamespace(state=SimpleNamespace(active_branch=lambda: events))
+
+    try:
+        observation = history.executor(
+            SearchConversationHistoryAction(
+                query="alpha",
+                max_results=1,
+                context_chars=100,
+            ),
+            conversation,
+        )
+        assert [match.event_index for match in observation.matches] == [1]
+        assert observation.matches[0].source == "agent"
+        assert observation.truncated is True
+        assert "More matches exist" in observation.to_llm_content[0].text
     finally:
         close_tools(tools)
 

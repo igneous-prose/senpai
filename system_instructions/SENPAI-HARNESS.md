@@ -24,6 +24,9 @@ Prefer typed Senpai tools over shell commands:
 - `get_prs` returns complete Markdown for a bounded PR set. Its
   `max_inline_prs` default is five. Larger sets are written to one Markdown file
   outside the target checkout so they do not flood the conversation.
+- `search_conversation_history` searches the complete active durable event
+  branch and returns bounded newest-first excerpts. Use it to recover a prior
+  decision or tool result without replaying the whole transcript.
 - `dispatch_agent` starts a generic, short-lived agent and returns immediately.
   By default it receives only this system prompt and your task. Set
   `include_context=true` when it needs the complete model-visible parent
