@@ -2,7 +2,7 @@ import pickle
 from dataclasses import FrozenInstanceError
 from typing import ClassVar, cast
 from urllib.error import URLError
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 from pydantic import SecretStr
@@ -16,9 +16,11 @@ from senpai_agent.github_workflow import (
     PullRequestSnapshot,
     ReconciliationError,
     StaleAssignmentRevisionError,
+    StaleBaselineError,
     WorkflowPreconditionError,
 )
 from senpai_agent.models import (
+    AssignmentFeedbackRecord,
     AssignmentKey,
     AssignmentRecord,
     ExperimentResult,
@@ -26,6 +28,7 @@ from senpai_agent.models import (
     ResultStatus,
     RevisionRecord,
     WandbRunRef,
+    render_assignment_feedback_marker,
     render_assignment_marker,
     render_result_comment,
     render_revision_marker,
@@ -171,12 +174,18 @@ class FakeGitHub:
         issue: dict[str, object] | None = None,
         comment_page_size: int = 100,
         ignore_label_put: bool = False,
+        branch_heads: dict[str, str] | None = None,
     ):
         self.pr = pr
         self.comments = list(comments or [])
         self.issue = issue
         self.comment_page_size = comment_page_size
         self.ignore_label_put = ignore_label_put
+        self.branch_heads = (
+            branch_heads
+            if branch_heads is not None
+            else {str(pr["base_ref"]): "b" * 40}
+        )
         self.next_heads: list[str] = []
         self.requests: list[tuple[str, str, object | None, dict[str, str]]] = []
 
@@ -212,6 +221,18 @@ class FakeGitHub:
                 self.pr["head_sha"] = self.next_heads.pop(0)
             return HttpResponse(200, self._pull_payload())
 
+        ref_prefix = f"/repos/{REPO}/git/ref/heads/"
+        if method == "GET" and path.startswith(ref_prefix):
+            branch = unquote(path.removeprefix(ref_prefix))
+            sha = self.branch_heads[branch]
+            return HttpResponse(
+                200,
+                {
+                    "ref": f"refs/heads/{branch}",
+                    "object": {"sha": sha},
+                },
+            )
+
         if method == "GET" and path == issue_path and self.issue is not None:
             return HttpResponse(200, self.issue)
 
@@ -234,6 +255,12 @@ class FakeGitHub:
                         {
                             "number": self.pr["number"],
                             "pull_request": {"url": self.pr["html_url"]},
+                            "labels": [
+                                {"name": label}
+                                for label in sorted(
+                                    cast(set[str], self.pr["labels"])
+                                )
+                            ],
                         }
                     ]
                     if labels.issubset(cast(set[str], self.pr["labels"]))
@@ -619,6 +646,35 @@ def test_create_assignment_rejects_a_same_student_wip_on_another_base():
     assert fake.mutations == []
 
 
+def test_create_assignment_rejects_a_same_student_review_on_another_base():
+    assignment = AssignmentRecord(
+        repo=REPO,
+        assignment_id="assignment-8",
+        revision_id="revision-1",
+        student="student-one",
+        base_ref="schmidhuber",
+        base_sha="b" * 40,
+        head_ref="student-one/new-candidate",
+        head_sha="c" * 40,
+    )
+    fake = FakeGitHub(
+        pull_request(
+            labels={"other-base", "student:student-one", "status:review"},
+            base_ref="other-base",
+            head_ref="student-one/other-candidate",
+        )
+    )
+
+    with pytest.raises(WorkflowPreconditionError, match="already has active"):
+        workflow(fake).create_assignment(
+            assignment,
+            title="Try another candidate",
+            body="Run one bounded comparison.",
+        )
+
+    assert fake.mutations == []
+
+
 def test_client_rejects_ambiguous_configuration_before_any_request():
     with pytest.raises(ValueError, match="owner/name"):
         GitHubWorkflow("widgets", SecretStr("token"))
@@ -872,6 +928,137 @@ def test_request_revision_rejects_the_wrong_assignment_before_mutation():
 
     assert fake.mutations == []
     assert fake.comments == []
+
+
+def test_send_assignment_feedback_upserts_without_changing_assignment_state():
+    marker = render_assignment_feedback_marker(
+        AssignmentFeedbackRecord(
+            repo=REPO,
+            pr_number=7,
+            assignment_id=ASSIGNMENT_ID,
+            revision_id="revision-1",
+            feedback_id="check-cruise-split",
+        )
+    )
+    fake = FakeGitHub(
+        pull_request(
+            labels={"student:student-one", "status:review", "status:hold"},
+            draft=False,
+        )
+    )
+    original_body = fake.pr["body"]
+    client = workflow(fake)
+
+    first = client.send_assignment_feedback(
+        7,
+        assignment_id=ASSIGNMENT_ID,
+        revision_id="revision-1",
+        expected_head_sha=HEAD_SHA,
+        feedback_id="check-cruise-split",
+        comment="Check the cruise split before choosing a default.",
+    )
+    mutations_after_first = list(fake.mutations)
+    second = client.send_assignment_feedback(
+        7,
+        assignment_id=ASSIGNMENT_ID,
+        revision_id="revision-1",
+        expected_head_sha=HEAD_SHA,
+        feedback_id="check-cruise-split",
+        comment="Check the cruise split before choosing a default.",
+    )
+    with pytest.raises(WorkflowPreconditionError, match="new feedback_id"):
+        client.send_assignment_feedback(
+            7,
+            assignment_id=ASSIGNMENT_ID,
+            revision_id="revision-1",
+            expected_head_sha=HEAD_SHA,
+            feedback_id="check-cruise-split",
+            comment="Check every split before choosing a default.",
+        )
+
+    assert first.changed is True
+    assert second.changed is False
+    assert first.state == "assignment_feedback_upserted"
+    assert first.version == HEAD_SHA
+    assert fake.comments == [
+        comment(1, f"{marker}\n\nCheck the cruise split before choosing a default.")
+    ]
+    assert fake.pr["body"] == original_body
+    assert fake.pr["draft"] is False
+    assert fake.pr["labels"] == {
+        "student:student-one",
+        "status:review",
+        "status:hold",
+    }
+    assert mutations_after_first == [
+        (
+            "POST",
+            f"/repos/{REPO}/issues/7/comments",
+            {
+                "body": (
+                    f"{marker}\n\n"
+                    "Check the cruise split before choosing a default."
+                )
+            },
+        )
+    ]
+    assert fake.mutations == mutations_after_first
+
+
+@pytest.mark.parametrize(
+    ("assignment_id", "revision_id", "expected_head_sha", "match"),
+    [
+        ("other-assignment", "revision-1", HEAD_SHA, "assignment identity"),
+        (ASSIGNMENT_ID, "revision-2", HEAD_SHA, "assignment revision"),
+        (ASSIGNMENT_ID, "revision-1", "b" * 40, "head SHA"),
+    ],
+)
+def test_send_assignment_feedback_rejects_stale_identity_before_mutation(
+    assignment_id,
+    revision_id,
+    expected_head_sha,
+    match,
+):
+    fake = FakeGitHub(
+        pull_request(labels={"student:student-one", "status:wip"}, draft=True)
+    )
+
+    with pytest.raises(WorkflowPreconditionError, match=match):
+        workflow(fake).send_assignment_feedback(
+            7,
+            assignment_id=assignment_id,
+            revision_id=revision_id,
+            expected_head_sha=expected_head_sha,
+            feedback_id="bounded-nudge",
+            comment="Inspect the failed seed, then continue.",
+        )
+
+    assert fake.mutations == []
+    assert fake.comments == []
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {"student:someone-else", "status:wip"},
+        {"student:student-one"},
+        {"student:student-one", "status:wip", "status:review"},
+    ],
+)
+def test_send_assignment_feedback_requires_unambiguous_active_routing(labels):
+    fake = FakeGitHub(pull_request(labels=labels))
+
+    with pytest.raises(WorkflowPreconditionError):
+        workflow(fake).send_assignment_feedback(
+            7,
+            assignment_id=ASSIGNMENT_ID,
+            revision_id="revision-1",
+            expected_head_sha=HEAD_SHA,
+            feedback_id="bounded-nudge",
+            comment="Inspect the failed seed, then continue.",
+        )
+
+    assert fake.mutations == []
 
 
 def test_submit_result_reconciles_ready_state_as_durable_github_mail():
@@ -1222,6 +1409,10 @@ def test_merge_experiment_sends_expected_head_and_replay_verifies_existing_merge
         assignment_id=ASSIGNMENT_ID,
     )
     mutations_after_first = list(fake.mutations)
+    ref_reads_after_first = sum(
+        method == "GET" and "/git/ref/heads/" in path
+        for method, path, _body, _headers in fake.requests
+    )
     second = client.merge_experiment(
         7,
         expected_head_sha=HEAD_SHA,
@@ -1241,6 +1432,65 @@ def test_merge_experiment_sends_expected_head_and_replay_verifies_existing_merge
         )
     ]
     assert fake.mutations == mutations_after_first
+    assert ref_reads_after_first == 1
+    assert sum(
+        method == "GET" and "/git/ref/heads/" in path
+        for method, path, _body, _headers in fake.requests
+    ) == ref_reads_after_first
+
+
+@pytest.mark.parametrize(
+    ("accepted_base_sha", "message"),
+    [(None, "advanced"), ("d" * 40, "does not match")],
+)
+def test_merge_rejects_an_advanced_baseline_without_its_exact_acceptance(
+    accepted_base_sha: str | None,
+    message: str,
+):
+    current_base_sha = "c" * 40
+    fake = FakeGitHub(
+        pull_request(labels={"status:review"}, draft=False, mergeable=True),
+        comments=[comment(1, render_result_comment(experiment_result()))],
+        branch_heads={"schmidhuber": current_base_sha},
+    )
+
+    with pytest.raises(StaleBaselineError) as raised:
+        workflow(fake).merge_experiment(
+            7,
+            expected_head_sha=HEAD_SHA,
+            assignment_id=ASSIGNMENT_ID,
+            accepted_base_sha=accepted_base_sha,
+        )
+
+    assert message in str(raised.value)
+    assert current_base_sha in str(raised.value)
+    assert fake.mutations == []
+
+
+def test_merge_accepts_an_advanced_baseline_only_at_the_exact_live_sha():
+    current_base_sha = "c" * 40
+    fake = FakeGitHub(
+        pull_request(labels={"status:review"}, draft=False, mergeable=True),
+        comments=[comment(1, render_result_comment(experiment_result()))],
+        branch_heads={"schmidhuber": current_base_sha},
+    )
+
+    result = workflow(fake).merge_experiment(
+        7,
+        expected_head_sha=HEAD_SHA,
+        assignment_id=ASSIGNMENT_ID,
+        accepted_base_sha=current_base_sha,
+    )
+
+    assert result.changed is True
+    assert result.state == "experiment_merged"
+    assert fake.mutations == [
+        (
+            "PUT",
+            f"/repos/{REPO}/pulls/7/merge",
+            {"sha": HEAD_SHA, "merge_method": "squash"},
+        )
+    ]
 
 
 @pytest.mark.parametrize(

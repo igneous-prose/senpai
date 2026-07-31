@@ -62,6 +62,15 @@ class RevisionRecord(Contract):
     requested_head_sha: _NonEmptyString
 
 
+class AssignmentFeedbackRecord(Contract):
+    schema_version: Literal[1] = 1
+    repo: _NonEmptyString
+    pr_number: int = Field(gt=0)
+    assignment_id: _NonEmptyString
+    revision_id: _NonEmptyString
+    feedback_id: _NonEmptyString
+
+
 class DispositionRecord(Contract):
     schema_version: Literal[1] = 1
     repo: _NonEmptyString
@@ -131,6 +140,11 @@ _ASSIGNMENT_MARKER = re.compile(
     r"<!-- senpai-assignment:v(?P<version>[0-9]+) "
     r"(?P<payload>\{.*\}) -->"
 )
+_ASSIGNMENT_FEEDBACK_PREFIX = "<!-- senpai-assignment-feedback:"
+_ASSIGNMENT_FEEDBACK_MARKER = re.compile(
+    r"<!-- senpai-assignment-feedback:v(?P<version>[0-9]+) "
+    r"(?P<payload>\{.*\}) -->"
+)
 
 
 def _marker_payload(value: Contract) -> str:
@@ -148,6 +162,34 @@ def render_assignment_marker(assignment: AssignmentRecord) -> str:
 
 def render_revision_marker(revision: RevisionRecord) -> str:
     return f"<!-- senpai-revision:v1 {_marker_payload(revision)} -->"
+
+
+def render_assignment_feedback_marker(feedback: AssignmentFeedbackRecord) -> str:
+    return f"<!-- senpai-assignment-feedback:v1 {_marker_payload(feedback)} -->"
+
+
+def parse_assignment_feedback_markers(
+    body: str,
+) -> tuple[AssignmentFeedbackRecord, ...]:
+    feedback: list[AssignmentFeedbackRecord] = []
+    for line_number, line in enumerate(body.splitlines(), start=1):
+        if not line.startswith(_ASSIGNMENT_FEEDBACK_PREFIX):
+            continue
+        marker = _ASSIGNMENT_FEEDBACK_MARKER.fullmatch(line)
+        if marker is None or marker.group("version") != "1":
+            raise ValueError(
+                "malformed or unsupported Senpai assignment feedback marker "
+                f"on line {line_number}"
+            )
+        try:
+            feedback.append(
+                AssignmentFeedbackRecord.model_validate_json(marker.group("payload"))
+            )
+        except (ValidationError, ValueError) as error:
+            raise ValueError(
+                f"invalid Senpai assignment feedback marker on line {line_number}"
+            ) from error
+    return tuple(feedback)
 
 
 def render_disposition_marker(disposition: DispositionRecord) -> str:

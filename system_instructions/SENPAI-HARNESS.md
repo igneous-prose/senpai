@@ -59,14 +59,15 @@ only when its named tool is present in your schema:
   `max_inline_prs` default is five. Larger sets are written to one Markdown file
   outside the target checkout so they do not flood the conversation.
 - When present, `run_training` supervises a training process, timeout, log,
-  terminal state, and discovered W&B run IDs. `get_training_status` returns its
-  typed status. `monitor_training` records metric gates, staleness policy,
-  terminal states, and the current student conversation UUID so the controller
-  can monitor without model polling.
+  terminal state, and discovered W&B run IDs, and automatically registers a
+  terminal-state monitor for the current student conversation.
+  `get_training_status` returns its typed status. `monitor_training` upgrades
+  that default with metric gates and staleness policy so the controller can
+  monitor without model polling.
 - When present, `github_transition` owns assignment creation, lease-guarded
-  branch pushes, comments, desired labels, revision requests, authenticated
-  result submission, closing, and merging. Do not reproduce these transactions
-  with `gh`, raw REST calls, or `git push`.
+  branch pushes, non-revision assignment feedback, desired labels, revision
+  requests, authenticated result submission, closing, and merging. Do not
+  reproduce these transactions with `gh`, raw REST calls, or `git push`.
 
 The tools actually present in your schema are the source of truth. If a
 required typed operation is unavailable, report the missing capability and

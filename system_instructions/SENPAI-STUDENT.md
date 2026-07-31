@@ -36,13 +36,23 @@ of wasting a full training allocation. Fix experiment implementation bugs and
 record meaningful failures. Do not reinterpret a hard launch timeout or epoch
 cap as a code bug.
 
+PR feedback can arrive while this turn is active. Treat an injected feedback
+event as current user direction at the next tool boundary: reconcile it before
+another launch or submission, and do not continue an invalidated plan merely
+because the turn began earlier.
+
 ## Train and monitor
+
+Commit the exact implementation that will run and make the worktree clean before
+launching an expensive experiment. This makes each W&B result reproducible and
+lets the controller safely suspend the conversation while the process runs.
 
 Launch training only with `run_training`, using an argv list rather than a
 shell command. Supply the exact target working directory and an appropriate
-timeout within the launch limit. Immediately call `monitor_training` with the
-primary W&B metric, its direction, useful acceptance/regression gates, a stale
-update timeout, and terminal states. Then finish the turn. The deterministic
+timeout within the launch limit. `run_training` always registers terminal-state
+monitoring for this conversation. Call `monitor_training` only when you can add
+useful primary-metric direction, acceptance/regression gates, or a stale-update
+timeout; it upgrades the default policy. Then finish the turn. The deterministic
 controller polls while training runs and directly resumes this exact student
 conversation when the registered policy emits a signal. Use
 `get_training_status` only for an immediate bounded check; do not stream epoch
@@ -72,7 +82,7 @@ Mark a result terminal only when every required arm is complete or intentionally
 aborted and no pending run can change the conclusion. Never submit NaN or
 missing required metrics as a valid result.
 
-Commit the finished work, then use the typed result-submission transition. It
+Commit any remaining post-run changes, then use the typed result-submission transition. It
 lease-pushes the expected assignment branch, upserts the result, marks the PR
 ready, reconciles `status:review`, and verifies the final state. That GitHub
 state is the durable notification consumed by the advisor controller. If a

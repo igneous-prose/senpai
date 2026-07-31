@@ -27,12 +27,13 @@ from openhands.tools.terminal import (
     TerminalObservation,
     TerminalTool,
 )
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from senpai_agent.delegation import DelegateAgentTool
 from senpai_agent.git_workflow import (
     create_assignment_branch,
     push_assignment_branch,
+    require_clean_training_worktree,
 )
 from senpai_agent.github import PRRetrievalResult, get_prs
 from senpai_agent.github_workflow import (
@@ -177,17 +178,15 @@ class MonitorTrainingAction(Action):
         gt=0,
         description="Notify when the selected metric has not updated this long.",
     )
-    notify_on_status: frozenset[TrainingState] = Field(
-        default_factory=lambda: frozenset(
-            {
-                TrainingState.FINISHED,
-                TrainingState.FAILED,
-                TrainingState.TIMED_OUT,
-                TrainingState.CANCELLED,
-            }
-        ),
-        description="Training state changes that should resume this conversation.",
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_status_filter(cls, value: object) -> object:
+        """Resume conversations written before terminal wakes became mandatory."""
+
+        if isinstance(value, dict) and "notify_on_status" in value:
+            return {key: item for key, item in value.items() if key != "notify_on_status"}
+        return value
 
 
 class MonitorTrainingObservation(Observation):
@@ -242,17 +241,26 @@ class TrainingResultObservation(Observation):
 
 
 class _RunTrainingExecutor(ToolExecutor[RunTrainingAction, TrainingResultObservation]):
-    def __init__(self, training: TrainingSupervisor):
+    def __init__(self, training: TrainingSupervisor, monitor_store: MonitorStore):
         self.training = training
+        self.monitor_store = monitor_store
 
     def __call__(
         self,
         action: RunTrainingAction,
         conversation: LocalConversation | None = None,
     ) -> TrainingResultObservation:
-        return TrainingResultObservation.from_result(
-            self.training.run_training(action.spec)
+        if conversation is None:
+            raise ValueError("run_training requires its student conversation")
+        require_clean_training_worktree(self.training.workspace)
+        result = self.training.run_training(action.spec)
+        self.monitor_store.register(
+            TrainingMonitorSpec(
+                training_id=result.training_id,
+                conversation_id=conversation.id,
+            )
         )
+        return TrainingResultObservation.from_result(result)
 
     def close(self) -> None:
         return
@@ -282,13 +290,15 @@ class RunTrainingTool(ToolDefinition[RunTrainingAction, TrainingResultObservatio
     def create(
         cls,
         training: TrainingSupervisor,
+        monitor_store: MonitorStore,
     ) -> Sequence[Self]:
         return [
             cls(
                 description=(
                     "Start one supervised training process without blocking and "
-                    "return its training ID. Use get_training_status for progress "
-                    "and the compact terminal result."
+                    "automatically monitor its terminal state for this conversation. "
+                    "Use monitor_training only to add metric gates or staleness "
+                    "policy; use get_training_status for a bounded immediate check."
                 ),
                 action_type=RunTrainingAction,
                 observation_type=TrainingResultObservation,
@@ -299,7 +309,7 @@ class RunTrainingTool(ToolDefinition[RunTrainingAction, TrainingResultObservatio
                     idempotentHint=False,
                     openWorldHint=False,
                 ),
-                executor=_RunTrainingExecutor(training),
+                executor=_RunTrainingExecutor(training, monitor_store),
             )
         ]
 
@@ -354,7 +364,6 @@ class _MonitorTrainingExecutor(
             gates=action.gates,
             poll_interval_seconds=action.poll_interval_seconds,
             stale_after_seconds=action.stale_after_seconds,
-            notify_on_status=action.notify_on_status,
         )
         self.store.register(spec)
         return MonitorTrainingObservation(
@@ -378,10 +387,11 @@ class MonitorTrainingTool(
         return [
             cls(
                 description=(
-                    "Durably monitor one training process without model polling. "
-                    "Specify an optional W&B metric, direction, threshold/change "
-                    "gates, stale timeout, and terminal states. Senpai resumes this "
-                    "same student conversation only when the policy emits a signal."
+                    "Upgrade one training process's automatic terminal monitor "
+                    "without model polling. Specify an optional W&B metric, "
+                    "direction, threshold/change gates, and stale timeout. Senpai "
+                    "resumes this same student conversation when the policy emits "
+                    "a signal."
                 ),
                 action_type=MonitorTrainingAction,
                 observation_type=MonitorTrainingObservation,
@@ -414,7 +424,10 @@ class TrainingToolSet(ToolDefinition[RunTrainingAction, TrainingResultObservatio
             max_timeout_seconds=max_timeout_seconds,
         )
         return (
-            *RunTrainingTool.create(training=training),
+            *RunTrainingTool.create(
+                training=training,
+                monitor_store=monitor_store,
+            ),
             *GetTrainingStatusTool.create(training=training),
             *MonitorTrainingTool.create(
                 training=training,
@@ -616,6 +629,30 @@ class RequestRevisionTransition(_Transition):
     comment: str = Field(min_length=1)
 
 
+class SendAssignmentFeedbackTransition(_Transition):
+    operation: Literal["send_assignment_feedback"]
+    pr_number: int = Field(gt=0)
+    assignment_id: str = Field(min_length=1)
+    revision_id: str = Field(
+        min_length=1,
+        description="Current assignment revision; this operation does not change it.",
+    )
+    expected_head_sha: str = Field(min_length=1)
+    feedback_id: str = Field(
+        min_length=1,
+        max_length=256,
+        description=(
+            "Stable ID for this distinct guidance item within the assignment "
+            "revision. Exact replay is a no-op; use a new ID for changed guidance."
+        ),
+    )
+    comment: str = Field(
+        min_length=1,
+        max_length=50_000,
+        description="Actionable guidance that does not require a new revision.",
+    )
+
+
 class RespondToIssueTransition(_Transition):
     operation: Literal["respond_to_issue"]
     issue_number: int = Field(gt=0)
@@ -674,6 +711,16 @@ class MergeExperimentTransition(_Transition):
     expected_head_sha: str = Field(min_length=1)
     assignment_id: str = Field(min_length=1)
     merge_method: Literal["merge", "squash", "rebase"] = "squash"
+    accepted_base_sha: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Exact current SHA of the assignment's base branch. Omit when it "
+            "still equals the assignment marker's base SHA. Set only after "
+            "reviewing a baseline_advanced event and deliberately accepting "
+            "the result against that newer baseline."
+        ),
+    )
 
 
 class PushBranchTransition(_Transition):
@@ -702,6 +749,7 @@ GitHubTransition = Annotated[
     CreateAssignmentTransition
     | ReconcileLabelsTransition
     | RequestRevisionTransition
+    | SendAssignmentFeedbackTransition
     | RespondToIssueTransition
     | SubmitResultTransition
     | CloseExperimentTransition
@@ -853,6 +901,16 @@ class _GitHubTransitionExecutor(
                 revision_id=transition.revision_id,
                 comment=transition.comment,
             )
+        elif isinstance(transition, SendAssignmentFeedbackTransition):
+            self._require_role("advisor")
+            result = self.workflow.send_assignment_feedback(
+                transition.pr_number,
+                assignment_id=transition.assignment_id,
+                revision_id=transition.revision_id,
+                expected_head_sha=transition.expected_head_sha,
+                feedback_id=transition.feedback_id,
+                comment=transition.comment,
+            )
         elif isinstance(transition, RespondToIssueTransition):
             result = self.workflow.respond_to_issue(
                 transition.issue_number,
@@ -882,6 +940,7 @@ class _GitHubTransitionExecutor(
                 expected_head_sha=transition.expected_head_sha,
                 assignment_id=transition.assignment_id,
                 merge_method=transition.merge_method,
+                accepted_base_sha=transition.accepted_base_sha,
             )
         else:
             raise TypeError(
@@ -961,9 +1020,9 @@ class GitHubTransitionTool(
                 description=(
                     "Apply one verified GitHub workflow transition. Operations are "
                     "create_assignment, push_branch, reconcile_labels, "
-                    "request_revision, respond_to_issue, submit_result, "
-                    "close_experiment, and merge_experiment. Every mutation "
-                    "verifies its durable identity and converges on replay."
+                    "request_revision, send_assignment_feedback, respond_to_issue, "
+                    "submit_result, close_experiment, and merge_experiment. Every "
+                    "mutation verifies its durable identity and converges on replay."
                 ),
                 action_type=GitHubTransitionAction,
                 observation_type=GitHubTransitionObservation,

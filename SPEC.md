@@ -73,6 +73,9 @@ GitHub state is level-triggered:
 - trusted human comments and reviews on one assigned open `status:wip` or
   `status:review` PR wake its exact student assignment conversation;
 - `status:review` is a durable advisor wake;
+- when the live advisor branch moves beyond an active assignment's recorded
+  base SHA, `baseline_advanced` gives the advisor both exact SHAs and a compare
+  URL without cancelling the student;
 - `status:blocked`, `status:needs-rebase`, missing or duplicate student labels,
   stale WIP, and duplicate assignments are advisor-action events; and
 - an open Issue labeled `human` plus `team`, the advisor branch, or one student
@@ -88,16 +91,20 @@ Assigned-PR issue comments, submitted reviews, and inline comments each use
 their immutable GitHub ID as a level-triggered event key. Senpai accepts GitHub
 users associated as repository owners, members, or collaborators. A comment by
 the authenticated actor containing a Senpai protocol marker is automation, not
-human feedback. Every accepted event carries its first-seen assignment and
-revision identity, so monitor and feedback events resume one student UUID.
+human feedback, except for the explicit `senpai-assignment-feedback` transition.
+Every accepted event carries its first-seen assignment and revision identity,
+so monitor and feedback events resume one student UUID.
 Successful turns atomically acknowledge immutable feedback keys in a small JSON
 ledger. Oldest unacknowledged events are delivered in bounded count/byte
 batches; immediate post-turn polls drain later batches without dropping them.
 
-While an advisor OpenHands turn is running, `ActiveGitHubWatcher` polls the same
-GitHub state and enqueues newly visible events in the local advisor event
-store. OpenHands 1.39 supports concurrent `send_message`; `AdvisorEventPump`
-injects at its state lock boundary without cancelling unrelated work.
+While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
+state. It enqueues all newly visible advisor events, and only PR feedback bound
+to the currently running student UUID, in the role's local event store.
+OpenHands 1.39 supports concurrent `send_message`; `AdvisorEventPump` injects at
+its state lock boundary without cancelling unrelated work. Successfully
+injected student feedback is acknowledged in `github-feedback.json` only when
+the enclosing student turn succeeds.
 
 Generic child results use a local SQLite WAL event store because parent and
 child run on the same advisor or student instance. That is not an inter-node
@@ -105,9 +112,9 @@ protocol.
 
 The only SQLite databases are `advisor-events.sqlite3`, for unacknowledged
 advisor watcher/child events; `student-events.sqlite3`, for unacknowledged
-student child events; and `training/monitors.sqlite3`, for student monitor
-policy, samples, and deduplicated actionable signals. OpenHands conversation
-history is a separate file-backed per-UUID event log.
+student feedback/child events; and `training/monitors.sqlite3`, for student
+monitor policy, samples, and deduplicated actionable signals. OpenHands
+conversation history is a separate file-backed per-UUID event log.
 
 ## State and conversations
 
@@ -281,6 +288,7 @@ One discriminated tool owns:
 - `push_branch`;
 - `reconcile_labels`;
 - `request_revision`;
+- `send_assignment_feedback`;
 - `respond_to_issue`;
 - `submit_result`;
 - `close_experiment`; and
@@ -289,18 +297,32 @@ One discriminated tool owns:
 Student publication happens only inside `submit_result`, which validates
 repository, PR, assignment, revision, student, current remote head, and
 proposed result head before it can push. Assignment identity is required for
-revision, label, close, and merge transitions. Marker comments are trusted only
-when authored by the authenticated token actor.
+feedback, revision, label, close, and merge transitions. Marker comments are
+trusted only when authored by the authenticated token actor.
 
 Assignment creation checks the remote base SHA, creates an isolated empty
 assignment commit with `git commit-tree`, publishes with force-with-lease,
 refuses a second active assignment for the student, creates or reconciles one
 draft PR, embeds a typed assignment marker, and verifies routing state.
 
+Advisor feedback carries exact assignment, revision, and head preconditions. It
+creates one immutable feedback ID without changing the assignment marker,
+draft state, or routing labels, so a nudge reaches the current conversation
+without creating a new revision UUID. Exact replay converges; changed guidance
+uses a new ID and therefore a new durable GitHub comment event.
+
 Student submission requires a clean assignment branch, lease-pushes the local
 commit, upserts the typed result, marks the PR ready, reconciles
 `status:review`, and verifies all postconditions. The label itself is the
 cross-node notification.
+
+Immediately before a first merge mutation, `merge_experiment` reads the live
+Git ref for the assignment's base branch. If it no longer equals the base SHA
+recorded in the assignment marker, the transition refuses the merge unless the
+advisor deliberately supplies `accepted_base_sha` equal to that exact live
+SHA. This keeps the rerun decision scientific while making stale-baseline
+acceptance explicit and race-checked. Replay of an already verified merge
+returns before this ref lookup.
 
 Definitive HTTP failures fail clearly. An ambiguous transport failure after a
 mutation is resolved by reading and verifying desired state before any retry.
@@ -382,7 +404,6 @@ monitor_training(
   gates=(),
   poll_interval_seconds=60,
   stale_after_seconds=600,
-  notify_on_status={finished,failed,timed_out,cancelled},
 ) -> MonitorTrainingObservation
 ```
 
@@ -391,6 +412,12 @@ TERM/KILL cleanup, restart identity checks using PID/PGID/create-time, a bounded
 8 KiB error tail, streamed 64 KiB log parsing, persisted state, and discovered
 W&B run IDs. Run IDs are persisted while training is still running so metric
 monitoring can begin immediately.
+
+The student commits the exact implementation and cleans the worktree before an
+expensive launch. Every successful `run_training` launch immediately registers
+a terminal-state monitor bound to the current conversation. `monitor_training`
+is an optional policy upgrade for useful metric gates or staleness detection;
+repeating it replaces the default or previous policy.
 
 The timeout is a total wall-clock ceiling, not merely the point at which
 shutdown begins. TERM is sent early enough that the configured grace period
@@ -404,9 +431,8 @@ polls use no LLM tokens.
 Metric samples reject NaN and infinities. A failure in one monitor's training
 status or W&B lookup advances that monitor's schedule and emits one
 deduplicated `monitor_error` hard signal; it cannot block other monitors,
-GitHub events, child results, or an already-pending hard-failure wake. Repeating
-`monitor_training` with a changed policy replaces the stored policy and resets
-its derived samples and signals to match the new marker.
+GitHub events, child results, or an already-pending hard-failure wake. A changed
+monitor policy resets its derived samples and signals to match the new marker.
 
 Every persisted actionable signal directly creates a compact
 `training_monitor` wake for the signal's original student conversation UUID.
@@ -419,8 +445,8 @@ turn. Each partition is acknowledged only after its own successful turn, so a
 child result for one assignment cannot consume or permanently block a training
 event for another.
 
-The Stop hook permits a running job only after its durable monitor marker
-exists, allowing the student turn to end while the controller supervises it.
+The Stop hook verifies the automatic monitor marker and a clean worktree,
+allowing the student turn to end while the controller supervises the process.
 The advisor and advisor children never receive training tools.
 
 ## Hooks, deadlines, and shutdown

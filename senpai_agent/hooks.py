@@ -495,8 +495,9 @@ def _stop_policy(
         if unmonitored:
             return PolicyDecision(
                 False,
-                "Training is still running without a durable monitor; call "
-                "monitor_training before finishing: "
+                "Training is still running without the terminal monitor that "
+                "run_training normally registers; call monitor_training to "
+                "repair it before finishing: "
                 f"{', '.join(sorted(unmonitored))}",
             )
     status = subprocess.run(
@@ -509,7 +510,8 @@ def _stop_policy(
     if status.strip():
         return PolicyDecision(
             False,
-            "Commit or discard the assignment changes before finishing.",
+            "Commit the exact implementation before training or discard incidental "
+            "assignment changes before finishing.",
         )
     return PolicyDecision(True)
 

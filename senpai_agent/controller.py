@@ -11,12 +11,14 @@ from base64 import b64decode
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from string import Template
 from typing import Literal, Protocol
 from uuid import UUID
 
 from senpai_agent.advisor import (
+    AdvisorEvent,
     AdvisorEventStore,
     compose_system_instructions,
 )
@@ -78,21 +80,39 @@ class OpenHandsTurnRunner:
         conversation_id: UUID,
         event_keys: frozenset[str],
     ) -> TurnResult:
-        from senpai_agent.openhands_runner import run_openhands
+        from senpai_agent.openhands_runner import local_event_db_path, run_openhands
 
         config = replace(
             self.config,
             conversation_id=conversation_id,
         )
-        if config.role != "advisor" or self.github_mailbox is None:
+        if self.github_mailbox is None:
             return TurnResult(exit_code=run_openhands(prompt, config))
 
-        store_path = config.state_dir / "advisor-events.sqlite3"
+        store_path = local_event_db_path(config)
+        map_event = None
+        if config.role == "student":
+            registry = AssignmentConversationRegistry(
+                config.state_dir / "student-conversations.json"
+            )
+            map_event = partial(
+                _student_feedback_event,
+                conversation_id=conversation_id,
+                registry=registry,
+            )
+
+        # A late watcher event may still be pending locally when the next
+        # controller prompt carries that same GitHub event. The prompt is the
+        # delivery path for this turn, so keep the event pump from repeating it.
+        with AdvisorEventStore(store_path) as store:
+            for event_key in event_keys:
+                store.acknowledge(event_key)
         with ActiveGitHubWatcher(
             self.github_mailbox,
             store_path,
             known_keys=event_keys,
             poll_interval_seconds=self.active_poll_interval_seconds,
+            map_event=map_event,
         ) as watcher:
             exit_code = run_openhands(prompt, config)
         with AdvisorEventStore(store_path) as store:
@@ -101,6 +121,30 @@ class OpenHandsTurnRunner:
             exit_code=exit_code,
             delivered_event_keys=frozenset(delivered),
         )
+
+
+def _student_feedback_event(
+    event: ControllerEvent,
+    *,
+    conversation_id: UUID,
+    registry: AssignmentConversationRegistry,
+) -> AdvisorEvent | None:
+    if event.kind != "student_pr_feedback":
+        return None
+    target = registry.for_assignment(
+        str(event.payload["assignment_id"]),
+        str(event.payload["revision_id"]),
+    )
+    if target != conversation_id:
+        return None
+    return AdvisorEvent(
+        kind=event.kind,
+        dedupe_key=event.dedupe_key,
+        payload={
+            **event.payload,
+            "parent_conversation_id": str(conversation_id),
+        },
+    )
 
 
 class Controller:
@@ -212,8 +256,12 @@ class Controller:
                         continue
                     if result.exit_code == 0:
                         self._mark_success(conversation_id)
+                        acknowledged = (
+                            *(event.dedupe_key for event in batch_events),
+                            *sorted(result.delivered_event_keys),
+                        )
                         self.mailbox.acknowledge(
-                            tuple(event.dedupe_key for event in batch_events)
+                            tuple(dict.fromkeys(acknowledged))
                         )
                         self._visible.update(result.delivered_event_keys)
                         continue
@@ -479,7 +527,7 @@ def controller_main(
 
     turns = OpenHandsTurnRunner(
         runner_config,
-        github_mailbox=github_mailbox if role == "advisor" else None,
+        github_mailbox=github_mailbox,
         active_poll_interval_seconds=float(
             env.get("SENPAI_ACTIVE_GITHUB_POLL_INTERVAL_S", "30")
         ),

@@ -23,6 +23,13 @@ The transition refuses drafts, missing or foreign results, stale heads,
 blocking labels, unknown mergeability, and conflicts. It verifies the merged
 state and is safe to replay. Do not call `gh pr merge`.
 
+It also compares the assignment marker's base SHA with the live base-branch
+Git ref immediately before merging. When that baseline has advanced, reassess
+the result against the new winner. Request a rerun if the conclusion is no
+longer supported. If the existing evidence is still decisive, retry with
+`accepted_base_sha` set to the exact live SHA reported by the
+`baseline_advanced` event. Never invent that value merely to bypass the guard.
+
 After a successful merge, update the target-prescribed baseline/research log
 with the PR, metrics, run IDs and links, reproduction command, and conclusion.
 Commit that advisor-owned update. Publish it only through the typed branch-push

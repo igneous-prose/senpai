@@ -5,20 +5,24 @@ from __future__ import annotations
 import json
 import sys
 import threading
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Literal, Self
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from pydantic import SecretStr
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
-from senpai_agent.github_http import GitHubReader
+from senpai_agent.github_http import GitHubReader, GitHubReadError
 from senpai_agent.mailbox import ControllerEvent
-from senpai_agent.models import AssignmentRecord, parse_assignment_markers
+from senpai_agent.models import (
+    AssignmentRecord,
+    parse_assignment_feedback_markers,
+    parse_assignment_markers,
+)
 
 
 _TRUSTED_HUMAN_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
@@ -119,6 +123,7 @@ class GitHubMailbox:
         issues: Sequence[dict[str, object]],
     ) -> tuple[ControllerEvent, ...]:
         events: list[ControllerEvent] = []
+        active_assignments: list[tuple[dict[str, object], AssignmentRecord]] = []
         active_by_student: dict[str, list[int]] = {
             student: [] for student in self.students
         }
@@ -143,6 +148,15 @@ class GitHubMailbox:
                         payload=payload,
                     )
                 )
+            if {"status:wip", "status:review"} & labels:
+                try:
+                    assignments = parse_assignment_markers(
+                        str(pull.get("body") or "")
+                    )
+                except ValueError:
+                    assignments = []
+                if len(assignments) == 1:
+                    active_assignments.append((pull, assignments[0]))
             reasons: list[str] = []
             if "status:blocked" in labels:
                 reasons.append("blocked")
@@ -190,8 +204,58 @@ class GitHubMailbox:
                         },
                     )
                 )
+        if active_assignments:
+            try:
+                current_base_sha = self._advisor_head_sha()
+            except (GitHubReadError, TypeError) as error:
+                print(
+                    "SENPAI_BASELINE_WATCH_ERROR "
+                    f"{type(error).__name__}: {error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                for pull, assignment in active_assignments:
+                    if assignment.base_sha == current_base_sha:
+                        continue
+                    number = int(pull["number"])
+                    events.append(
+                        ControllerEvent(
+                            kind="baseline_advanced",
+                            dedupe_key=(
+                                f"baseline_advanced:{number}:"
+                                f"{assignment.base_sha}:{current_base_sha}"
+                            ),
+                            payload={
+                                **_pull_payload(pull),
+                                "assignment_id": assignment.assignment_id,
+                                "revision_id": assignment.revision_id,
+                                "student": assignment.student,
+                                "base_ref": assignment.base_ref,
+                                "assigned_base_sha": assignment.base_sha,
+                                "current_base_sha": current_base_sha,
+                                "compare_url": (
+                                    f"{str(pull['html_url']).rsplit('/pull/', 1)[0]}"
+                                    f"/compare/{assignment.base_sha}..."
+                                    f"{current_base_sha}"
+                                ),
+                            },
+                        )
+                    )
         events.extend(self._human_issue_events(issues))
         return tuple(events)
+
+    def _advisor_head_sha(self) -> str:
+        ref = self._github.get(
+            f"/repos/{self.repo}/git/ref/heads/"
+            f"{quote(self.advisor_branch, safe='')}"
+        )
+        if not isinstance(ref, dict):
+            raise TypeError("GitHub advisor branch ref is not an object")
+        target = ref.get("object")
+        if not isinstance(target, dict) or not isinstance(target.get("sha"), str):
+            raise TypeError("GitHub advisor branch ref has no target SHA")
+        return target["sha"]
 
     def _student_events(
         self,
@@ -314,14 +378,22 @@ class GitHubMailbox:
                     not in submitted_review_ids
                 ):
                     continue
-                if not _is_trusted_human_feedback(item, actor=actor):
+                trusted = _trusted_feedback(
+                    item,
+                    actor=actor,
+                    repo=self.repo,
+                    pr_number=number,
+                    assignment=assignment,
+                )
+                if trusted is None:
                     continue
+                binding, feedback_body = trusted
                 feedback_id = int(item["id"])
                 created_at = str(
                     item["submitted_at"] if surface == "review" else item["created_at"]
                 )
                 message, message_truncated = _feedback_excerpt(
-                    str(item.get("body") or ""),
+                    feedback_body,
                     limit=_FEEDBACK_EXCERPT_BYTES,
                 )
                 payload: dict[str, object] = {
@@ -330,8 +402,8 @@ class GitHubMailbox:
                     "feedback_url": str(item["html_url"]),
                     "feedback_id": feedback_id,
                     "feedback_type": surface,
-                    "assignment_id": assignment.assignment_id,
-                    "revision_id": assignment.revision_id,
+                    "assignment_id": binding.assignment_id,
+                    "revision_id": binding.revision_id,
                     "author": str(_object(item["user"])["login"]),
                     "author_association": str(item["author_association"]),
                     "message": message,
@@ -591,7 +663,7 @@ class GitHubMailbox:
 
 
 class ActiveGitHubWatcher:
-    """Feed new GitHub state into a running advisor at SDK-safe boundaries."""
+    """Feed new GitHub state into a running agent at SDK-safe boundaries."""
 
     def __init__(
         self,
@@ -600,11 +672,13 @@ class ActiveGitHubWatcher:
         *,
         known_keys: frozenset[str],
         poll_interval_seconds: float = 30,
+        map_event: Callable[[ControllerEvent], AdvisorEvent | None] | None = None,
     ):
         self.mailbox = mailbox
         self.store_path = store_path
         self.known_keys = set(known_keys)
         self.poll_interval_seconds = poll_interval_seconds
+        self.map_event = map_event or _advisor_event
         self.observed_keys: set[str] = set()
         self.stop = threading.Event()
         self.error: BaseException | None = None
@@ -622,14 +696,11 @@ class ActiveGitHubWatcher:
                     for event in events:
                         if event.dedupe_key in self.known_keys:
                             continue
-                        store.enqueue(
-                            AdvisorEvent(
-                                kind=event.kind,
-                                dedupe_key=event.dedupe_key,
-                                payload=event.payload,
-                            )
-                        )
-                        self.observed_keys.add(event.dedupe_key)
+                        local_event = self.map_event(event)
+                        if local_event is None:
+                            continue
+                        store.enqueue(local_event)
+                        self.observed_keys.add(local_event.dedupe_key)
                     self.known_keys = current
         except BaseException as error:  # noqa: BLE001
             self.error = error
@@ -654,6 +725,14 @@ class ActiveGitHubWatcher:
                 file=sys.stderr,
                 flush=True,
             )
+
+
+def _advisor_event(event: ControllerEvent) -> AdvisorEvent:
+    return AdvisorEvent(
+        kind=event.kind,
+        dedupe_key=event.dedupe_key,
+        payload=event.payload,
+    )
 
 
 def _pull_payload(pull: Mapping[str, object]) -> dict[str, object]:
@@ -682,25 +761,63 @@ def _object(value: object) -> dict[str, object]:
     return value
 
 
-def _is_trusted_human_feedback(
+def _trusted_feedback(
     item: Mapping[str, object],
     *,
     actor: str,
-) -> bool:
+    repo: str,
+    pr_number: int,
+    assignment: AssignmentRecord,
+) -> tuple[_FeedbackBinding, str] | None:
     user = item.get("user")
     if not isinstance(user, dict):
-        return False
-    if user.get("type") != "User":
-        return False
-    if item.get("author_association") not in _TRUSTED_HUMAN_ASSOCIATIONS:
-        return False
+        return None
     body = str(item.get("body") or "")
-    return not (
-        str(user.get("login") or "").casefold() == actor.casefold()
-        and any(
-            line.startswith("<!-- senpai-") and line.endswith(" -->")
-            for line in body.splitlines()
-        )
+    current = _FeedbackBinding(
+        assignment_id=assignment.assignment_id,
+        revision_id=assignment.revision_id,
+    )
+    same_actor = str(user.get("login") or "").casefold() == actor.casefold()
+    trusted_human = (
+        user.get("type") == "User"
+        and item.get("author_association") in _TRUSTED_HUMAN_ASSOCIATIONS
+    )
+    if not same_actor:
+        if not trusted_human:
+            return None
+        return current, body
+    protocol_markers = [
+        line.strip()
+        for line in body.splitlines()
+        if line.strip().startswith("<!-- senpai-")
+        and line.strip().endswith(" -->")
+    ]
+    if not protocol_markers:
+        return (current, body) if trusted_human else None
+    try:
+        records = parse_assignment_feedback_markers(body)
+    except ValueError:
+        return None
+    if len(protocol_markers) != 1 or len(records) != 1:
+        return None
+    record = records[0]
+    if (
+        record.repo != repo
+        or record.pr_number != pr_number
+        or record.assignment_id != assignment.assignment_id
+    ):
+        return None
+    content = "\n".join(
+        line for line in body.splitlines() if line.strip() != protocol_markers[0]
+    ).strip()
+    if not content:
+        return None
+    return (
+        _FeedbackBinding(
+            assignment_id=record.assignment_id,
+            revision_id=record.revision_id,
+        ),
+        content,
     )
 
 

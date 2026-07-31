@@ -1,13 +1,16 @@
 import json
 import subprocess
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
 from pydantic import SecretStr
 
-from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
+from senpai_agent.advisor import AdvisorEvent, AdvisorEventPump, AdvisorEventStore
 from senpai_agent.controller import (
     Controller,
+    OpenHandsTurnRunner,
     TurnResult,
     _full_prompt,
 )
@@ -17,7 +20,12 @@ from senpai_agent.mailbox import (
     ControllerEvent,
     LocalStudentMailbox,
 )
-from senpai_agent.models import AssignmentRecord, render_assignment_marker
+from senpai_agent.models import (
+    AssignmentFeedbackRecord,
+    AssignmentRecord,
+    render_assignment_feedback_marker,
+    render_assignment_marker,
+)
 from senpai_agent.monitor import (
     MonitorMailbox,
     MonitorEvaluation,
@@ -131,6 +139,172 @@ def test_late_student_child_result_wakes_its_exact_parent(tmp_path: Path):
     assert events[0].payload["conversation_id"] == str(first_parent)
     assert len(batches) == 1
     assert batches[0].conversation_id == first_parent
+
+
+def test_student_feedback_is_injected_mid_turn_only_into_its_bound_conversation(
+    tmp_path: Path,
+    monkeypatch,
+):
+    state_dir = tmp_path / "state"
+    registry = AssignmentConversationRegistry(
+        state_dir / "student-conversations.json"
+    )
+    conversation_id = registry.for_assignment("assignment-17", "revision-2")
+    current = ControllerEvent(
+        kind="student_pr_feedback",
+        dedupe_key="student_pr_feedback:issue_comment:17:101",
+        payload={
+            "assignment_id": "assignment-17",
+            "revision_id": "revision-2",
+            "message": "Stop after the current arm.",
+        },
+    )
+    other_revision = ControllerEvent(
+        kind="student_pr_feedback",
+        dedupe_key="student_pr_feedback:issue_comment:17:102",
+        payload={
+            "assignment_id": "assignment-17",
+            "revision_id": "revision-3",
+            "message": "This belongs to the next revision.",
+        },
+    )
+    assignment = ControllerEvent(
+        kind="student_assignment",
+        dedupe_key="student_assignment:assignment-17:revision-2",
+        payload={
+            "assignment_id": "assignment-17",
+            "revision_id": "revision-2",
+        },
+    )
+
+    class ActiveMailbox:
+        def poll(self):
+            return (current, other_revision, assignment)
+
+    @dataclass(frozen=True)
+    class Config:
+        role: str
+        state_dir: Path
+        conversation_id: UUID
+
+    messages = []
+
+    def run_openhands(_prompt, config):
+        class Conversation:
+            def send_message(self, message):
+                messages.append(message)
+
+        with AdvisorEventStore(
+            state_dir / "student-events.sqlite3"
+        ) as store, AdvisorEventPump(
+            store,
+            Conversation(),
+            poll_interval=0.001,
+            parent_conversation_id=str(config.conversation_id),
+        ):
+            deadline = time.monotonic() + 1
+            while not messages and time.monotonic() < deadline:
+                time.sleep(0.001)
+        return 0
+
+    monkeypatch.setattr(
+        "senpai_agent.openhands_runner.run_openhands",
+        run_openhands,
+    )
+    result = OpenHandsTurnRunner(
+        Config("student", state_dir, conversation_id),
+        github_mailbox=ActiveMailbox(),
+        active_poll_interval_seconds=0.001,
+    ).run(
+        "current student turn",
+        conversation_id=conversation_id,
+        event_keys=frozenset({assignment.dedupe_key}),
+    )
+
+    assert len(messages) == 1
+    assert "Stop after the current arm." in messages[0]
+    assert "This belongs to the next revision." not in messages[0]
+    assert str(conversation_id) in messages[0]
+    assert result.delivered_event_keys == frozenset({current.dedupe_key})
+    with AdvisorEventStore(state_dir / "student-events.sqlite3") as store:
+        assert store.pending() == []
+
+
+def test_prompt_delivery_suppresses_a_late_duplicate_watcher_event(
+    tmp_path: Path,
+    monkeypatch,
+):
+    state_dir = tmp_path / "state"
+    registry = AssignmentConversationRegistry(
+        state_dir / "student-conversations.json"
+    )
+    conversation_id = registry.for_assignment("assignment-17", "revision-2")
+    feedback_event = ControllerEvent(
+        kind="student_pr_feedback",
+        dedupe_key="student_pr_feedback:issue_comment:17:111",
+        payload={
+            "assignment_id": "assignment-17",
+            "revision_id": "revision-2",
+            "message": "Already present in the controller prompt.",
+        },
+    )
+    store_path = state_dir / "student-events.sqlite3"
+    with AdvisorEventStore(store_path) as store:
+        store.enqueue(
+            AdvisorEvent(
+                kind=feedback_event.kind,
+                dedupe_key=feedback_event.dedupe_key,
+                payload={
+                    **feedback_event.payload,
+                    "parent_conversation_id": str(conversation_id),
+                },
+            )
+        )
+
+    class ActiveMailbox:
+        def poll(self):
+            return (feedback_event,)
+
+    @dataclass(frozen=True)
+    class Config:
+        role: str
+        state_dir: Path
+        conversation_id: UUID
+
+    messages = []
+
+    def run_openhands(_prompt, config):
+        class Conversation:
+            def send_message(self, message):
+                messages.append(message)
+
+        with AdvisorEventStore(store_path) as store, AdvisorEventPump(
+            store,
+            Conversation(),
+            poll_interval=0.001,
+            parent_conversation_id=str(config.conversation_id),
+        ):
+            time.sleep(0.01)
+        return 0
+
+    monkeypatch.setattr(
+        "senpai_agent.openhands_runner.run_openhands",
+        run_openhands,
+    )
+    result = OpenHandsTurnRunner(
+        Config("student", state_dir, conversation_id),
+        github_mailbox=ActiveMailbox(),
+        active_poll_interval_seconds=0.001,
+    ).run(
+        feedback_event.to_prompt(),
+        conversation_id=conversation_id,
+        event_keys=frozenset({feedback_event.dedupe_key}),
+    )
+
+    assert messages == []
+    assert result.delivered_event_keys == frozenset()
+    with AdvisorEventStore(store_path) as store:
+        assert store.pending() == []
 
 
 def test_controller_builds_first_turn_from_program_and_role_task(
@@ -306,6 +480,42 @@ def test_student_events_are_delivered_and_acknowledged_per_conversation(
     assert "second only" in turns.calls[1][0]
     assert "first only" not in turns.calls[1][0]
     assert mailbox.acknowledged == [("monitor:first",), ("child:second",)]
+
+
+def test_controller_acknowledges_feedback_injected_during_a_successful_turn():
+    initial = ControllerEvent(
+        kind="student_assignment",
+        dedupe_key="student_assignment:assignment-17:revision-2",
+        payload={
+            "assignment_id": "assignment-17",
+            "revision_id": "revision-2",
+        },
+    )
+    feedback_key = "student_pr_feedback:issue_comment:17:101"
+    mailbox = Mailbox([(initial,), ()])
+
+    class MidTurnFeedback(Turns):
+        def run(self, *args, **kwargs):
+            super().run(*args, **kwargs)
+            return TurnResult(
+                exit_code=0,
+                delivered_event_keys=frozenset({feedback_key}),
+            )
+
+    Controller(
+        role="student",
+        mailbox=mailbox,
+        turns=MidTurnFeedback(),
+        conversation_id=UUID("00000000-0000-0000-0000-000000000085"),
+        full_prompt="programme",
+        sleep=lambda _seconds: None,
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+    ).run(max_cycles=1)
+
+    assert mailbox.acknowledged == [
+        (initial.dedupe_key, feedback_key),
+    ]
 
 
 def test_one_student_conversation_failure_does_not_ack_or_starve_another(
@@ -795,6 +1005,222 @@ def test_github_mailbox_uses_pr_labels_as_the_cross_node_protocol(
     }
 
 
+def test_advisor_mailbox_emits_exact_baseline_advance_from_live_branch_ref(
+    monkeypatch,
+):
+    assigned_sha = "b" * 40
+    current_sha = "c" * 40
+    assignment = AssignmentRecord(
+        repo="acme/widgets",
+        assignment_id="assignment-17",
+        revision_id="revision-2",
+        student="student-1",
+        base_ref="research",
+        base_sha=assigned_sha,
+        head_ref="student/candidate",
+        head_sha="a" * 40,
+    )
+    mailbox = GitHubMailbox(
+        repo="acme/widgets",
+        token=SecretStr("github-token"),
+        role="advisor",
+        advisor_branch="research",
+        students=("student-1",),
+    )
+    monkeypatch.setattr(
+        mailbox,
+        "_pulls",
+        lambda: [
+            pull(
+                labels=("research", "student:student-1", "status:wip"),
+                body=render_assignment_marker(assignment),
+            )
+        ],
+    )
+    monkeypatch.setattr(mailbox, "_issues", list)
+    ref_reads = []
+
+    def get_ref(path):
+        ref_reads.append(path)
+        return {"object": {"sha": current_sha}}
+
+    monkeypatch.setattr(mailbox._github, "get", get_ref)
+
+    events = mailbox.poll()
+
+    drift = next(event for event in events if event.kind == "baseline_advanced")
+    assert drift.dedupe_key == (
+        f"baseline_advanced:17:{assigned_sha}:{current_sha}"
+    )
+    assert drift.payload["assigned_base_sha"] == assigned_sha
+    assert drift.payload["current_base_sha"] == current_sha
+    assert drift.payload["compare_url"] == (
+        f"https://github.test/acme/widgets/compare/{assigned_sha}...{current_sha}"
+    )
+    assert ref_reads == ["/repos/acme/widgets/git/ref/heads/research"]
+
+
+def test_advisor_mailbox_reads_live_base_once_for_multiple_assignments(
+    monkeypatch,
+):
+    assigned_sha = "b" * 40
+
+    def assigned_pull(number, student):
+        assignment = AssignmentRecord(
+            repo="acme/widgets",
+            assignment_id=f"assignment-{number}",
+            revision_id="revision-1",
+            student=student,
+            base_ref="research",
+            base_sha=assigned_sha,
+            head_ref=f"student/{number}",
+            head_sha=str(number) * 40,
+        )
+        value = pull(
+            labels=("research", f"student:{student}", "status:wip"),
+            body=render_assignment_marker(assignment),
+        )
+        value.update(
+            number=number,
+            html_url=f"https://github.test/acme/widgets/pull/{number}",
+            head={"ref": f"student/{number}", "sha": str(number) * 40},
+        )
+        return value
+
+    mailbox = GitHubMailbox(
+        repo="acme/widgets",
+        token=SecretStr("github-token"),
+        role="advisor",
+        advisor_branch="research",
+        students=("student-1", "student-2"),
+    )
+    monkeypatch.setattr(
+        mailbox,
+        "_pulls",
+        lambda: [assigned_pull(1, "student-1"), assigned_pull(2, "student-2")],
+    )
+    monkeypatch.setattr(mailbox, "_issues", list)
+    current_sha = ["c" * 40]
+    ref_reads = []
+
+    def get_ref(path):
+        ref_reads.append(path)
+        return {"object": {"sha": current_sha[0]}}
+
+    monkeypatch.setattr(mailbox._github, "get", get_ref)
+
+    first = mailbox.poll()
+    current_sha[0] = "d" * 40
+    second = mailbox.poll()
+
+    assert [event.kind for event in first].count("baseline_advanced") == 2
+    assert [event.kind for event in second].count("baseline_advanced") == 2
+    assert {
+        event.payload["current_base_sha"]
+        for event in second
+        if event.kind == "baseline_advanced"
+    } == {"d" * 40}
+    assert ref_reads == [
+        "/repos/acme/widgets/git/ref/heads/research",
+        "/repos/acme/widgets/git/ref/heads/research",
+    ]
+
+
+def test_advisor_mailbox_ignores_current_or_malformed_assignment_for_drift(
+    monkeypatch,
+):
+    current_sha = "b" * 40
+    assignment = AssignmentRecord(
+        repo="acme/widgets",
+        assignment_id="assignment-17",
+        revision_id="revision-2",
+        student="student-1",
+        base_ref="research",
+        base_sha=current_sha,
+        head_ref="student/candidate",
+        head_sha="a" * 40,
+    )
+    current = pull(
+        labels=("research", "student:student-1", "status:review"),
+        body=render_assignment_marker(assignment),
+    )
+    malformed = pull(
+        labels=("research", "student:student-2", "status:review"),
+        body="<!-- senpai-assignment:v1 not-json -->",
+    )
+    malformed.update(number=18)
+    mailbox = GitHubMailbox(
+        repo="acme/widgets",
+        token=SecretStr("github-token"),
+        role="advisor",
+        advisor_branch="research",
+        students=("student-1", "student-2", "student-3"),
+    )
+    monkeypatch.setattr(mailbox, "_pulls", lambda: [current, malformed])
+    monkeypatch.setattr(mailbox, "_issues", list)
+    ref_reads = []
+
+    def get_ref(path):
+        ref_reads.append(path)
+        return {"object": {"sha": current_sha}}
+
+    monkeypatch.setattr(mailbox._github, "get", get_ref)
+
+    events = mailbox.poll()
+
+    assert "baseline_advanced" not in {event.kind for event in events}
+    assert [event.kind for event in events].count("review_ready") == 2
+    assert any(
+        event.kind == "idle_student" and event.payload["student"] == "student-3"
+        for event in events
+    )
+    assert len(ref_reads) == 1
+
+
+def test_baseline_ref_failure_does_not_suppress_other_advisor_events(
+    monkeypatch,
+    capsys,
+):
+    assignment = AssignmentRecord(
+        repo="acme/widgets",
+        assignment_id="assignment-17",
+        revision_id="revision-2",
+        student="student-1",
+        base_ref="research",
+        base_sha="b" * 40,
+        head_ref="student/candidate",
+        head_sha="a" * 40,
+    )
+    mailbox = GitHubMailbox(
+        repo="acme/widgets",
+        token=SecretStr("github-token"),
+        role="advisor",
+        advisor_branch="research",
+        students=("student-1", "student-2"),
+    )
+    monkeypatch.setattr(
+        mailbox,
+        "_pulls",
+        lambda: [
+            pull(
+                labels=("research", "student:student-1", "status:review"),
+                body=render_assignment_marker(assignment),
+            )
+        ],
+    )
+    monkeypatch.setattr(mailbox, "_issues", list)
+
+    def invalid_ref(_path):
+        raise TypeError("invalid ref response")
+
+    monkeypatch.setattr(mailbox._github, "get", invalid_ref)
+
+    events = mailbox.poll()
+
+    assert {event.kind for event in events} == {"review_ready", "idle_student"}
+    assert "SENPAI_BASELINE_WATCH_ERROR TypeError" in capsys.readouterr().err
+
+
 def test_student_assignment_event_carries_durable_assignment_identity(
     monkeypatch,
 ):
@@ -938,6 +1364,96 @@ def test_review_ready_student_receives_only_trusted_feedback_from_every_surface(
     assert batches[0].conversation_id == AssignmentConversationRegistry(
         tmp_path / "students.json"
     ).for_assignment("assignment-17", "revision-2")
+
+
+def test_same_actor_assignment_feedback_is_delivered_but_other_markers_are_not(
+    monkeypatch,
+):
+    marker = render_assignment_feedback_marker(
+        AssignmentFeedbackRecord(
+            repo="acme/widgets",
+            pr_number=17,
+            assignment_id="assignment-17",
+            revision_id="revision-2",
+            feedback_id="stop-current-arm",
+        )
+    )
+    wrong_repo_marker = render_assignment_feedback_marker(
+        AssignmentFeedbackRecord(
+            repo="other/widgets",
+            pr_number=17,
+            assignment_id="assignment-17",
+            revision_id="revision-2",
+            feedback_id="wrong-repository",
+        )
+    )
+    mailbox, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        feedback_responses(
+            issue_comments=[
+                feedback(
+                    120,
+                    f"{marker}\n\nStop after the current arm.",
+                ),
+                feedback(
+                    121,
+                    "<!-- senpai-revision:v1 {} -->\n\n"
+                    "Automation must remain hidden.",
+                ),
+                feedback(
+                    122,
+                    f"{marker}\n<!-- senpai-result:v1 {{}} -->\n\n"
+                    "Mixed protocol comments must remain hidden.",
+                ),
+                feedback(123, f"{wrong_repo_marker}\n\nWrong repository."),
+                feedback(
+                    124,
+                    f"{marker}\n\nBot-authored typed guidance.",
+                    association="NONE",
+                    user_type="Bot",
+                ),
+            ]
+        ),
+        trusted_actor="MorganMcG1",
+    )
+
+    feedback_events = [
+        event for event in mailbox.poll() if event.kind == "student_pr_feedback"
+    ]
+
+    assert [event.payload["feedback_id"] for event in feedback_events] == [120, 124]
+    assert feedback_events[0].payload["message"] == "Stop after the current arm."
+    assert feedback_events[1].payload["message"] == "Bot-authored typed guidance."
+
+
+def test_delayed_assignment_feedback_stays_bound_to_its_marked_revision(
+    monkeypatch,
+):
+    marker = render_assignment_feedback_marker(
+        AssignmentFeedbackRecord(
+            repo="acme/widgets",
+            pr_number=17,
+            assignment_id="assignment-17",
+            revision_id="revision-1",
+            feedback_id="r1-only-guidance",
+        )
+    )
+    mailbox, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        feedback_responses(
+            issue_comments=[feedback(123, f"{marker}\n\nStop revision one.")]
+        ),
+        revision_id="revision-2",
+        trusted_actor="MorganMcG1",
+    )
+
+    event = next(
+        event for event in mailbox.poll() if event.kind == "student_pr_feedback"
+    )
+
+    assert event.payload["assignment_id"] == "assignment-17"
+    assert event.payload["revision_id"] == "revision-1"
+    assert event.payload["message"] == "Stop revision one."
 
 
 def test_feedback_ack_requires_success_and_survives_restart_and_revision(

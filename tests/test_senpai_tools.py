@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -8,7 +10,7 @@ import pytest
 from openhands.sdk.context.view import View
 from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.conversation.event_store import EventLog
-from openhands.sdk.event import ActionEvent, MessageEvent, ObservationEvent
+from openhands.sdk.event import ActionEvent, Event, MessageEvent, ObservationEvent
 from openhands.sdk.io import InMemoryFileStore
 from openhands.sdk.llm import Message, MessageToolCall, TextContent
 from openhands.sdk.tool import Tool, resolve_tool
@@ -45,6 +47,8 @@ from senpai_agent.tools import (
     GetTrainingStatusTool,
     GitHubTransitionAction,
     GitHubTransitionTool,
+    MergeExperimentTransition,
+    MonitorTrainingAction,
     MonitorTrainingTool,
     PushBranchTransition,
     ReconcileLabelsTransition,
@@ -53,6 +57,7 @@ from senpai_agent.tools import (
     RunTrainingAction,
     RunTrainingTool,
     SenpaiTerminalExecutor,
+    SendAssignmentFeedbackTransition,
     SubmitResultTransition,
     TrainingResultObservation,
     clear_github_credentials,
@@ -64,6 +69,7 @@ from senpai_agent.training import (
     TrainingResult,
     TrainingSpec,
     TrainingState,
+    TrainingSupervisor,
 )
 
 
@@ -140,6 +146,15 @@ class FakeGitHubWorkflow:
             version=kwargs["expected_head_sha"],
         )
 
+    def send_assignment_feedback(self, number, **kwargs):
+        self.calls.append(("send_assignment_feedback", number, kwargs))
+        return MutationResult(
+            changed=True,
+            resource_url=f"https://github.test/pull/{number}#feedback",
+            state="assignment_feedback_upserted",
+            version=kwargs["expected_head_sha"],
+        )
+
     def respond_to_issue(self, number, **kwargs):
         self.calls.append(("respond_to_issue", number, kwargs))
         return MutationResult(
@@ -147,6 +162,15 @@ class FakeGitHubWorkflow:
             resource_url=f"https://github.test/issues/{number}",
             state="issue_response_upserted",
             version=str(kwargs["human_message_id"]),
+        )
+
+    def merge_experiment(self, number, **kwargs):
+        self.calls.append(("merge_experiment", number, kwargs))
+        return MutationResult(
+            changed=True,
+            resource_url=f"https://github.test/pull/{number}",
+            state="experiment_merged",
+            version="merge-sha",
         )
 
 
@@ -205,12 +229,16 @@ def make_tools(
     advisor_branch: str | None = None,
 ):
     workspace = Path(workspace or tmp_path / "target")
+    monitor_store = MonitorStore(tmp_path / "monitors.sqlite3")
     return (
-        *RunTrainingTool.create(training=training),
+        *RunTrainingTool.create(
+            training=training,
+            monitor_store=monitor_store,
+        ),
         *GetTrainingStatusTool.create(training=training),
         *MonitorTrainingTool.create(
             training=training,
-            monitor_store=MonitorStore(tmp_path / "monitors.sqlite3"),
+            monitor_store=monitor_store,
         ),
         *GetPRsTool.create(
             get_prs_fn=get_prs_fn,
@@ -268,7 +296,6 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
             "gates",
             "poll_interval_seconds",
             "stale_after_seconds",
-            "notify_on_status",
         } == set(monitor_schema["properties"])
 
         pr_schema = by_name["get_prs"].action_type.to_mcp_schema()
@@ -317,6 +344,7 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
             "push_branch",
             "reconcile_labels",
             "request_revision",
+            "send_assignment_feedback",
             "respond_to_issue",
             "submit_result",
             "close_experiment",
@@ -361,6 +389,12 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         assert "Local commit to push" in submit_schema["expected_head_sha"][
             "description"
         ]
+        merge_schema = MergeExperimentTransition.model_json_schema()
+        assert "accepted_base_sha" not in merge_schema["required"]
+        assert "baseline_advanced" in merge_schema["properties"][
+            "accepted_base_sha"
+        ]["description"]
+        assert "accepted_base_sha" in transition_properties
         assert "expected_remote_sha is the current remote branch SHA" in (
             transition_description
         )
@@ -374,6 +408,39 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         )
     finally:
         close_tools(tools)
+
+
+def test_monitor_action_discards_the_legacy_terminal_status_filter():
+    action = MonitorTrainingAction(
+        training_id="training-17",
+        metric="validation/loss",
+        direction="min",
+    )
+    event = ActionEvent(
+        thought=[],
+        action=action,
+        tool_name="monitor_training",
+        tool_call_id="legacy-monitor",
+        tool_call=MessageToolCall(
+            id="legacy-monitor",
+            name="monitor_training",
+            arguments=json.dumps(action.model_dump(mode="json")),
+            origin="completion",
+        ),
+        llm_response_id="legacy-response",
+    )
+    persisted = event.model_dump(mode="json")
+    persisted["action"]["notify_on_status"] = ["finished"]
+
+    restored = Event.model_validate_json(json.dumps(persisted))
+
+    assert isinstance(restored, ActionEvent)
+    assert isinstance(restored.action, MonitorTrainingAction)
+    assert restored.action.training_id == "training-17"
+    assert "notify_on_status" not in restored.action.model_dump()
+    assert "notify_on_status" not in MonitorTrainingAction.to_mcp_schema()[
+        "properties"
+    ]
 
 
 def test_training_and_github_tools_delegate_existing_typed_interfaces(
@@ -399,6 +466,14 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
         pr_calls.append((repo, kwargs))
         return pr_result
 
+    training_workspace = tmp_path / "target"
+    training_workspace.mkdir()
+    subprocess.run(
+        ["git", "init", "--quiet"],
+        cwd=training_workspace,
+        check=True,
+    )
+    fake_training.workspace = training_workspace
     tools = make_tools(
         tmp_path,
         training=fake_training,
@@ -407,17 +482,21 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
         event_sink=EventSink(),
         github_workflow=FakeGitHubWorkflow(),
         pr_artifact_dir=tmp_path / "state" / "github",
-        workspace=tmp_path / "target",
+        workspace=training_workspace,
     )
     by_name = {tool.name: tool for tool in tools}
+    conversation_id = uuid.uuid4()
     spec = TrainingSpec(
         argv=("python", "train.py"),
-        cwd=tmp_path,
+        cwd=training_workspace,
         timeout_seconds=600,
     )
 
     try:
-        run_observation = by_name["run_training"](RunTrainingAction(spec=spec))
+        run_observation = by_name["run_training"].executor(
+            RunTrainingAction(spec=spec),
+            SimpleNamespace(id=conversation_id),
+        )
         status_observation = by_name["get_training_status"](
             GetTrainingStatusAction(training_id=result.training_id)
         )
@@ -431,7 +510,7 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
             SimpleNamespace(
                 state=SimpleNamespace(
                     workspace=SimpleNamespace(
-                        working_dir=tmp_path / "target",
+                        working_dir=training_workspace,
                     )
                 )
             ),
@@ -441,6 +520,35 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
         assert fake_training.status_ids == ["training-17"]
         assert run_observation.training_id == result.training_id
         assert run_observation.state is TrainingState.FINISHED
+        default_monitor = by_name["run_training"].executor.monitor_store.spec(
+            result.training_id
+        )
+        assert default_monitor.conversation_id == conversation_id
+        assert default_monitor.metric is None
+        assert default_monitor.gates == ()
+        by_name["monitor_training"].executor(
+            MonitorTrainingAction(
+                training_id=result.training_id,
+                metric="validation/loss",
+                direction="min",
+                stale_after_seconds=300,
+            ),
+            SimpleNamespace(id=conversation_id),
+        )
+        upgraded_monitor = by_name["run_training"].executor.monitor_store.spec(
+            result.training_id
+        )
+        assert upgraded_monitor.metric == "validation/loss"
+        assert upgraded_monitor.direction == "min"
+        assert upgraded_monitor.stale_after_seconds == 300
+        assert upgraded_monitor.notify_on_status == frozenset(
+            {
+                TrainingState.FINISHED,
+                TrainingState.FAILED,
+                TrainingState.TIMED_OUT,
+                TrainingState.CANCELLED,
+            }
+        )
         assert status_observation.wandb_run_ids == ("run-abc",)
         assert pr_calls == [
             (
@@ -555,6 +663,68 @@ def test_training_tool_interrupt_cancels_the_supervisor(tmp_path: Path):
     close_tools(tools)
 
 
+def test_real_training_launch_persists_its_default_monitor(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+    training = TrainingSupervisor(
+        workspace=workspace,
+        state_dir=tmp_path / "training",
+    )
+    monitors = MonitorStore(tmp_path / "monitors.sqlite3")
+    run_training = RunTrainingTool.create(training, monitors)[0]
+    conversation_id = uuid.uuid4()
+
+    try:
+        launched = run_training.executor(
+            RunTrainingAction(
+                spec=TrainingSpec(
+                    argv=(sys.executable, "-c", "print('bounded smoke')"),
+                    cwd=workspace,
+                    timeout_seconds=20,
+                )
+            ),
+            SimpleNamespace(id=conversation_id),
+        )
+
+        monitor = monitors.spec(launched.training_id)
+        assert monitor.conversation_id == conversation_id
+        assert monitor.metric is None
+        assert (monitors.marker_dir / f"{launched.training_id}.json").is_file()
+    finally:
+        training.close()
+        monitors.close()
+
+
+def test_training_rejects_a_dirty_worktree_before_launch(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+    (workspace / "candidate.py").write_text("print('uncommitted')\n")
+    training = FakeTraining(training_result(tmp_path))
+    training.workspace = workspace
+    monitors = MonitorStore(tmp_path / "monitors.sqlite3")
+    run_training = RunTrainingTool.create(training, monitors)[0]
+
+    try:
+        with pytest.raises(RuntimeError, match="clean before training"):
+            run_training.executor(
+                RunTrainingAction(
+                    spec=TrainingSpec(
+                        argv=(sys.executable, "candidate.py"),
+                        cwd=workspace,
+                        timeout_seconds=20,
+                    )
+                ),
+                SimpleNamespace(id=uuid.uuid4()),
+            )
+
+        assert training.run_specs == []
+        assert monitors.active() == []
+    finally:
+        monitors.close()
+
+
 def test_github_transition_delegates_a_typed_idempotent_operation(
     tmp_path: Path,
 ):
@@ -594,6 +764,48 @@ def test_github_transition_delegates_a_typed_idempotent_operation(
                     "remove": {"status:wip"},
                     "expected_head_sha": "abc123",
                     "assignment_id": "assignment-17",
+                },
+            )
+        ]
+    finally:
+        close_tools(tools)
+
+
+def test_merge_transition_forwards_the_explicit_baseline_acceptance(tmp_path: Path):
+    github = FakeGitHubWorkflow()
+    tools = make_tools(
+        tmp_path,
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=github,
+        role="advisor",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+
+    try:
+        observation = transition(
+            GitHubTransitionAction(
+                transition=MergeExperimentTransition(
+                    operation="merge_experiment",
+                    pr_number=17,
+                    assignment_id="assignment-17",
+                    expected_head_sha="a" * 40,
+                    accepted_base_sha="b" * 40,
+                )
+            )
+        )
+        assert observation.state == "experiment_merged"
+        assert github.calls == [
+            (
+                "merge_experiment",
+                17,
+                {
+                    "expected_head_sha": "a" * 40,
+                    "assignment_id": "assignment-17",
+                    "merge_method": "squash",
+                    "accepted_base_sha": "b" * 40,
                 },
             )
         ]
@@ -668,6 +880,86 @@ def test_request_revision_transition_carries_the_assignment_identity(
                 },
             )
         ]
+    finally:
+        close_tools(tools)
+
+
+def test_assignment_feedback_transition_preserves_the_current_revision(
+    tmp_path: Path,
+):
+    github = FakeGitHubWorkflow()
+    tools = make_tools(
+        tmp_path,
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=github,
+        role="advisor",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+
+    try:
+        observation = transition(
+            GitHubTransitionAction(
+                transition=SendAssignmentFeedbackTransition(
+                    operation="send_assignment_feedback",
+                    pr_number=17,
+                    assignment_id="assignment-17",
+                    revision_id="revision-1",
+                    expected_head_sha="abc123",
+                    feedback_id="check-cruise-split",
+                    comment="Check every split before changing the default.",
+                )
+            )
+        )
+        assert observation.state == "assignment_feedback_upserted"
+        assert github.calls == [
+            (
+                "send_assignment_feedback",
+                17,
+                {
+                    "assignment_id": "assignment-17",
+                    "revision_id": "revision-1",
+                    "expected_head_sha": "abc123",
+                    "feedback_id": "check-cruise-split",
+                    "comment": "Check every split before changing the default.",
+                },
+            )
+        ]
+    finally:
+        close_tools(tools)
+
+
+def test_student_cannot_send_assignment_feedback(tmp_path: Path):
+    github = FakeGitHubWorkflow()
+    tools = make_tools(
+        tmp_path,
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=github,
+        role="student",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+
+    try:
+        with pytest.raises(PermissionError, match="advisor-owned"):
+            transition(
+                GitHubTransitionAction(
+                    transition=SendAssignmentFeedbackTransition(
+                        operation="send_assignment_feedback",
+                        pr_number=17,
+                        assignment_id="assignment-17",
+                        revision_id="revision-1",
+                        expected_head_sha="abc123",
+                        feedback_id="bounded-nudge",
+                        comment="Inspect the failed seed, then continue.",
+                    )
+                )
+            )
+        assert github.calls == []
     finally:
         close_tools(tools)
 
@@ -1186,6 +1478,10 @@ def test_registered_training_spec_resolves_to_one_shared_supervisor(
     assert (
         by_name["run_training"].executor.training
         is by_name["get_training_status"].executor.training
+    )
+    assert (
+        by_name["run_training"].executor.monitor_store
+        is by_name["monitor_training"].executor.store
     )
     close_tools(tools)
 

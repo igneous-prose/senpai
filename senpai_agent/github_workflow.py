@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, Protocol
 from urllib import request
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from pydantic import (
     ConfigDict,
@@ -22,6 +22,7 @@ from pydantic import (
 
 from senpai_agent.github_http import next_link
 from senpai_agent.models import (
+    AssignmentFeedbackRecord,
     AssignmentRecord,
     Contract,
     ExperimentResult,
@@ -29,6 +30,7 @@ from senpai_agent.models import (
     RevisionRecord,
     parse_assignment_markers,
     parse_result_markers,
+    render_assignment_feedback_marker,
     render_assignment_marker,
     render_result_comment,
     render_revision_marker,
@@ -70,7 +72,11 @@ class PullHeadMismatchError(WorkflowPreconditionError):
 
 
 class StaleAssignmentRevisionError(WorkflowPreconditionError):
-    """The result belongs to an older assignment revision."""
+    """The requested operation belongs to another assignment revision."""
+
+
+class StaleBaselineError(WorkflowPreconditionError):
+    """The assignment predates the branch that would receive its merge."""
 
 
 class ReconciliationError(GitHubWorkflowError):
@@ -163,6 +169,15 @@ class _GitHubHead(_GitHubRef):
     sha: _RequiredString
 
 
+class _GitObject(_GitHubResponse):
+    sha: _RequiredString
+
+
+class _GitRefResponse(_GitHubResponse):
+    ref: _RequiredString
+    object: _GitObject
+
+
 class _GitHubLabel(_GitHubResponse):
     name: _RequiredString
 
@@ -233,6 +248,7 @@ class _NumberedResponse(_GitHubResponse):
 
 
 class _IssueSearchResponse(_NumberedResponse):
+    labels: tuple[_GitHubLabel, ...]
     pull_request: dict[str, object] | None = None
 
 
@@ -619,6 +635,71 @@ class GitHubWorkflow:
             version=after.head_sha,
         )
 
+    def send_assignment_feedback(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        revision_id: str,
+        expected_head_sha: str,
+        feedback_id: str,
+        comment: str,
+    ) -> MutationResult:
+        """Upsert guidance for the current assignment without starting a revision."""
+
+        before, assignment = self._assigned_pull_at_head(
+            number,
+            assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
+        )
+        _require_open(before)
+        _require_current_revision(assignment, revision_id)
+        _require_active_assignment_routing(before, assignment)
+        feedback_id = feedback_id.strip()
+        body = comment.strip()
+        if not feedback_id or not body:
+            raise ValueError("feedback_id and comment must not be empty")
+
+        marker = render_assignment_feedback_marker(
+            AssignmentFeedbackRecord(
+                repo=self._repo,
+                pr_number=number,
+                assignment_id=assignment.assignment_id,
+                revision_id=assignment.revision_id,
+                feedback_id=feedback_id,
+            )
+        )
+        marker_body = _marker_body(marker, body)
+        existing = self._marker_comments(number, marker)
+        if len(existing) > 1:
+            raise ReconciliationError(
+                f"GitHub contains multiple comments for marker {marker!r}"
+            )
+        if existing and existing[0].body != marker_body:
+            raise WorkflowPreconditionError(
+                "feedback_id already identifies different guidance; "
+                "use a new feedback_id"
+            )
+        changed, verified = self._upsert_marker_comment(
+            number,
+            marker=marker,
+            body=marker_body,
+        )
+        after, current_assignment = self._assigned_pull_at_head(
+            number,
+            assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
+        )
+        _require_open(after)
+        _require_current_revision(current_assignment, revision_id)
+        _require_active_assignment_routing(after, current_assignment)
+        return MutationResult(
+            changed=changed,
+            resource_url=verified.url,
+            state="assignment_feedback_upserted",
+            version=after.head_sha,
+        )
+
     def preflight_submit_result(
         self,
         number: int,
@@ -746,6 +827,7 @@ class GitHubWorkflow:
         expected_head_sha: str,
         assignment_id: str,
         merge_method: Literal["merge", "squash", "rebase"] = "squash",
+        accepted_base_sha: str | None = None,
     ) -> MutationResult:
         if merge_method not in ("merge", "squash", "rebase"):
             raise ValueError("merge_method must be merge, squash, or rebase")
@@ -757,7 +839,7 @@ class GitHubWorkflow:
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
-        _require_assignment_result(before, terminal_result)
+        assignment = _require_assignment_result(before, terminal_result)
         if before.merged:
             if before.state != "closed":
                 raise ReconciliationError(
@@ -798,6 +880,13 @@ class GitHubWorkflow:
                 "cannot merge while GitHub mergeability is unknown"
             )
 
+        current_base_sha = self._branch_head_sha(assignment.base_ref)
+        _require_current_baseline(
+            assignment,
+            current_base_sha=current_base_sha,
+            accepted_base_sha=accepted_base_sha,
+        )
+
         self._mutate(
             "PUT",
             f"/repos/{self._repo}/pulls/{number}/merge",
@@ -825,6 +914,25 @@ class GitHubWorkflow:
             state="experiment_merged",
             version=after.merge_commit_sha,
         )
+
+    def _branch_head_sha(self, branch: str) -> str:
+        response = self._request(
+            "GET",
+            f"/repos/{self._repo}/git/ref/heads/{quote(branch, safe='')}",
+            expected_statuses={200},
+        )
+        git_ref = _validated_response(
+            _GitRefResponse,
+            response.json_body,
+            "git reference",
+        )
+        expected_ref = f"refs/heads/{branch}"
+        if git_ref.ref != expected_ref:
+            raise ReconciliationError(
+                f"GitHub returned git reference {git_ref.ref!r}, "
+                f"expected {expected_ref!r}"
+            )
+        return git_ref.object.sha
 
     def _pull_at_head(
         self,
@@ -1050,12 +1158,7 @@ class GitHubWorkflow:
         query = urlencode(
             {
                 "state": "open",
-                "labels": ",".join(
-                    (
-                        f"student:{student}",
-                        "status:wip",
-                    )
-                ),
+                "labels": f"student:{student}",
                 "per_page": 100,
             }
         )
@@ -1076,7 +1179,13 @@ class GitHubWorkflow:
             )
             for item in response.json_body
         )
-        return tuple(issue.number for issue in issues if issue.pull_request is not None)
+        return tuple(
+            issue.number
+            for issue in issues
+            if issue.pull_request is not None
+            and {label.name for label in issue.labels}
+            & {"status:wip", "status:review"}
+        )
 
     def _require_result(
         self,
@@ -1331,7 +1440,7 @@ def _require_assignment_snapshot(
 def _require_assignment_result(
     snapshot: PullRequestSnapshot,
     result: ExperimentResult,
-) -> None:
+) -> AssignmentRecord:
     try:
         markers = parse_assignment_markers(snapshot.body)
     except ValueError as error:
@@ -1371,6 +1480,32 @@ def _require_assignment_result(
             f"student={assignment.student!r}. Refresh PR #{snapshot.number} and "
             "rebuild the result from its current assignment marker before retrying."
         )
+    return record
+
+
+def _require_current_baseline(
+    assignment: AssignmentRecord,
+    *,
+    current_base_sha: str,
+    accepted_base_sha: str | None,
+) -> None:
+    if accepted_base_sha is not None:
+        accepted_base_sha = accepted_base_sha.strip()
+        if not accepted_base_sha:
+            raise ValueError("accepted_base_sha must not be empty")
+        if accepted_base_sha != current_base_sha:
+            raise StaleBaselineError(
+                f"accepted baseline {accepted_base_sha} does not match live "
+                f"{assignment.base_ref}@{current_base_sha}"
+            )
+    if current_base_sha == assignment.base_sha or accepted_base_sha is not None:
+        return
+    raise StaleBaselineError(
+        f"assignment baseline {assignment.base_ref}@{assignment.base_sha} has "
+        f"advanced to {current_base_sha}; review the result against the new "
+        "baseline and rerun if scientifically necessary, or deliberately retry "
+        f"with accepted_base_sha={current_base_sha!r}"
+    )
 
 
 def _require_assignment_identity(
@@ -1407,6 +1542,34 @@ def _require_assignment_identity(
 def _require_open(snapshot: PullRequestSnapshot) -> None:
     if snapshot.state != "open" or snapshot.merged:
         raise WorkflowPreconditionError("pull request must be open and unmerged")
+
+
+def _require_current_revision(
+    assignment: AssignmentRecord,
+    revision_id: str,
+) -> None:
+    if assignment.revision_id != revision_id:
+        raise StaleAssignmentRevisionError(
+            f"assignment revision is {assignment.revision_id!r}, "
+            f"expected {revision_id!r}"
+        )
+
+
+def _require_active_assignment_routing(
+    snapshot: PullRequestSnapshot,
+    assignment: AssignmentRecord,
+) -> None:
+    labels = set(snapshot.labels)
+    student_labels = {label for label in labels if label.startswith("student:")}
+    if student_labels != {f"student:{assignment.student}"}:
+        raise WorkflowPreconditionError(
+            "pull request must retain exactly its assigned student label"
+        )
+    status_labels = labels & {"status:wip", "status:review"}
+    if len(status_labels) != 1:
+        raise WorkflowPreconditionError(
+            "pull request must have exactly one active assignment status"
+        )
 
 
 def _require_labels(

@@ -64,9 +64,9 @@ OpenHands retains its Browser, task tracker, Think, terminal, and file-editing f
 
 - `delegate_agent`: starts a file-defined `general-purpose`, `explore`, `search`, or `bash-runner` agent with a `smart` or `fast` model tier, optional parent context, and foreground or background delivery. Bash Runner isolates noisy tests, builds, linters, and CLI inspection and returns only counts and actionable failures. Up to eight independent calls run concurrently.
 - `get_prs`: reads explicit PR numbers, an inclusive date range, or a search result. It includes the PR body, every issue comment, submitted review, and inline review comment. Five PRs are returned inline by default. Larger results become one Markdown artifact outside the target checkout; raising the inline limit above five risks polluting model context.
-- `github_transition`: performs verified, idempotent assignments, branch publication, revision requests, human-Issue responses, result submission, label reconciliation, closure, and merging.
-- `run_training` and `get_training_status`: start and inspect a supervised process without streaming raw progress through model history.
-- `monitor_training`: records the W&B metric, direction, gates, staleness policy, terminal states, and current conversation UUID to monitor.
+- `github_transition`: performs verified, idempotent assignments, branch publication, non-revision feedback, revision requests, human-Issue responses, result submission, label reconciliation, closure, and merging.
+- `run_training` and `get_training_status`: start and inspect a supervised process without streaming raw progress through model history. Every launch automatically registers terminal-state monitoring for its conversation.
+- `monitor_training`: upgrades the default monitor with a W&B metric, direction, gates, and staleness policy.
 
 The main advisor and student terminal denies raw GitHub mutations, `git push`, direct training launches, sleeps, polling loops, and log streams. The plugin applies the same hook policy to file-defined subagents' raw terminal, while the main terminal also enforces it in process.
 
@@ -83,7 +83,7 @@ File-defined subagents receive only the tools declared by their definition. Bash
 - Senpai does not prune conversations. Operators own storage retention.
 - Set `human_issues: false` to disable human-Issue polling for isolated launches.
 
-When training starts, the student registers `monitor_training` and ends its turn. The controller polls process state and the latest selected W&B metric without putting routine samples into model history. A gate, stale metric, terminal state, or bounded monitor failure creates one compact persisted signal and directly resumes the original student conversation. Individual monitor failures do not block other monitors or GitHub events.
+Before training, the student commits the exact implementation it will run. `run_training` immediately registers terminal-state monitoring; the student calls `monitor_training` only to add useful metric gates or staleness policy, then ends its turn. The controller polls process state and the latest selected W&B metric without putting routine samples into model history. A gate, stale metric, terminal state, or bounded monitor failure creates one compact persisted signal and directly resumes the original student conversation. Individual monitor failures do not block other monitors or GitHub events.
 
 The advisor watches GitHub while a turn is active and can receive a new `review_ready` event through OpenHands' concurrent message path. Advisor and student child-agent results use role-local durable event storage; they are not cross-node messages. A result arriving after a turn ends wakes the exact parent conversation.
 

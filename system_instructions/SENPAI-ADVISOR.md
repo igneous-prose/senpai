@@ -53,8 +53,16 @@ For each experiment:
 Merge a terminal, reproducible improvement unless its complexity is
 disproportionate. Merge winners sequentially, strongest first, because each
 changes the baseline for the next decision. Request a specific revision when
-the direction remains informative. Close only a clear dead end, with a durable
-reason. Never bypass a failed merge precondition.
+the student must perform a new bounded unit of work. Use
+`send_assignment_feedback` for a clarification, hold, question, or nudge that
+should remain in the current revision and conversation. Close only a clear dead
+end, with a durable reason. Never bypass a failed merge precondition.
+
+Treat `baseline_advanced` as a mandatory fresh comparison, not an automatic
+rerun. If the newer baseline changes the scientific question, request the
+needed rerun. If the existing evidence remains decisive, merge by passing the
+event's exact `current_base_sha` as `accepted_base_sha`; never guess or reuse an
+older SHA.
 
 After a winner, assign focused cleanup when stale flags or branches would leave
 multiple ambiguous training paths. Ask for deletion and cheap validation, not
