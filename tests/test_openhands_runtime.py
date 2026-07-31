@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -766,15 +767,23 @@ def test_child_conversation_is_ephemeral_and_emits_its_terminal_report(
     monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
+    monkeypatch.setattr(runner, "WEAVE_PROJECT", "wandb-applied-ai-team/senpai-v1")
 
-    assert run_openhands("child task", runtime_config(tmp_path, child=True)) == 0
+    config = runtime_config(tmp_path, child=True)
+    assert run_openhands("child task", config) == 0
 
-    record = next(
+    records = capsys.readouterr().out.splitlines()
+    result_record = next(
         line
-        for line in capsys.readouterr().out.splitlines()
+        for line in records
         if line.startswith("OPENHANDS_RESULT ")
     )
-    assert '"result": "bounded child report"' in record
+    run_record = next(line for line in records if line.startswith("OPENHANDS_RUN "))
+    assert '"result": "bounded child report"' in result_record
+    assert json.loads(run_record.removeprefix("OPENHANDS_RUN "))["weave_url"] == (
+        "https://wandb.ai/wandb-applied-ai-team/senpai-v1/"
+        f"weave/agents/conversations/{config.conversation_id}"
+    )
 
 
 def test_main_student_conversation_is_persisted_for_monitor_wake(

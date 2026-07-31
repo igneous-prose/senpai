@@ -216,7 +216,7 @@ Useful recovery facts:
 
 ## Observability
 
-When `WANDB_ENTITY` and `WANDB_PROJECT` are configured, `weave-openhands` traces advisor, student, and child-agent runs to that W&B Weave project. It records agent, LLM, and tool spans under the durable OpenHands conversation ID and flushes before each runner or controller process exits.
+When `WANDB_ENTITY` and `WANDB_PROJECT` are configured, `weave-openhands` traces advisor, student, and child-agent runs to that W&B Weave project. It records agent, LLM, and tool spans under the durable OpenHands conversation ID and flushes before each runner or controller process exits. These records live in **Agent Observability**, not legacy Weave Calls: use the `weave_url` printed in `OPENHANDS_RUN` or query `weave.init("entity/project").get_agent_spans()`.
 
 GitHub and W&B remain the shared operational records. Role-local state exists to resume conversations, deduplicate events, supervise processes, and monitor runs; it is not an inter-node queue.
 

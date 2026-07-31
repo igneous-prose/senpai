@@ -452,7 +452,9 @@ API keys, tokens, passwords, secrets, credentials, and the selected custom
 model credential before content is sent. The pinned `weave-openhands`
 integration is initialized before OpenHands imports. Each conversation run is
 an agent trace with child LLM and tool spans, all carrying the durable
-OpenHands conversation ID.
+OpenHands conversation ID. These OTLP records are stored in Weave Agent
+Observability and queried with `get_agent_spans()`, not the legacy Calls API;
+`OPENHANDS_RUN.weave_url` links directly to the conversation.
 
 ## Images and launch acceptance
 

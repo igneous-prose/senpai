@@ -40,6 +40,7 @@ from senpai_agent.weave_monitoring import (
     finish_weave_monitoring,
     initialize_weave_monitoring,
     register_trace_secret,
+    weave_conversation_url,
 )
 
 WEAVE_PROJECT = initialize_weave_monitoring()
@@ -698,6 +699,10 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "plugin_dir": str(config.plugin_dir),
                 "available_agents": available_agents,
                 "weave_project": WEAVE_PROJECT,
+                "weave_url": weave_conversation_url(
+                    WEAVE_PROJECT,
+                    config.conversation_id,
+                ),
                 "child": config.child,
             },
             sort_keys=True,

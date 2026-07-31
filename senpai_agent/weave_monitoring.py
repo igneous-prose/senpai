@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from threading import Lock
+from uuid import UUID
 
 from weave_openhands import finish as weave_finish
 from weave_openhands import init as weave_init
@@ -44,6 +45,19 @@ def weave_agent_name(env: Mapping[str, str]) -> str:
     if role == "student" and student_name:
         return f"student-{student_name}"
     return role
+
+
+def weave_conversation_url(
+    project_name: str | None,
+    conversation_id: str | UUID,
+) -> str | None:
+    if project_name is None:
+        return None
+    entity, project = project_name.split("/", 1)
+    return (
+        f"https://wandb.ai/{entity}/{project}/weave/agents/conversations/"
+        f"{conversation_id}"
+    )
 
 
 class SecretRedactor:

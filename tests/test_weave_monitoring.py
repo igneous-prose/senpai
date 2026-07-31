@@ -59,6 +59,17 @@ def test_monitoring_requires_complete_wandb_project_configuration():
         monitoring.weave_project_name({"WANDB_ENTITY": "wandb-applied-ai-team"})
 
 
+def test_agent_observability_url_targets_the_durable_conversation():
+    assert monitoring.weave_conversation_url(
+        "wandb-applied-ai-team/senpai-v1",
+        "conversation-17",
+    ) == (
+        "https://wandb.ai/wandb-applied-ai-team/senpai-v1/"
+        "weave/agents/conversations/conversation-17"
+    )
+    assert monitoring.weave_conversation_url(None, "conversation-17") is None
+
+
 def test_monitoring_redacts_a_secret_registered_after_initialization(monkeypatch):
     calls = []
     monkeypatch.setattr(monitoring, "_initialized", False)
