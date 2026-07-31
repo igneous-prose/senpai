@@ -541,7 +541,7 @@ def test_stale_and_terminal_changes_are_compact_actionable_signals(tmp_path: Pat
     terminal, _ = evaluate_monitor(
         spec,
         result(tmp_path, TrainingState.FAILED),
-        None,
+        MetricSample(value=0.9, observed_at=now),
         previous=previous_sample,
         emitted=frozenset(),
         now=now,
@@ -550,6 +550,8 @@ def test_stale_and_terminal_changes_are_compact_actionable_signals(tmp_path: Pat
     assert stale.signals[0].kind == "metric_stale"
     assert [signal.kind for signal in terminal.signals] == ["training_status"]
     assert terminal.signals[0].hard_failure is True
+    assert terminal.signals[0].metric is None
+    assert terminal.signals[0].value is None
     assert len(terminal.signals[0].model_dump_json()) < 2_000
 
 

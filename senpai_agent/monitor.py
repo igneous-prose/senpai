@@ -119,8 +119,6 @@ def evaluate_monitor(
                     kind="training_status",
                     dedupe_key=key,
                     training_id=spec.training_id,
-                    metric=spec.metric,
-                    value=sample.value if sample is not None else None,
                     state=result.state,
                     detail=(
                         f"Training reached terminal state {result.state.value}"
