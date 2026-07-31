@@ -34,7 +34,114 @@ _HELP_FLAGS = {"-h", "--help"}
 _REDIRECTION_OPERATORS = {"<", ">", ">>", "<>", ">|", "<&", ">&", "&>", "&>>"}
 
 
+def _without_literal_file_heredocs(command: str) -> str:
+    """Remove literal heredocs written directly to files by ``cat``."""
+    if "<<" not in command:
+        return command
+
+    import tree_sitter_bash
+    from tree_sitter import Language, Parser
+
+    source = command.encode()
+    tree = Parser(Language(tree_sitter_bash.language())).parse(source)
+    if tree.root_node.has_error:
+        return command
+    if any(
+        node.type == "function_definition"
+        for node in _descendants(tree.root_node)
+    ):
+        return command
+
+    policy_source = bytearray(source)
+    nodes = [tree.root_node]
+    while nodes:
+        node = nodes.pop()
+        if node.type == "heredoc_redirect" and _is_literal_cat_file_sink(
+            node, source
+        ):
+            start = next(
+                child for child in node.children if child.type == "heredoc_start"
+            )
+            delimiter = source[start.start_byte : start.end_byte]
+            if any(mark in delimiter for mark in b"'\"\\"):
+                for child in node.children:
+                    if child.type in {"heredoc_body", "heredoc_end"}:
+                        for position in range(child.start_byte, child.end_byte):
+                            if policy_source[position] not in b"\r\n":
+                                policy_source[position] = ord(" ")
+        nodes.extend(node.children)
+    return policy_source.decode()
+
+
+def _is_literal_cat_file_sink(node: object, source: bytes) -> bool:
+    parent = node.parent
+    if parent is None or parent.type != "redirected_statement":
+        return False
+    body = parent.child_by_field_name("body")
+    name = body.child_by_field_name("name") if body is not None else None
+    if name is None or source[name.start_byte : name.end_byte] != b"cat":
+        return False
+
+    if any(child.type == "pipeline" for child in node.children):
+        return False
+    redirects = [
+        redirect
+        for owner in (parent, node)
+        for redirect in owner.children_by_field_name("redirect")
+        if redirect.type == "file_redirect"
+    ]
+    stdout_redirects = [
+        redirect
+        for redirect in redirects
+        if _redirects_stdout(redirect, source)
+    ]
+    if not stdout_redirects:
+        return False
+    redirect = max(stdout_redirects, key=lambda candidate: candidate.start_byte)
+    return _redirects_stdout_to_literal_file(redirect, source)
+
+
+def _redirects_stdout(redirect: object, source: bytes) -> bool:
+    operator = next(
+        (child.type for child in redirect.children if child.type in {">", ">>", ">|"}),
+        None,
+    )
+    descriptor = redirect.child_by_field_name("descriptor")
+    descriptor_text = (
+        source[descriptor.start_byte : descriptor.end_byte]
+        if descriptor is not None
+        else b"1"
+    )
+    return operator is not None and descriptor_text == b"1"
+
+
+def _redirects_stdout_to_literal_file(redirect: object, source: bytes) -> bool:
+    destination = redirect.child_by_field_name("destination")
+    if destination is None:
+        return False
+    if destination.type not in {"word", "raw_string", "string"}:
+        return False
+    if destination.type == "word" and destination.named_child_count:
+        return False
+    if destination.type == "string" and any(
+        child.type != "string_content" for child in destination.named_children
+    ):
+        return False
+    target = source[destination.start_byte : destination.end_byte].strip(b"'\"")
+    return target not in {b"-", b"/dev/stdout", b"/dev/stderr"} and not target.startswith(
+        (b"/dev/fd/", b"/proc/")
+    )
+
+
+def _descendants(root: object) -> list[object]:
+    nodes = [root]
+    for node in nodes:
+        nodes.extend(node.children)
+    return nodes
+
+
 def _command_segments(command: str) -> list[list[str]]:
+    command = _without_literal_file_heredocs(command)
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>\n")
     lexer.commenters = ""
     lexer.whitespace = " \t\r"

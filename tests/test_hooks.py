@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from openhands.sdk.plugin import Plugin
 
-from senpai_agent.hooks import hook_main, terminal_policy
+from senpai_agent.hooks import (
+    _without_literal_file_heredocs,
+    hook_main,
+    terminal_policy,
+)
 from senpai_agent.training import TrainingResult, TrainingState
 
 REPO_ROOT = Path(__file__).parents[1]
@@ -111,6 +115,83 @@ def test_terminal_policy_allows_read_only_and_text_references(
     ],
 )
 def test_terminal_policy_denies_training_arguments_mixed_with_help(
+    command: str,
+    tmp_path: Path,
+):
+    assert terminal_policy(command, "student", tmp_path).allowed is False
+
+
+def test_terminal_policy_treats_quoted_heredoc_body_as_literal_data(
+    tmp_path: Path,
+):
+    command = """cat > /tmp/pull_wandb.py << 'PY'
+for run in runs:
+    while run.state == "running":
+        print("git push origin experiment")
+PY
+python /tmp/pull_wandb.py
+"""
+
+    assert terminal_policy(command, "student", tmp_path).allowed is True
+
+
+def test_terminal_policy_ignores_restricted_words_inside_quoted_heredoc(
+    tmp_path: Path,
+):
+    command = """cat > /tmp/notes.txt <<'EOF'
+git push origin experiment
+gh pr merge 17 --squash
+python train.py --epochs 10
+sleep 300
+EOF
+"""
+
+    assert terminal_policy(command, "student", tmp_path).allowed is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "bash <<'EOF'\ngit push origin experiment\nEOF",
+        "sh -s <<'EOF'\npython train.py --epochs 10\nEOF",
+        "cat <<'EOF' | sh\ngit push origin experiment\nEOF",
+        "source /dev/stdin <<'EOF'\ngh pr merge 17 --squash\nEOF",
+        "cat > /dev/stdout <<'EOF' | sh\ngit push origin experiment\nEOF",
+        "cat > >(sh) <<'EOF'\ngit push origin experiment\nEOF",
+        "cat() { sh; }; cat >/tmp/a <<'EOF'\n"
+        "git push origin experiment\nEOF",
+    ],
+)
+def test_terminal_policy_checks_executable_quoted_heredocs(
+    command: str,
+    tmp_path: Path,
+):
+    assert terminal_policy(command, "student", tmp_path).allowed is False
+
+
+def test_nested_redirect_is_not_mistaken_for_cat_output():
+    command = (
+        'eval "$(cat "$(echo x >/tmp/y; echo -)" <<\'EOF\'\n'
+        "git push origin experiment\nEOF\n)\""
+    )
+
+    assert _without_literal_file_heredocs(command) == command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin experiment; cat <<'EOF'\ntext\nEOF",
+        "cat <<'EOF'\ntext\nEOF\ngit push origin experiment",
+        "cat <<'EOF'; python train.py --epochs 10\ntext\nEOF",
+        "cat <<'EOF'\ntext\nEOF\ngh pr merge 17 --squash",
+        "cat <<'EOF'\ntext\nEOF\nsleep 300",
+        "printf '%s\\n' \"<<'EOF'\"\ngit push origin experiment\nEOF",
+        "echo safe # <<'EOF'\ngit push origin experiment\nEOF",
+        'EOF=1; echo $((1 << "EOF"))\ngit push origin experiment\nEOF',
+    ],
+)
+def test_terminal_policy_checks_commands_around_quoted_heredocs(
     command: str,
     tmp_path: Path,
 ):
