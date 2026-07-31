@@ -27,7 +27,9 @@ from senpai_agent.github import (
 )
 from senpai_agent.github_workflow import (
     MutationResult,
+    PullHeadMismatchError,
     StaleAssignmentRevisionError,
+    WorkflowPreconditionError,
 )
 from senpai_agent.models import (
     AssignmentKey,
@@ -306,11 +308,11 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         assert "transition" in transition_schema["properties"]
         transition_property = transition_schema["properties"]["transition"]
         transition_description = transition_property["description"]
-        transition_variants = {
-            variant["properties"]["operation"]["enum"][0]: variant
-            for variant in transition_property["oneOf"]
-        }
-        assert set(transition_variants) == {
+        transition_properties = transition_property["properties"]
+        assert transition_property["type"] == "object"
+        assert "oneOf" not in transition_property
+        assert transition_property["required"] == ["operation"]
+        assert set(transition_properties["operation"]["enum"]) == {
             "create_assignment",
             "push_branch",
             "reconcile_labels",
@@ -320,16 +322,7 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
             "close_experiment",
             "merge_experiment",
         }
-        submit_tool_schema = transition_variants["submit_result"]
-        assert set(submit_tool_schema["required"]) == {
-            "operation",
-            "pr_number",
-            "branch",
-            "expected_remote_sha",
-            "expected_head_sha",
-            "result",
-        }
-        submit_properties = submit_tool_schema["properties"]
+        submit_properties = transition_properties
         result_tool_schema = submit_properties["result"]
         assert set(result_tool_schema["required"]) == {
             "assignment",
@@ -1012,6 +1005,84 @@ def test_student_result_validates_the_declared_local_head_before_push(
 
         assert observation.state == "result_submitted"
         assert push_calls[0][1]["expected_local_sha"] == "c" * 40
+    finally:
+        close_tools(tools)
+
+
+@pytest.mark.parametrize(
+    ("error_type", "failures", "expected_attempts", "expected_sleeps"),
+    [
+        (PullHeadMismatchError, 2, 3, [0.5, 1.0]),
+        (WorkflowPreconditionError, 1, 1, []),
+    ],
+    ids=("eventual-head-convergence", "other-precondition"),
+)
+def test_student_result_retries_only_post_push_head_propagation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    error_type,
+    failures,
+    expected_attempts,
+    expected_sleeps,
+):
+    github = FakeGitHubWorkflow()
+    push_calls = []
+    sleeps = []
+    attempts = 0
+
+    def push(workspace, **kwargs):
+        push_calls.append((workspace, kwargs))
+        return PushResult(
+            changed=True,
+            branch=kwargs["branch"],
+            head_sha=kwargs["expected_local_sha"],
+        )
+
+    def submit(number, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= failures:
+            raise error_type("GitHub has not reached the requested state")
+        return MutationResult(
+            changed=True,
+            resource_url=f"https://github.test/pull/{number}",
+            state="result_submitted",
+            version=kwargs["expected_head_sha"],
+        )
+
+    github.submit_result = submit
+    monkeypatch.setattr("senpai_agent.tools.push_assignment_branch", push)
+    monkeypatch.setattr("senpai_agent.tools.time.sleep", sleeps.append)
+    tools = make_tools(
+        tmp_path,
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=github,
+        role="student",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+    action = GitHubTransitionAction(
+        transition=SubmitResultTransition(
+            operation="submit_result",
+            pr_number=17,
+            branch="student-one/candidate",
+            expected_remote_sha="a" * 40,
+            expected_head_sha="c" * 40,
+            result=experiment_result(),
+        )
+    )
+
+    try:
+        if error_type is WorkflowPreconditionError:
+            with pytest.raises(WorkflowPreconditionError):
+                transition(action)
+        else:
+            assert transition(action).state == "result_submitted"
+        assert attempts == expected_attempts
+        assert len(push_calls) == 1
+        assert sleeps == expected_sleeps
     finally:
         close_tools(tools)
 

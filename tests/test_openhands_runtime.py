@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -48,6 +49,25 @@ PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
 BASH_RUNNER_AGENT = REPO_ROOT / ".agents" / "agents" / "bash-runner.md"
 EXPLORE_AGENT = REPO_ROOT / ".agents" / "agents" / "explore.md"
 SEARCH_AGENT = REPO_ROOT / ".agents" / "agents" / "search.md"
+
+
+def test_openhands_fork_revision_is_consistent_across_install_paths():
+    paths = (
+        REPO_ROOT / "pyproject.toml",
+        REPO_ROOT / "uv.lock",
+        REPO_ROOT / ".github" / "workflows" / "test.yaml",
+    )
+    pins = []
+    for path in paths:
+        matches = {
+            match
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if "morganmcg1/software-agent-sdk" in line
+            for match in re.findall(r"[0-9a-f]{40}", line)
+        }
+        assert len(matches) == 1, f"expected one OpenHands fork revision in {path}"
+        pins.extend(matches)
+    assert len(set(pins)) == 1
 
 
 def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:

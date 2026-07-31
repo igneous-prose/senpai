@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -34,7 +35,12 @@ from senpai_agent.git_workflow import (
     push_assignment_branch,
 )
 from senpai_agent.github import PRRetrievalResult, get_prs
-from senpai_agent.github_workflow import GitHubWorkflow, StaleAssignmentRevisionError
+from senpai_agent.github_workflow import (
+    GitHubWorkflow,
+    MutationResult,
+    PullHeadMismatchError,
+    StaleAssignmentRevisionError,
+)
 from senpai_agent.models import (
     AssignmentRecord,
     DispositionRecord,
@@ -61,6 +67,7 @@ class GitHubCredentials:
 
 
 _GITHUB_CREDENTIALS: GitHubCredentials | None = None
+_POST_PUSH_HEAD_RETRY_DELAYS = (0.5, 1.0, 2.0, 4.0, 8.0)
 _TRAINING_RUNTIMES: dict[
     Path,
     tuple[TrainingSupervisor, MonitorStore],
@@ -827,11 +834,7 @@ class _GitHubTransitionExecutor(
                 expected_local_sha=transition.expected_head_sha,
                 token=self.git_token,
             )
-            result = self.workflow.submit_result(
-                transition.pr_number,
-                expected_head_sha=transition.expected_head_sha,
-                result=transition.result,
-            )
+            result = self._submit_result_after_push(transition)
         elif isinstance(transition, ReconcileLabelsTransition):
             self._require_role("advisor")
             result = self.workflow.reconcile_labels(
@@ -889,6 +892,25 @@ class _GitHubTransitionExecutor(
             resource_url=result.resource_url,
             state=result.state,
             version=result.version,
+        )
+
+    def _submit_result_after_push(
+        self,
+        transition: SubmitResultTransition,
+    ) -> MutationResult:
+        for delay in _POST_PUSH_HEAD_RETRY_DELAYS:
+            try:
+                return self.workflow.submit_result(
+                    transition.pr_number,
+                    expected_head_sha=transition.expected_head_sha,
+                    result=transition.result,
+                )
+            except PullHeadMismatchError:
+                time.sleep(delay)
+        return self.workflow.submit_result(
+            transition.pr_number,
+            expected_head_sha=transition.expected_head_sha,
+            result=transition.result,
         )
 
     def _require_role(self, expected: str) -> None:

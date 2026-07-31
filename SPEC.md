@@ -193,8 +193,8 @@ LLM or stored model profile.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-at commit `6822ab324b7c207dce55fe25ab927dab5d874c2b`, based on OpenHands SDK
-1.39.1.
+and is based on OpenHands SDK 1.39.1. `pyproject.toml` and `uv.lock` are the
+authoritative dependency revision; CI verifies the same revision directly.
 
 `prompt_cache_configuration()` sets:
 

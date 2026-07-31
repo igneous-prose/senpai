@@ -65,6 +65,10 @@ class WorkflowPreconditionError(GitHubWorkflowError):
     """Current GitHub state does not permit the requested transition."""
 
 
+class PullHeadMismatchError(WorkflowPreconditionError):
+    """GitHub's pull-request snapshot has not reached the expected head."""
+
+
 class StaleAssignmentRevisionError(WorkflowPreconditionError):
     """The result belongs to an older assignment revision."""
 
@@ -1270,7 +1274,7 @@ def _require_head(snapshot: PullRequestSnapshot, expected_head_sha: str) -> None
     if not expected_head_sha:
         raise ValueError("expected_head_sha must not be empty")
     if snapshot.head_sha != expected_head_sha:
-        raise WorkflowPreconditionError(
+        raise PullHeadMismatchError(
             f"pull request head SHA is {snapshot.head_sha}, "
             f"expected {expected_head_sha}"
         )
