@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import pytest
 from openhands.sdk.context.view import View
 from openhands.sdk.conversation.event_store import EventLog
-from openhands.sdk.event import MessageEvent, ObservationEvent
+from openhands.sdk.event import ActionEvent, MessageEvent, ObservationEvent
 from openhands.sdk.io import InMemoryFileStore
-from openhands.sdk.llm import Message, TextContent
+from openhands.sdk.llm import Message, MessageToolCall, TextContent
 from openhands.sdk.tool import Tool, resolve_tool
 from openhands.tools.terminal import TerminalAction, TerminalObservation
 from pydantic import SecretStr
@@ -28,6 +28,7 @@ from senpai_agent.github_workflow import MutationResult
 from senpai_agent.models import (
     AssignmentKey,
     ExperimentResult,
+    MetricComparison,
     ResultStatus,
 )
 from senpai_agent.tools import (
@@ -411,6 +412,57 @@ def test_running_training_observation_survives_event_log_restore():
     assert isinstance(restored, ObservationEvent)
     assert isinstance(restored.observation, TrainingResultObservation)
     assert restored.observation.exit_code is None
+
+
+@pytest.mark.parametrize(
+    "primary_metric",
+    [
+        None,
+        MetricComparison(
+            name="validation_loss",
+            direction="minimize",
+            baseline=None,
+            candidate=0.4,
+            delta=None,
+        ),
+    ],
+    ids=["no-primary-metric", "nullable-comparison-values"],
+)
+def test_submit_result_action_survives_event_log_restore(primary_metric):
+    result = experiment_result().model_copy(
+        update={"primary_metric": primary_metric},
+    )
+    action = GitHubTransitionAction(
+        transition=SubmitResultTransition(
+            operation="submit_result",
+            pr_number=17,
+            branch="candidate",
+            expected_remote_sha="a" * 40,
+            expected_head_sha=result.commit_sha,
+            result=result,
+        )
+    )
+    event = ActionEvent(
+        thought=[],
+        action=action,
+        tool_name="github_transition",
+        tool_call_id="call-17",
+        tool_call=MessageToolCall(
+            id="call-17",
+            name="github_transition",
+            arguments=json.dumps(action.model_dump(mode="json")),
+            origin="completion",
+        ),
+        llm_response_id="response-17",
+    )
+    store = InMemoryFileStore()
+    EventLog(store).append(event)
+
+    restored = EventLog(store)[0]
+
+    assert isinstance(restored, ActionEvent)
+    assert isinstance(restored.action, GitHubTransitionAction)
+    assert restored.action.transition.result.primary_metric == primary_metric
 
 
 def test_training_tool_interrupt_cancels_the_supervisor(tmp_path: Path):

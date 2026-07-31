@@ -76,9 +76,9 @@ class WandbRunRef(Contract):
 class MetricComparison(Contract):
     name: _NonEmptyString
     direction: Literal["minimize", "maximize"]
-    baseline: float | None
+    baseline: float | None = None
     candidate: float
-    delta: float | None
+    delta: float | None = None
 
 
 class ExperimentResult(Contract):
@@ -88,7 +88,7 @@ class ExperimentResult(Contract):
     hypothesis: _NonEmptyString
     summary: Annotated[str, Field(min_length=1, max_length=4_000)]
     runs: tuple[WandbRunRef, ...]
-    primary_metric: MetricComparison | None
+    primary_metric: MetricComparison | None = None
     commit_sha: _NonEmptyString
 
 
