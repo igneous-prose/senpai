@@ -44,6 +44,10 @@ PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
         "timeout 3600 tail -f training.log",
         "setsid sleep 3600",
         "for i in $(seq 120); do sleep 30; done",
+        "for (( ; ; )); do echo waiting; done",
+        "for id in 1 2; do git push origin experiment; done",
+        "for id in 1 2; do python train.py --epochs 10; done",
+        "echo inspected;\ngit push origin experiment",
         "watch nvidia-smi",
         "sleep 300",
     ],
@@ -71,6 +75,11 @@ def test_terminal_policy_denies_workflow_bypasses(command: str, tmp_path: Path):
         "git status --short",
         "timeout 30 pytest -q",
         "setsid pytest -q",
+        (
+            "for id in run-a run-b; do echo \"$id\"; "
+            "grep -n \"$id\" results.log | head -n 3; echo; done"
+        ),
+        "for id in run-a run-b\ndo\necho \"$id\"\ndone",
     ],
 )
 def test_terminal_policy_allows_read_only_and_text_references(

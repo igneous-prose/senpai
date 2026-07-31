@@ -17,7 +17,8 @@ class PolicyDecision:
     reason: str = ""
 
 
-_SHELL_SEPARATORS = {";", "&&", "||", "|", "&"}
+_SHELL_SEPARATOR_CHARACTERS = frozenset(";&|\n")
+_SHELL_BODY_PREFIXES = {"do", "elif", "else", "if", "then"}
 _GH_READ_ONLY = {
     "auth": {"status"},
     "issue": {"list", "status", "view"},
@@ -32,12 +33,13 @@ _TRAIN_SCRIPT = re.compile(r"^train[^/]*[.]py$")
 
 
 def _command_segments(command: str) -> list[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
     lexer.commenters = ""
+    lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     segments: list[list[str]] = [[]]
     for token in lexer:
-        if token in _SHELL_SEPARATORS:
+        if set(token) <= _SHELL_SEPARATOR_CHARACTERS:
             if segments[-1]:
                 segments.append([])
         else:
@@ -249,6 +251,8 @@ def _segment_policy(tokens: list[str]) -> PolicyDecision:
     program = Path(tokens[index]).name
 
     arguments = tokens[index + 1 :]
+    if program in _SHELL_BODY_PREFIXES:
+        return _segment_policy(arguments)
     if program == "env":
         command = _env_command(arguments)
         return _segment_policy(command) if command else PolicyDecision(True)
@@ -289,7 +293,15 @@ def _segment_policy(tokens: list[str]) -> PolicyDecision:
             "Use run_training so timeouts, logs, status, and W&B IDs are supervised.",
         )
 
-    if program in {"for", "sleep", "watch", "while", "until"}:
+    if program == "for":
+        if any("((" in argument for argument in arguments):
+            return PolicyDecision(
+                False,
+                "Do not run potentially unbounded foreground loops; use Senpai "
+                "events or status tools.",
+            )
+        return PolicyDecision(True)
+    if program in {"sleep", "watch", "while", "until"}:
         return PolicyDecision(
             False,
             "Do not run foreground polling loops; use Senpai events or status tools.",
