@@ -75,6 +75,10 @@ def test_terminal_policy_denies_workflow_bypasses(command: str, tmp_path: Path):
         "python train.py -h",
         "timeout 120 python train.py --help",
         "python -m package.train --help",
+        (
+            "python train.py --help 2>&1 | grep -E 'slice|weight|loss'; "
+            "echo exit=$?"
+        ),
         "./train_baseline.py --help",
         "torchrun --help",
         "tail -n 50 training.log",
@@ -101,6 +105,7 @@ def test_terminal_policy_allows_read_only_and_text_references(
         "python train.py --help --epochs 10",
         "python train.py -h --epochs 10",
         "python -m package.train --help --epochs 10",
+        "python train.py --help 2>&1 --epochs 10 | grep epochs",
         "./train_baseline.py --help --epochs 10",
         "torchrun --help train.py",
     ],

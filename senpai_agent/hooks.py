@@ -31,10 +31,11 @@ _GH_READ_ONLY = {
 _TRAIN_LAUNCHERS = {"accelerate", "deepspeed", "torchrun"}
 _TRAIN_SCRIPT = re.compile(r"^train[^/]*[.]py$")
 _HELP_FLAGS = {"-h", "--help"}
+_REDIRECTION_OPERATORS = {"<", ">", ">>", "<>", ">|", "<&", ">&", "&>", "&>>"}
 
 
 def _command_segments(command: str) -> list[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>\n")
     lexer.commenters = ""
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -245,7 +246,22 @@ def _python_launches_training(tokens: list[str], index: int) -> bool:
 
 
 def _help_only(arguments: list[str]) -> bool:
-    return len(arguments) == 1 and arguments[0] in _HELP_FLAGS
+    command_arguments: list[str] = []
+    position = 0
+    while position < len(arguments):
+        operator_position = position + int(arguments[position].isdecimal())
+        if (
+            operator_position < len(arguments)
+            and arguments[operator_position] in _REDIRECTION_OPERATORS
+        ):
+            target_position = operator_position + 1
+            if target_position >= len(arguments):
+                return False
+            position = target_position + 1
+            continue
+        command_arguments.append(arguments[position])
+        position += 1
+    return len(command_arguments) == 1 and command_arguments[0] in _HELP_FLAGS
 
 
 def _timeout_command(arguments: list[str]) -> list[str]:
