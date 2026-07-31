@@ -14,6 +14,7 @@ from senpai_agent.github_workflow import (
     HttpResponse,
     PullRequestSnapshot,
     ReconciliationError,
+    StaleAssignmentRevisionError,
     WorkflowPreconditionError,
 )
 from senpai_agent.models import (
@@ -931,7 +932,7 @@ def test_submit_result_preflight_rejects_wrong_assignment_without_mutation():
         }
     )
 
-    with pytest.raises(WorkflowPreconditionError, match="assignment"):
+    with pytest.raises(WorkflowPreconditionError) as raised:
         workflow(fake).preflight_submit_result(
             7,
             branch="student-one/lower-lr",
@@ -940,6 +941,47 @@ def test_submit_result_preflight_rejects_wrong_assignment_without_mutation():
             result=result,
         )
 
+    message = str(raised.value)
+    assert "assignment mismatch (assignment_id)" in message
+    assert (
+        "Current PR #7 marker: revision='revision-1', student='student-one', "
+        f"head='{HEAD_SHA}'"
+        in message
+    )
+    assert "result: revision='revision-1', student='student-one'" in message
+    assert "Refresh PR #7" in message
+    assert fake.mutations == []
+
+
+def test_submit_result_preflight_identifies_a_stale_assignment_revision():
+    current = AssignmentRecord(
+        repo=REPO,
+        assignment_id=ASSIGNMENT_ID,
+        revision_id="revision-2",
+        student="student-one",
+        base_ref="schmidhuber",
+        base_sha="b" * 40,
+        head_ref="student-one/lower-lr",
+        head_sha=HEAD_SHA,
+    )
+    fake = FakeGitHub(
+        pull_request(body=render_assignment_marker(current), draft=True)
+    )
+
+    with pytest.raises(StaleAssignmentRevisionError) as raised:
+        workflow(fake).preflight_submit_result(
+            7,
+            branch="student-one/lower-lr",
+            current_head_sha=HEAD_SHA,
+            expected_result_head_sha=HEAD_SHA,
+            result=experiment_result(),
+        )
+
+    message = str(raised.value)
+    assert "assignment mismatch (revision_id)" in message
+    assert "Current PR #7 marker: revision='revision-2'" in message
+    assert "result: revision='revision-1', student='student-one'" in message
+    assert "Refresh PR #7" in message
     assert fake.mutations == []
 
 

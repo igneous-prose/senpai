@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from openhands.sdk.context.view import View
+from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.conversation.event_store import EventLog
 from openhands.sdk.event import ActionEvent, MessageEvent, ObservationEvent
 from openhands.sdk.io import InMemoryFileStore
@@ -24,7 +25,10 @@ from senpai_agent.github import (
     PRManifestEntry,
     PRRetrievalResult,
 )
-from senpai_agent.github_workflow import MutationResult
+from senpai_agent.github_workflow import (
+    MutationResult,
+    StaleAssignmentRevisionError,
+)
 from senpai_agent.models import (
     AssignmentKey,
     ExperimentResult,
@@ -300,6 +304,81 @@ def test_tool_schemas_are_typed_explicit_and_context_bounded(tmp_path: Path):
         assert "reviewer" not in serialized_delegation
         transition_schema = by_name["github_transition"].action_type.to_mcp_schema()
         assert "transition" in transition_schema["properties"]
+        transition_property = transition_schema["properties"]["transition"]
+        transition_description = transition_property["description"]
+        transition_variants = {
+            variant["properties"]["operation"]["enum"][0]: variant
+            for variant in transition_property["oneOf"]
+        }
+        assert set(transition_variants) == {
+            "create_assignment",
+            "push_branch",
+            "reconcile_labels",
+            "request_revision",
+            "respond_to_issue",
+            "submit_result",
+            "close_experiment",
+            "merge_experiment",
+        }
+        submit_tool_schema = transition_variants["submit_result"]
+        assert set(submit_tool_schema["required"]) == {
+            "operation",
+            "pr_number",
+            "branch",
+            "expected_remote_sha",
+            "expected_head_sha",
+            "result",
+        }
+        submit_properties = submit_tool_schema["properties"]
+        result_tool_schema = submit_properties["result"]
+        assert set(result_tool_schema["required"]) == {
+            "assignment",
+            "status",
+            "hypothesis",
+            "summary",
+            "runs",
+            "commit_sha",
+        }
+        result_properties = result_tool_schema["properties"]
+        assignment_tool_schema = result_properties["assignment"]
+        assert set(assignment_tool_schema["required"]) == {
+            "repo",
+            "pr_number",
+            "assignment_id",
+            "revision_id",
+            "expected_head_sha",
+            "student",
+        }
+        assert "force-with-lease precondition" in submit_properties[
+            "expected_remote_sha"
+        ]["description"]
+        assert "Local commit to push" in submit_properties["expected_head_sha"][
+            "description"
+        ]
+        assert "not the current remote branch SHA" in assignment_tool_schema[
+            "properties"
+        ]["expected_head_sha"]["description"]
+        assert "Must equal assignment.expected_head_sha" in result_properties[
+            "commit_sha"
+        ]["description"]
+        submit_schema = SubmitResultTransition.model_json_schema()["properties"]
+        assert "Current remote branch SHA before the push" in submit_schema[
+            "expected_remote_sha"
+        ]["description"]
+        assert "Local commit to push" in submit_schema["expected_head_sha"][
+            "description"
+        ]
+        assert "expected_remote_sha is the current remote branch SHA" in (
+            transition_description
+        )
+        assert "expected_head_sha is the local commit to push" in (
+            transition_description
+        )
+        assert (
+            "transition.expected_head_sha, result.assignment.expected_head_sha, "
+            "and result.commit_sha must be identical"
+            in transition_description
+        )
     finally:
         close_tools(tools)
 
@@ -821,6 +900,69 @@ def test_student_result_is_preflighted_before_its_branch_is_pushed(
                 },
             )
         ]
+        assert push_calls == []
+    finally:
+        close_tools(tools)
+
+
+def test_stale_submit_result_ends_the_old_assignment_revision_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    github = FakeGitHubWorkflow()
+    push_calls = []
+
+    def stale_preflight(number, **kwargs):
+        github.calls.append(("preflight_submit_result", number, kwargs))
+        raise StaleAssignmentRevisionError(
+            "Current PR #17 marker: revision='revision-2', "
+            "student='student-one', head='aaaaaaaa'; result: "
+            "revision='revision-1', student='student-one'. Refresh PR #17."
+        )
+
+    github.preflight_submit_result = stale_preflight
+    monkeypatch.setattr(
+        "senpai_agent.tools.push_assignment_branch",
+        lambda *args, **kwargs: push_calls.append((args, kwargs)),
+    )
+    tools = make_tools(
+        tmp_path,
+        training=FakeTraining(training_result(tmp_path)),
+        get_prs_fn=lambda *_args, **_kwargs: PRRetrievalResult((), "", None),
+        child_runner_factory=lambda _request: None,
+        event_sink=EventSink(),
+        github_workflow=github,
+        role="student",
+    )
+    transition = {tool.name: tool for tool in tools}["github_transition"]
+    conversation = SimpleNamespace(
+        state=SimpleNamespace(execution_status=ConversationExecutionStatus.RUNNING)
+    )
+
+    try:
+        with pytest.raises(ValueError) as raised:
+            transition(
+                GitHubTransitionAction(
+                    transition=SubmitResultTransition(
+                        operation="submit_result",
+                        pr_number=17,
+                        branch="student-one/candidate",
+                        expected_remote_sha="a" * 40,
+                        expected_head_sha="c" * 40,
+                        result=experiment_result(),
+                    )
+                ),
+                conversation,
+            )
+
+        assert "Refresh PR #17" in str(raised.value)
+        assert "controller can resume the current assignment revision" in str(
+            raised.value
+        )
+        assert (
+            conversation.state.execution_status
+            is ConversationExecutionStatus.FINISHED
+        )
         assert push_calls == []
     finally:
         close_tools(tools)

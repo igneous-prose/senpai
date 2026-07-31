@@ -11,6 +11,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
+from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.llm import TextContent
 from openhands.sdk.tool import (
     Action,
@@ -33,7 +34,7 @@ from senpai_agent.git_workflow import (
     push_assignment_branch,
 )
 from senpai_agent.github import PRRetrievalResult, get_prs
-from senpai_agent.github_workflow import GitHubWorkflow
+from senpai_agent.github_workflow import GitHubWorkflow, StaleAssignmentRevisionError
 from senpai_agent.models import (
     AssignmentRecord,
     DispositionRecord,
@@ -629,9 +630,26 @@ class SubmitResultTransition(_Transition):
     operation: Literal["submit_result"]
     pr_number: int = Field(gt=0)
     branch: str = Field(min_length=1)
-    expected_remote_sha: str = Field(min_length=1)
-    expected_head_sha: str = Field(min_length=1)
-    result: ExperimentResult
+    expected_remote_sha: str = Field(
+        min_length=1,
+        description=(
+            "Current remote branch SHA before the push. This is the "
+            "force-with-lease precondition, not the local result commit."
+        ),
+    )
+    expected_head_sha: str = Field(
+        min_length=1,
+        description=(
+            "Local commit to push. Must equal result.assignment.expected_head_sha "
+            "and result.commit_sha."
+        ),
+    )
+    result: ExperimentResult = Field(
+        description=(
+            "Result for expected_head_sha. result.assignment.expected_head_sha "
+            "and result.commit_sha must both equal expected_head_sha."
+        )
+    )
 
 
 class CloseExperimentTransition(_Transition):
@@ -689,7 +707,11 @@ GitHubTransition = Annotated[
 class GitHubTransitionAction(Action):
     transition: GitHubTransition = Field(
         description=(
-            "One typed, preconditioned, idempotent GitHub workflow transition."
+            "One typed, preconditioned, idempotent GitHub workflow transition. "
+            "For submit_result, expected_remote_sha is the current remote branch "
+            "SHA before push and expected_head_sha is the local commit to push; "
+            "transition.expected_head_sha, result.assignment.expected_head_sha, "
+            "and result.commit_sha must be identical."
         )
     )
 
@@ -781,13 +803,23 @@ class _GitHubTransitionExecutor(
             )
         elif isinstance(transition, SubmitResultTransition):
             self._require_role("student")
-            self.workflow.preflight_submit_result(
-                transition.pr_number,
-                branch=transition.branch,
-                current_head_sha=transition.expected_remote_sha,
-                expected_result_head_sha=transition.expected_head_sha,
-                result=transition.result,
-            )
+            try:
+                self.workflow.preflight_submit_result(
+                    transition.pr_number,
+                    branch=transition.branch,
+                    current_head_sha=transition.expected_remote_sha,
+                    expected_result_head_sha=transition.expected_head_sha,
+                    result=transition.result,
+                )
+            except StaleAssignmentRevisionError as error:
+                if conversation is not None:
+                    conversation.state.execution_status = (
+                        ConversationExecutionStatus.FINISHED
+                    )
+                raise ValueError(
+                    f"{error} Ending this stale turn so the controller can resume "
+                    "the current assignment revision."
+                ) from error
             pushed = push_assignment_branch(
                 self.workspace,
                 branch=transition.branch,

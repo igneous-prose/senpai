@@ -269,6 +269,21 @@ def test_result_schema_version_is_exact_and_primary_metric_can_be_none():
         ExperimentResult.model_validate(values)
 
 
+def test_result_schema_documents_the_result_commit_identity():
+    assignment_schema = AssignmentKey.model_json_schema()["properties"]
+    result_schema = ExperimentResult.model_json_schema()["properties"]
+
+    assert "not the current remote branch SHA" in assignment_schema[
+        "expected_head_sha"
+    ]["description"]
+    assert "assignment.expected_head_sha must equal commit_sha" in result_schema[
+        "assignment"
+    ]["description"]
+    assert "Must equal assignment.expected_head_sha" in result_schema["commit_sha"][
+        "description"
+    ]
+
+
 def test_marker_is_one_canonical_compact_sorted_json_line():
     marker = render_result_marker(result())
 

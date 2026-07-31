@@ -22,8 +22,8 @@ dependencies = [
     "weave-openhands @ git+https://github.com/morganmcg1/weave-openhands.git@c1e9cda697e10ee92e5629b19c7d81cac8bcf54b",
     "tqdm",
     "matplotlib",
-    "openhands-sdk @ git+https://github.com/morganmcg1/software-agent-sdk.git@6822ab324b7c207dce55fe25ab927dab5d874c2b#subdirectory=openhands-sdk",
-    "openhands-tools @ git+https://github.com/morganmcg1/software-agent-sdk.git@6822ab324b7c207dce55fe25ab927dab5d874c2b#subdirectory=openhands-tools",
+    "openhands-sdk @ git+https://github.com/morganmcg1/software-agent-sdk.git@0e3a3d281ba933bc6ca60ea763842cd15b48fe04#subdirectory=openhands-sdk",
+    "openhands-tools @ git+https://github.com/morganmcg1/software-agent-sdk.git@0e3a3d281ba933bc6ca60ea763842cd15b48fe04#subdirectory=openhands-tools",
     "psutil",
     # v2.16.2 is tagged upstream but has not been published to PyPI.
     "exa-py @ https://github.com/exa-labs/exa-py/archive/71f315b4be07d474df128c8fafc70cc7d0e47b56.tar.gz",

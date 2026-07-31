@@ -65,6 +65,10 @@ class WorkflowPreconditionError(GitHubWorkflowError):
     """Current GitHub state does not permit the requested transition."""
 
 
+class StaleAssignmentRevisionError(WorkflowPreconditionError):
+    """The result belongs to an older assignment revision."""
+
+
 class ReconciliationError(GitHubWorkflowError):
     """GitHub did not reach the requested state."""
 
@@ -1336,16 +1340,32 @@ def _require_assignment_result(
         )
     record = markers[0]
     assignment = result.assignment
-    if (
-        record.repo != assignment.repo
-        or record.assignment_id != assignment.assignment_id
-        or record.revision_id != assignment.revision_id
-        or record.student != assignment.student
-        or record.head_ref != snapshot.head_ref
-        or record.base_ref != snapshot.base_ref
-    ):
-        raise WorkflowPreconditionError(
-            "terminal result does not match the pull request assignment marker"
+    mismatches = [
+        name
+        for name, current, proposed in (
+            ("repo", record.repo, assignment.repo),
+            ("assignment_id", record.assignment_id, assignment.assignment_id),
+            ("revision_id", record.revision_id, assignment.revision_id),
+            ("student", record.student, assignment.student),
+            ("head_ref", record.head_ref, snapshot.head_ref),
+            ("base_ref", record.base_ref, snapshot.base_ref),
+        )
+        if current != proposed
+    ]
+    if mismatches:
+        error_type = (
+            StaleAssignmentRevisionError
+            if record.revision_id != assignment.revision_id
+            else WorkflowPreconditionError
+        )
+        raise error_type(
+            "terminal result assignment mismatch "
+            f"({', '.join(mismatches)}). Current PR #{snapshot.number} marker: "
+            f"revision={record.revision_id!r}, student={record.student!r}, "
+            f"head={record.head_sha!r}; result: "
+            f"revision={assignment.revision_id!r}, "
+            f"student={assignment.student!r}. Refresh PR #{snapshot.number} and "
+            "rebuild the result from its current assignment marker before retrying."
         )
 
 

@@ -27,7 +27,17 @@ class AssignmentKey(Contract):
     pr_number: int = Field(gt=0)
     assignment_id: _NonEmptyString
     revision_id: _NonEmptyString
-    expected_head_sha: _NonEmptyString
+    expected_head_sha: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description=(
+                "Local result commit to publish. Must equal the submit_result "
+                "expected_head_sha and ExperimentResult.commit_sha; this is not "
+                "the current remote branch SHA."
+            ),
+        ),
+    ]
     student: _NonEmptyString
 
 
@@ -83,13 +93,28 @@ class MetricComparison(Contract):
 
 class ExperimentResult(Contract):
     schema_version: Literal[1] = 1
-    assignment: AssignmentKey
+    assignment: AssignmentKey = Field(
+        description=(
+            "Assignment identity for this result. assignment.expected_head_sha "
+            "must equal commit_sha and the submit_result expected_head_sha."
+        )
+    )
     status: ResultStatus
     hypothesis: _NonEmptyString
     summary: Annotated[str, Field(min_length=1, max_length=4_000)]
     runs: tuple[WandbRunRef, ...]
     primary_metric: MetricComparison | None = None
-    commit_sha: _NonEmptyString
+    commit_sha: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description=(
+                "Local result commit to publish. Must equal "
+                "assignment.expected_head_sha and the submit_result "
+                "expected_head_sha."
+            ),
+        ),
+    ]
 
 
 class ResultMarkerError(ValueError):
