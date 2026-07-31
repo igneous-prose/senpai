@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from litellm import get_optional_params
-from openhands.sdk import LLM, load_project_skills
+from openhands.sdk import Agent, LLM, LocalConversation, load_project_skills
 from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.llm import Message, TextContent
 from openhands.sdk.plugin import Plugin
@@ -345,6 +345,28 @@ def test_openai_conversations_share_stable_role_and_agent_cache_keys(tmp_path):
     assert conversation_prompt_cache_key(anthropic) is None
 
 
+def test_local_conversation_accepts_the_openai_prompt_cache_key(tmp_path):
+    conversation = LocalConversation(
+        agent=Agent(
+            llm=LLM(
+                model="openai/gpt-5.6",
+                api_key=SecretStr("test-key"),
+            ),
+            tools=[],
+        ),
+        workspace=tmp_path,
+        visualizer=None,
+        prompt_cache_key="senpai:student:main",
+    )
+    try:
+        assert (
+            conversation.get_llm_call_context().prompt_cache_key
+            == "senpai:student:main"
+        )
+    finally:
+        conversation.close()
+
+
 def test_event_summary_preserves_bounded_reasoning_and_action():
     event = SimpleNamespace(
         source="agent",
@@ -666,7 +688,7 @@ def test_role_and_plugin_are_present_before_first_user_message(tmp_path, monkeyp
         def close(self):
             captured["closed"] = True
 
-    monkeypatch.setattr(runner, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
     config = runtime_config(tmp_path)
@@ -721,7 +743,7 @@ def test_child_conversation_is_ephemeral_and_emits_its_terminal_report(
         def close(self):
             pass
 
-    monkeypatch.setattr(runner, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
@@ -760,7 +782,7 @@ def test_main_student_conversation_is_persisted_for_monitor_wake(
         def close(self):
             pass
 
-    monkeypatch.setattr(runner, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
     monkeypatch.setattr(runner, "configure_delegation", child_runtime.append)
@@ -801,7 +823,7 @@ def test_github_tokens_never_reach_the_agent_environment(
             pass
 
     monkeypatch.setenv("GITHUB_TOKEN", "stale-env-secret")
-    monkeypatch.setattr(runner, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
@@ -846,7 +868,7 @@ def test_only_finished_conversations_succeed(status, tmp_path, monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(runner, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
@@ -869,7 +891,7 @@ def test_conversation_closes_when_execution_raises(tmp_path, monkeypatch):
         def close(self):
             closed.append(True)
 
-    monkeypatch.setattr(runner, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 
@@ -902,7 +924,7 @@ def test_openhands_turn_has_a_hard_runtime_deadline(tmp_path, monkeypatch):
         def close(self):
             pass
 
-    monkeypatch.setattr(runner, "Conversation", FakeConversation)
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
 

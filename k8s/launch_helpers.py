@@ -553,42 +553,32 @@ def preflight_check_wandb_api_key(api_key: str) -> None:
 
 
 def preflight_check_target_repo_access(target_repo_url: str, token: str) -> None:
-    """Verify the supplied github token has push access to target_repo_url.
-
-    Catches the 403-on-push scenario before pods spin up.
-    """
+    """Verify the token can write repository contents without changing a ref."""
     slug = target_repo_slug(target_repo_url)
     print(f"Preflight: checking github token against {slug}")
-
-    def read(path: str) -> dict:
-        try:
-            return _github_api(path, token)
-        except urllib.error.HTTPError as e:
-            hint = ""
-            if e.code == 401:
-                hint = (
-                    "\n  Your token is invalid or expired. Grab a fresh one with:\n"
-                    "    gh auth token\n"
-                    "  then paste it into .env at the senpai repo root as GITHUB_TOKEN=<token>\n"
-                    "  (or `export GITHUB_TOKEN=$(gh auth token)` for this shell)."
-                )
-            sys.exit(
-                f"ERROR: GitHub API {e.code} for {path}: "
-                f"{_api_error_summary(e, token)}{hint}"
-            )
-
-    perms = read(f"/repos/{slug}").get("permissions", {})
-    if perms.get("push"):
-        print(f"  OK — token has push access to {slug}")
-        return
-
-    user = read("/user").get("login", "<unknown>")
-    sys.exit(
-        f"ERROR: github token (user '{user}') cannot push to {slug}\n"
-        f"  permissions: {perms}\n"
-        f"  Fix: supply a token with write on {slug} via $GITHUB_TOKEN / .env / gh auth, "
-        f"or grant '{user}' collaborator write on {slug}."
-    )
+    payload = json.dumps(
+        {
+            "ref": "refs/heads/senpai-write-preflight",
+            "sha": "0" * 40,
+        }
+    ).encode()
+    try:
+        _github_api(f"/repos/{slug}/git/refs", token, method="POST", data=payload)
+    except urllib.error.HTTPError as error:
+        if error.code == 422:
+            print(f"  OK — token has Contents write access to {slug}")
+            return
+        summary = _api_error_summary(error, token)
+        sys.exit(
+            f"ERROR: github token cannot write repository contents to {slug}: "
+            f"HTTP {error.code}: {summary}\n"
+            "  Fix: grant a fine-grained token 'Contents: Read and write' for this "
+            "repository, or supply a classic token with repo scope."
+        )
+    else:
+        sys.exit(
+            f"ERROR: GitHub unexpectedly accepted the impossible write probe for {slug}"
+        )
 
 
 def ensure_target_repo_labels(

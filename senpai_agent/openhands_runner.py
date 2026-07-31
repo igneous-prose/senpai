@@ -44,7 +44,7 @@ from senpai_agent.weave_monitoring import (
 
 WEAVE_PROJECT = initialize_weave_monitoring()
 
-from openhands.sdk import LLM, Agent, AgentContext, Conversation, Tool
+from openhands.sdk import LLM, Agent, AgentContext, LocalConversation, Tool
 from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.event import ActionEvent, MessageEvent
 from openhands.sdk.llm import TextContent
@@ -767,7 +767,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 condenser=condenser,
                 tool_concurrency_limit=MAX_PARALLEL_AGENTS,
             )
-        conversation = Conversation(
+        conversation = LocalConversation(
             agent=agent,
             workspace=config.workspace,
             plugins=[PluginSource(source=str(config.plugin_dir))],

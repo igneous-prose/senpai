@@ -1,8 +1,10 @@
 import base64
+import io
 import json
 import re
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -393,34 +395,62 @@ def test_wandb_preflight_authenticates_with_a_minimal_viewer_query(monkeypatch):
     assert captured["timeout"] == 10
 
 
-def test_repo_access_accepts_push_permission_without_read_org_scope(monkeypatch):
-    class Headers:
-        def get(self, name):
-            assert name == "X-OAuth-Scopes"
-            return "repo"
+def test_repo_access_probes_contents_write_without_creating_a_ref(monkeypatch):
+    captured = {}
 
-    class Response:
-        headers = Headers()
+    def urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        raise urllib.error.HTTPError(
+            request.full_url,
+            422,
+            "Unprocessable Entity",
+            {},
+            io.BytesIO(b'{"message":"Object does not exist"}'),
+        )
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            pass
-
-        def read(self):
-            return b'{"permissions":{"push":true}}'
-
-    monkeypatch.setattr(
-        launch_helpers.urllib.request,
-        "urlopen",
-        lambda _request, timeout: Response(),
-    )
+    monkeypatch.setattr(launch_helpers.urllib.request, "urlopen", urlopen)
 
     preflight_check_target_repo_access(
         "https://github.com/example/problem.git",
         "github-secret",
     )
+
+    request = captured["request"]
+    assert request.full_url == "https://api.github.com/repos/example/problem/git/refs"
+    assert request.method == "POST"
+    assert request.headers["Authorization"] == "Bearer github-secret"
+    assert json.loads(request.data) == {
+        "ref": "refs/heads/senpai-write-preflight",
+        "sha": "0" * 40,
+    }
+    assert captured["timeout"] == 10
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 500])
+def test_repo_access_rejects_tokens_that_cannot_write(monkeypatch, status):
+    def urlopen(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url,
+            status,
+            "error",
+            {},
+            io.BytesIO(b'{"message":"github-secret cannot access this resource"}'),
+        )
+
+    monkeypatch.setattr(launch_helpers.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(SystemExit) as error:
+        preflight_check_target_repo_access(
+            "https://github.com/example/problem.git",
+            "github-secret",
+        )
+
+    message = str(error.value)
+    assert f"HTTP {status}" in message
+    assert "Contents: Read and write" in message
+    assert "github-secret" not in message
+    assert "<redacted>" in message
 
 
 def test_kubectl_apply_fails_the_launch_on_an_apply_error(monkeypatch):
