@@ -30,6 +30,7 @@ _GH_READ_ONLY = {
 }
 _TRAIN_LAUNCHERS = {"accelerate", "deepspeed", "torchrun"}
 _TRAIN_SCRIPT = re.compile(r"^train[^/]*[.]py$")
+_HELP_FLAGS = {"-h", "--help"}
 
 
 def _command_segments(command: str) -> list[list[str]]:
@@ -223,9 +224,28 @@ def _python_launches_training(tokens: list[str], index: int) -> bool:
         position = arguments.index("-m")
         if position + 1 < len(arguments):
             module = arguments[position + 1]
-            return "train" in module.lower() or module == "torch.distributed.run"
-    script = next((value for value in arguments if not value.startswith("-")), "")
-    return bool(_TRAIN_SCRIPT.fullmatch(Path(script).name))
+            is_training_module = (
+                "train" in module.lower() or module == "torch.distributed.run"
+            )
+            return is_training_module and not _help_only(arguments[position + 2 :])
+    script_position = next(
+        (
+            position
+            for position, value in enumerate(arguments)
+            if not value.startswith("-")
+        ),
+        None,
+    )
+    if script_position is None:
+        return False
+    script = arguments[script_position]
+    return bool(_TRAIN_SCRIPT.fullmatch(Path(script).name)) and not _help_only(
+        arguments[script_position + 1 :]
+    )
+
+
+def _help_only(arguments: list[str]) -> bool:
+    return len(arguments) == 1 and arguments[0] in _HELP_FLAGS
 
 
 def _timeout_command(arguments: list[str]) -> list[str]:
@@ -287,7 +307,9 @@ def _segment_policy(tokens: list[str]) -> PolicyDecision:
             False,
             "Use run_training so timeouts, logs, status, and W&B IDs are supervised.",
         )
-    if program in _TRAIN_LAUNCHERS or _TRAIN_SCRIPT.fullmatch(program):
+    if (
+        program in _TRAIN_LAUNCHERS or _TRAIN_SCRIPT.fullmatch(program)
+    ) and not _help_only(arguments):
         return PolicyDecision(
             False,
             "Use run_training so timeouts, logs, status, and W&B IDs are supervised.",

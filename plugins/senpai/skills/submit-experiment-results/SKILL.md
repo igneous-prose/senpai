@@ -26,8 +26,57 @@ schema:
 - the primary metric comparison; and
 - the same local commit SHA.
 
-Call `github_transition` with `operation="submit_result"`, the PR number,
-branch, previous remote SHA, current head SHA, and typed result.
+Call `github_transition` with exactly this shape. Do not add PR-body text,
+per-run metrics, hyperparameters, or aliases such as `head_sha`,
+`previous_head_sha`, `success`, or `min`; put those details in the bounded
+`summary` instead.
+
+```json
+{
+  "transition": {
+    "operation": "submit_result",
+    "pr_number": 123,
+    "branch": "student/experiment",
+    "expected_remote_sha": "REMOTE_SHA_BEFORE_PUSH",
+    "expected_head_sha": "LOCAL_COMMIT_SHA",
+    "result": {
+      "assignment": {
+        "repo": "owner/repo",
+        "pr_number": 123,
+        "assignment_id": "assignment-id",
+        "revision_id": "LATEST_REVISION_ID",
+        "expected_head_sha": "LOCAL_COMMIT_SHA",
+        "student": "student-name"
+      },
+      "status": "succeeded",
+      "hypothesis": "The falsifiable hypothesis tested.",
+      "summary": "The conclusion, evidence, caveats, and important per-run metrics (maximum 4,000 characters).",
+      "runs": [
+        {
+          "run_id": "wandb-run-id",
+          "url": "https://wandb.ai/entity/project/runs/wandb-run-id",
+          "state": "finished"
+        }
+      ],
+      "primary_metric": {
+        "name": "validation/metric",
+        "direction": "minimize",
+        "baseline": 1.23,
+        "candidate": 1.10,
+        "delta": -0.13
+      },
+      "commit_sha": "LOCAL_COMMIT_SHA"
+    }
+  }
+}
+```
+
+Use one of `succeeded`, `failed`, `inconclusive`, or `cancelled` for result
+status; `minimize` or `maximize` for metric direction; and `finished`,
+`failed`, `crashed`, or `killed` for each run. `primary_metric` may be omitted
+when no finite comparison exists. Refresh the PR first and use its latest
+assignment `revision_id`; a mid-turn advisor revision supersedes an earlier
+one.
 
 That single transition lease-pushes the clean assignment branch, verifies the
 new PR head, upserts the authenticated structured result, marks the PR ready,

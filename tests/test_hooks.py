@@ -71,6 +71,12 @@ def test_terminal_policy_denies_workflow_bypasses(command: str, tmp_path: Path):
         "pytest -q tests/test_train.py",
         "rg 'train.py' README.md",
         "python -c 'print(\"train.py\")'",
+        "python train.py --help",
+        "python train.py -h",
+        "timeout 120 python train.py --help",
+        "python -m package.train --help",
+        "./train_baseline.py --help",
+        "torchrun --help",
         "tail -n 50 training.log",
         "git status --short",
         "timeout 30 pytest -q",
@@ -87,6 +93,23 @@ def test_terminal_policy_allows_read_only_and_text_references(
     tmp_path: Path,
 ):
     assert terminal_policy(command, "student", tmp_path).allowed is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python train.py --help --epochs 10",
+        "python train.py -h --epochs 10",
+        "python -m package.train --help --epochs 10",
+        "./train_baseline.py --help --epochs 10",
+        "torchrun --help train.py",
+    ],
+)
+def test_terminal_policy_denies_training_arguments_mixed_with_help(
+    command: str,
+    tmp_path: Path,
+):
+    assert terminal_policy(command, "student", tmp_path).allowed is False
 
 
 @pytest.mark.parametrize("tool_name", ["senpai_terminal", "terminal"])
