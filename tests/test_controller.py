@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 from uuid import UUID
@@ -621,8 +622,8 @@ def test_changed_system_context_is_injected_once_without_rotating_uuid(
     )
 
 
-def pull(*, labels, body=""):
-    return {
+def pull(*, labels, body="", feedback_urls=False):
+    value = {
         "number": 17,
         "title": "Try bounded change",
         "html_url": "https://github.test/acme/widgets/pull/17",
@@ -631,6 +632,125 @@ def pull(*, labels, body=""):
         "head": {"ref": "student/candidate", "sha": "a" * 40},
         "labels": [{"name": label} for label in labels],
     }
+    if feedback_urls:
+        value.update(
+            {
+                "url": "https://api.github.test/repos/acme/widgets/pulls/17",
+                "comments_url": (
+                    "https://api.github.test/repos/acme/widgets/issues/17/comments"
+                ),
+                "review_comments_url": (
+                    "https://api.github.test/repos/acme/widgets/pulls/17/comments"
+                ),
+            }
+        )
+    return value
+
+
+def feedback(
+    feedback_id,
+    body,
+    *,
+    author="morganmcg1",
+    association="OWNER",
+    user_type="User",
+    created_at="2026-07-29T18:01:00Z",
+    **extra,
+):
+    value = {
+        "id": feedback_id,
+        "html_url": f"https://github.test/comment/{feedback_id}",
+        "body": body,
+        "created_at": created_at,
+        "author_association": association,
+        "user": {"login": author, "type": user_type},
+    }
+    value.update(extra)
+    return value
+
+
+def feedback_responses(*, issue_comments=(), reviews=(), inline_comments=()):
+    return {
+        (
+            "https://api.github.test/repos/acme/widgets/issues/17/comments"
+            "?per_page=100"
+        ): list(issue_comments),
+        (
+            "https://api.github.test/repos/acme/widgets/pulls/17/reviews"
+            "?per_page=100"
+        ): list(reviews),
+        (
+            "https://api.github.test/repos/acme/widgets/pulls/17/comments"
+            "?per_page=100"
+        ): list(inline_comments),
+    }
+
+
+def assigned_student_feedback_mailbox(
+    monkeypatch,
+    responses,
+    *,
+    status="status:wip",
+    revision_id="revision-2",
+    feedback_path=None,
+    feedback_batch_events=8,
+    feedback_batch_bytes=32_000,
+    trusted_actor="morganmcg1",
+):
+    assignment = AssignmentRecord(
+        repo="acme/widgets",
+        assignment_id="assignment-17",
+        revision_id=revision_id,
+        student="student-1",
+        base_ref="research",
+        base_sha="b" * 40,
+        head_ref="student/candidate",
+        head_sha="a" * 40,
+    )
+    mailbox = GitHubMailbox(
+        repo="acme/widgets",
+        token=SecretStr("github-token"),
+        role="student",
+        advisor_branch="research",
+        student_name="student-1",
+        api_url="https://api.github.test",
+        trusted_actor=trusted_actor,
+        feedback_path=feedback_path,
+        feedback_batch_events=feedback_batch_events,
+        feedback_batch_bytes=feedback_batch_bytes,
+    )
+    assigned_pull = pull(
+        labels=("research", "student:student-1", status),
+        body=render_assignment_marker(assignment),
+        feedback_urls=True,
+    )
+    calls = []
+
+    def github_objects(url):
+        calls.append(url)
+        return responses[url]
+
+    monkeypatch.setattr(mailbox, "_pulls", lambda: [assigned_pull])
+    monkeypatch.setattr(mailbox, "_issues", list)
+    monkeypatch.setattr(mailbox._github, "objects", github_objects)
+    return mailbox, calls
+
+
+def run_student_controller(tmp_path, mailbox, turns, *, reconcile=None):
+    Controller(
+        role="student",
+        mailbox=mailbox,
+        turns=turns,
+        conversation_id=UUID("00000000-0000-0000-0000-000000000017"),
+        full_prompt="programme",
+        conversation_for_events=StudentConversationSelector(
+            AssignmentConversationRegistry(tmp_path / "students.json")
+        ),
+        reconcile=reconcile,
+        sleep=lambda _seconds: None,
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+    ).run(max_cycles=1)
 
 
 def test_github_mailbox_uses_pr_labels_as_the_cross_node_protocol(
@@ -718,6 +838,300 @@ def test_student_assignment_event_carries_durable_assignment_identity(
     assert event.payload["revision_id"] == "revision-2"
 
 
+def test_review_ready_student_receives_only_trusted_feedback_from_every_surface(
+    monkeypatch,
+    tmp_path: Path,
+):
+    responses = feedback_responses(
+        issue_comments=[
+            feedback(101, "Pause after the current arm."),
+            feedback(
+                102,
+                "Follow up on the current baseline.",
+                created_at="2026-07-29T18:04:00Z",
+            ),
+            feedback(
+                103,
+                "<!-- senpai-revision:v1 {} -->\n\nAutomated revision.",
+            ),
+            feedback(
+                104,
+                "Untrusted advice.",
+                author="mallory",
+                association="NONE",
+            ),
+            feedback(105, "Automation.", author="ci-bot", user_type="Bot"),
+        ],
+        reviews=[
+            feedback(
+                201,
+                "Please preserve the control.",
+                author="ada",
+                association="MEMBER",
+                submitted_at="2026-07-29T18:02:00Z",
+                state="CHANGES_REQUESTED",
+            ),
+            feedback(
+                202,
+                "Unsubmitted draft.",
+                submitted_at=None,
+                state="PENDING",
+            ),
+        ],
+        inline_comments=[
+            feedback(
+                301,
+                "This branch needs the current default.",
+                author="grace",
+                association="COLLABORATOR",
+                created_at="2026-07-29T18:03:00Z",
+                pull_request_review_id=201,
+                path="train.py",
+                line=42,
+            ),
+            feedback(
+                302,
+                "Private draft inline comment.",
+                created_at="2026-07-29T18:03:30Z",
+                pull_request_review_id=202,
+                path="train.py",
+                line=43,
+            ),
+        ],
+    )
+    student, calls = assigned_student_feedback_mailbox(
+        monkeypatch,
+        responses,
+        status="status:review",
+        trusted_actor="MorganMcG1",
+    )
+
+    events = student.poll()
+    batches = StudentConversationSelector(
+        AssignmentConversationRegistry(tmp_path / "students.json")
+    )(events)
+
+    assert [event.dedupe_key for event in events] == [
+        "student_pr_feedback:issue_comment:17:101",
+        "student_pr_feedback:review:17:201",
+        "student_pr_feedback:inline_comment:17:301",
+        "student_pr_feedback:issue_comment:17:102",
+    ]
+    assert calls == list(responses)
+    assert events[0].payload == {
+        "number": 17,
+        "pr_url": "https://github.test/acme/widgets/pull/17",
+        "feedback_url": "https://github.test/comment/101",
+        "feedback_id": 101,
+        "feedback_type": "issue_comment",
+        "assignment_id": "assignment-17",
+        "revision_id": "revision-2",
+        "author": "morganmcg1",
+        "author_association": "OWNER",
+        "message": "Pause after the current arm.",
+        "created_at": "2026-07-29T18:01:00Z",
+    }
+    assert events[1].payload["state"] == "CHANGES_REQUESTED"
+    assert events[2].payload["path"] == "train.py"
+    assert events[2].payload["line"] == 42
+    assert len(batches) == 1
+    assert batches[0].conversation_id == AssignmentConversationRegistry(
+        tmp_path / "students.json"
+    ).for_assignment("assignment-17", "revision-2")
+
+
+def test_feedback_ack_requires_success_and_survives_restart_and_revision(
+    monkeypatch,
+    tmp_path: Path,
+):
+    ack_path = tmp_path / "github-feedback.json"
+    feedback_key = "student_pr_feedback:issue_comment:17:131"
+    responses = feedback_responses(
+        issue_comments=[feedback(131, "Durable feedback.")]
+    )
+
+    failed, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        responses,
+        feedback_path=ack_path,
+    )
+    run_student_controller(tmp_path, failed, SequencedTurns([1]))
+    assert json.loads(ack_path.read_text(encoding="utf-8"))[feedback_key] == {
+        "assignment_id": "assignment-17",
+        "revision_id": "revision-2",
+        "acknowledged": False,
+    }
+
+    revised, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        responses,
+        revision_id="revision-3",
+        feedback_path=ack_path,
+    )
+    revised_events = revised.poll()
+    assert [event.kind for event in revised_events] == ["student_pr_feedback"]
+    assert revised_events[0].payload["revision_id"] == "revision-2"
+    turns = Turns()
+    reconciled = []
+    run_student_controller(
+        tmp_path,
+        revised,
+        turns,
+        reconcile=lambda events: reconciled.append(
+            tuple(event.kind for event in events)
+        ),
+    )
+    assert [
+        tuple(sorted(key.rsplit(":", 1)[0] for key in event_keys))
+        for _, _, event_keys in turns.calls
+    ] == [
+        ("student_pr_feedback:issue_comment:17",),
+        ("student_assignment:assignment-17",),
+    ]
+    assert reconciled == [
+        ("student_pr_feedback",),
+        ("student_assignment",),
+    ]
+    assert json.loads(ack_path.read_text(encoding="utf-8"))[feedback_key][
+        "acknowledged"
+    ] is True
+
+    restarted, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        responses,
+        revision_id="revision-4",
+        feedback_path=ack_path,
+    )
+    restarted_events = restarted.poll()
+    assert [event.kind for event in restarted_events] == ["student_assignment"]
+    assert restarted_events[0].payload["revision_id"] == "revision-4"
+
+
+def test_controller_drains_feedback_batches_oldest_first_after_success(
+    monkeypatch,
+    tmp_path: Path,
+):
+    comments = [
+        feedback(
+            140 + index,
+            f"feedback-{index}",
+            created_at=f"2026-07-29T18:01:{index:02d}Z",
+        )
+        for index in range(5)
+    ]
+    mailbox, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        feedback_responses(issue_comments=comments),
+        feedback_path=tmp_path / "feedback.json",
+        feedback_batch_events=2,
+        feedback_batch_bytes=100_000,
+    )
+    turns = Turns()
+    run_student_controller(tmp_path, mailbox, turns)
+    feedback_batches = [
+        sorted(
+            int(key.rsplit(":", 1)[1])
+            for key in event_keys
+            if key.startswith("student_pr_feedback:")
+        )
+        for _, _, event_keys in turns.calls
+    ]
+
+    assert feedback_batches == [[140, 141], [142, 143], [144]]
+    assert not any(
+        event.kind == "student_pr_feedback" for event in mailbox.poll()
+    )
+
+
+def test_feedback_batch_uses_rendered_prompt_byte_limit(monkeypatch):
+    comments = [
+        feedback(
+            150 + index,
+            "x" * 1_000,
+            created_at=f"2026-07-29T18:02:{index:02d}Z",
+        )
+        for index in range(2)
+    ]
+    responses = feedback_responses(issue_comments=comments)
+    probe, _ = assigned_student_feedback_mailbox(monkeypatch, responses)
+    probe_events = [
+        event for event in probe.poll() if event.kind == "student_pr_feedback"
+    ]
+    byte_limit = len(probe_events[0].to_prompt().encode())
+    bounded, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        responses,
+        feedback_batch_events=8,
+        feedback_batch_bytes=byte_limit,
+    )
+
+    batch = [
+        event for event in bounded.poll() if event.kind == "student_pr_feedback"
+    ]
+    rendered_bytes = len("\n\n".join(event.to_prompt() for event in batch).encode())
+
+    assert len(batch) == 1
+    assert rendered_bytes <= byte_limit
+
+
+def test_long_feedback_preserves_head_and_tail_and_points_to_full_message(
+    monkeypatch,
+):
+    message = "ACTION: stop after this run.\n" + "x" * 5_000 + "\nTAIL: thanks"
+    mailbox, _ = assigned_student_feedback_mailbox(
+        monkeypatch,
+        feedback_responses(issue_comments=[feedback(160, message)]),
+    )
+
+    event = next(
+        event for event in mailbox.poll() if event.kind == "student_pr_feedback"
+    )
+
+    assert str(event.payload["message"]).startswith("ACTION: stop after this run.")
+    assert str(event.payload["message"]).endswith("TAIL: thanks")
+    assert len(str(event.payload["message"]).encode()) <= 4_000
+    assert event.payload["message_truncated"] is True
+    assert event.payload["full_message_instruction"] == (
+        "Open feedback_url to read the omitted text."
+    )
+
+
+def test_student_pr_feedback_groups_with_monitor_wake_on_assignment_uuid(
+    tmp_path: Path,
+):
+    registry = AssignmentConversationRegistry(tmp_path / "students.json")
+    conversation_id = registry.for_assignment("assignment-17", "revision-2")
+    events = (
+        ControllerEvent(
+            kind="student_assignment",
+            dedupe_key="student_assignment:assignment-17:revision-2",
+            payload={
+                "assignment_id": "assignment-17",
+                "revision_id": "revision-2",
+            },
+        ),
+        ControllerEvent(
+            kind="student_pr_feedback",
+            dedupe_key="student_pr_feedback:issue_comment:17:101",
+            payload={
+                "assignment_id": "assignment-17",
+                "revision_id": "revision-2",
+            },
+        ),
+        ControllerEvent(
+            kind="training_monitor",
+            dedupe_key="training_monitor:run-1:finished",
+            payload={"conversation_id": str(conversation_id)},
+        ),
+    )
+
+    batches = StudentConversationSelector(registry)(events)
+
+    assert len(batches) == 1
+    assert batches[0].conversation_id == conversation_id
+    assert batches[0].events == events
+
+
 def test_malformed_assignment_does_not_suppress_human_messages(
     monkeypatch,
 ):
@@ -791,7 +1205,7 @@ def test_human_issue_event_tracks_the_exact_latest_human_message(
                 "id": 701,
                 "body": "ADVISOR: acknowledged",
                 "created_at": "2026-07-29T18:05:00Z",
-                "user": {"login": "senpai-bot"},
+                "user": {"login": "SENPAI-BOT"},
             },
             {
                 "id": 702,

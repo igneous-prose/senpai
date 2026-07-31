@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -16,7 +18,21 @@ from pydantic import SecretStr
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github_http import GitHubReader
 from senpai_agent.mailbox import ControllerEvent
-from senpai_agent.models import parse_assignment_markers
+from senpai_agent.models import AssignmentRecord, parse_assignment_markers
+
+
+_TRUSTED_HUMAN_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+_FEEDBACK_KEY_PREFIX = "student_pr_feedback:"
+_FEEDBACK_EXCERPT_BYTES = 4_000
+_DEFAULT_FEEDBACK_BATCH_EVENTS = 8
+_DEFAULT_FEEDBACK_BATCH_BYTES = 32_000
+
+
+@dataclass(frozen=True, slots=True)
+class _FeedbackBinding:
+    assignment_id: str
+    revision_id: str
+    acknowledged: bool = False
 
 
 class GitHubMailbox:
@@ -35,11 +51,16 @@ class GitHubMailbox:
         api_url: str = "https://api.github.com",
         trusted_actor: str | None = None,
         human_issues_enabled: bool = True,
+        feedback_path: Path | None = None,
+        feedback_batch_events: int = _DEFAULT_FEEDBACK_BATCH_EVENTS,
+        feedback_batch_bytes: int = _DEFAULT_FEEDBACK_BATCH_BYTES,
     ):
         if len(repo.split("/")) != 2 or not all(repo.split("/")):
             raise ValueError("repo must use owner/name form")
         if role == "student" and not student_name:
             raise ValueError("student mailbox requires student_name")
+        if feedback_batch_events <= 0 or feedback_batch_bytes <= 0:
+            raise ValueError("feedback batch limits must be positive")
         self.repo = repo
         self.role = role
         self.advisor_branch = advisor_branch
@@ -47,6 +68,10 @@ class GitHubMailbox:
         self.student_name = student_name
         self.stale_wip_seconds = stale_wip_seconds
         self.human_issues_enabled = human_issues_enabled
+        self.feedback_path = feedback_path
+        self.feedback_batch_events = feedback_batch_events
+        self.feedback_batch_bytes = feedback_batch_bytes
+        self._memory_feedback: dict[str, _FeedbackBinding] = {}
         self._github = GitHubReader(
             token,
             api_url=api_url,
@@ -60,9 +85,33 @@ class GitHubMailbox:
             return self._advisor_events(pulls, issues)
         return self._student_events(pulls, issues)
 
-    def acknowledge(self, _dedupe_keys: Sequence[str]) -> None:
-        # GitHub state is acknowledged only by a typed state transition.
-        return
+    def acknowledge(self, dedupe_keys: Sequence[str]) -> None:
+        """Mark persisted feedback delivered after a successful controller turn."""
+        feedback_keys = {
+            key for key in dedupe_keys if key.startswith(_FEEDBACK_KEY_PREFIX)
+        }
+        if not feedback_keys:
+            return
+        ledger = self._read_feedback_ledger()
+        missing = feedback_keys - ledger.keys()
+        if missing:
+            raise RuntimeError(
+                "cannot acknowledge unseen student PR feedback: "
+                f"{', '.join(sorted(missing))}"
+            )
+        changed = False
+        for key in feedback_keys:
+            binding = ledger[key]
+            if binding.acknowledged:
+                continue
+            ledger[key] = _FeedbackBinding(
+                assignment_id=binding.assignment_id,
+                revision_id=binding.revision_id,
+                acknowledged=True,
+            )
+            changed = True
+        if changed:
+            self._write_feedback_ledger(ledger)
 
     def _advisor_events(
         self,
@@ -155,7 +204,7 @@ class GitHubMailbox:
             pull
             for pull in pulls
             if assignment_label in _label_names(pull)
-            and "status:wip" in _label_names(pull)
+            and {"status:wip", "status:review"} & _label_names(pull)
         ]
         if len(assigned) > 1:
             numbers = sorted(int(pull["number"]) for pull in assigned)
@@ -198,23 +247,248 @@ class GitHubMailbox:
                 )
             else:
                 assignment = markers[0]
-                events.append(
-                    ControllerEvent(
-                        kind="student_assignment",
-                        dedupe_key=(
-                            f"student_assignment:{assignment.assignment_id}:"
-                            f"{assignment.revision_id}"
-                        ),
-                        payload={
-                            **_pull_payload(pull),
-                            "assignment_id": assignment.assignment_id,
-                            "revision_id": assignment.revision_id,
-                            "base_ref": assignment.base_ref,
-                        },
-                    )
+                feedback = self._student_pr_feedback_events(pull, assignment)
+                prior_revision_pending = any(
+                    event.payload["assignment_id"] != assignment.assignment_id
+                    or event.payload["revision_id"] != assignment.revision_id
+                    for event in feedback
                 )
+                if (
+                    "status:wip" in _label_names(pull)
+                    and not prior_revision_pending
+                ):
+                    events.append(
+                        ControllerEvent(
+                            kind="student_assignment",
+                            dedupe_key=(
+                                f"student_assignment:{assignment.assignment_id}:"
+                                f"{assignment.revision_id}"
+                            ),
+                            payload={
+                                **_pull_payload(pull),
+                                "assignment_id": assignment.assignment_id,
+                                "revision_id": assignment.revision_id,
+                                "base_ref": assignment.base_ref,
+                            },
+                        )
+                    )
+                events.extend(feedback)
         events.extend(self._human_issue_events(issues))
         return tuple(events)
+
+    def _student_pr_feedback_events(
+        self,
+        pull: Mapping[str, object],
+        assignment: AssignmentRecord,
+    ) -> list[ControllerEvent]:
+        number = int(pull["number"])
+        sources: list[tuple[str, str]] = []
+        if comments_url := pull.get("comments_url"):
+            sources.append(("issue_comment", f"{comments_url}?per_page=100"))
+        if pull_url := pull.get("url"):
+            sources.append(
+                ("review", f"{str(pull_url).rstrip('/')}/reviews?per_page=100")
+            )
+        if comments_url := pull.get("review_comments_url"):
+            sources.append(("inline_comment", f"{comments_url}?per_page=100"))
+        if not sources:
+            return []
+
+        actor = self._github.actor()
+        feedback_by_surface = {
+            surface: self._github.objects(url) for surface, url in sources
+        }
+        submitted_review_ids = {
+            int(item["id"])
+            for item in feedback_by_surface.get("review", ())
+            if item.get("submitted_at") is not None
+        }
+        events: list[ControllerEvent] = []
+        for surface, _url in sources:
+            for item in feedback_by_surface[surface]:
+                if surface == "review" and item.get("submitted_at") is None:
+                    continue
+                if (
+                    surface == "inline_comment"
+                    and int(item["pull_request_review_id"])
+                    not in submitted_review_ids
+                ):
+                    continue
+                if not _is_trusted_human_feedback(item, actor=actor):
+                    continue
+                feedback_id = int(item["id"])
+                created_at = str(
+                    item["submitted_at"] if surface == "review" else item["created_at"]
+                )
+                message, message_truncated = _feedback_excerpt(
+                    str(item.get("body") or ""),
+                    limit=_FEEDBACK_EXCERPT_BYTES,
+                )
+                payload: dict[str, object] = {
+                    "number": number,
+                    "pr_url": str(pull["html_url"]),
+                    "feedback_url": str(item["html_url"]),
+                    "feedback_id": feedback_id,
+                    "feedback_type": surface,
+                    "assignment_id": assignment.assignment_id,
+                    "revision_id": assignment.revision_id,
+                    "author": str(_object(item["user"])["login"]),
+                    "author_association": str(item["author_association"]),
+                    "message": message,
+                    "created_at": created_at,
+                }
+                if message_truncated:
+                    payload.update(
+                        message_truncated=True,
+                        full_message_instruction=(
+                            "Open feedback_url to read the omitted text."
+                        ),
+                    )
+                if surface == "review":
+                    payload["state"] = str(item["state"])
+                elif surface == "inline_comment":
+                    payload["path"] = str(item["path"])
+                    line = item.get("line") or item.get("original_line")
+                    if line is not None:
+                        payload["line"] = int(line)
+                events.append(
+                    ControllerEvent(
+                        kind="student_pr_feedback",
+                        dedupe_key=(
+                            f"student_pr_feedback:{surface}:{number}:{feedback_id}"
+                        ),
+                        payload=payload,
+                    )
+                )
+        events.sort(
+            key=lambda event: (
+                _github_datetime(str(event.payload["created_at"])),
+                str(event.payload["feedback_type"]),
+                int(event.payload["feedback_id"]),
+            )
+        )
+        ledger = self._read_feedback_ledger()
+        ledger_changed = False
+        bound_events: list[ControllerEvent] = []
+        for event in events:
+            binding = ledger.get(event.dedupe_key)
+            if binding is None:
+                binding = _FeedbackBinding(
+                    assignment_id=str(event.payload["assignment_id"]),
+                    revision_id=str(event.payload["revision_id"]),
+                )
+                ledger[event.dedupe_key] = binding
+                ledger_changed = True
+            bound_events.append(
+                ControllerEvent(
+                    kind=event.kind,
+                    dedupe_key=event.dedupe_key,
+                    payload={
+                        **event.payload,
+                        "assignment_id": binding.assignment_id,
+                        "revision_id": binding.revision_id,
+                    },
+                )
+            )
+        if ledger_changed:
+            self._write_feedback_ledger(ledger)
+        pending = [
+            event
+            for event in bound_events
+            if not ledger[event.dedupe_key].acknowledged
+        ]
+        prior_revision = [
+            event
+            for event in pending
+            if event.payload["assignment_id"] != assignment.assignment_id
+            or event.payload["revision_id"] != assignment.revision_id
+        ]
+        return self._feedback_batch(prior_revision or pending)
+
+    def _feedback_batch(
+        self,
+        events: Iterable[ControllerEvent],
+    ) -> list[ControllerEvent]:
+        selected: list[ControllerEvent] = []
+        prompt_bytes = 0
+        for event in events:
+            if len(selected) >= self.feedback_batch_events:
+                break
+            event_bytes = len(event.to_prompt().encode())
+            separator_bytes = 2 if selected else 0
+            if event_bytes > self.feedback_batch_bytes:
+                if selected:
+                    break
+                raise RuntimeError(
+                    f"student PR feedback event exceeds "
+                    f"{self.feedback_batch_bytes} prompt bytes"
+                )
+            if (
+                prompt_bytes + separator_bytes + event_bytes
+                > self.feedback_batch_bytes
+            ):
+                break
+            selected.append(event)
+            prompt_bytes += separator_bytes + event_bytes
+        return selected
+
+    def _read_feedback_ledger(self) -> dict[str, _FeedbackBinding]:
+        if self.feedback_path is None:
+            return dict(self._memory_feedback)
+        if not self.feedback_path.exists():
+            return {}
+        value = json.loads(self.feedback_path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict):
+            raise RuntimeError(
+                f"invalid student PR feedback ledger: {self.feedback_path}"
+            )
+        ledger: dict[str, _FeedbackBinding] = {}
+        for key, item in value.items():
+            if (
+                not isinstance(key, str)
+                or not key.startswith(_FEEDBACK_KEY_PREFIX)
+                or not isinstance(item, dict)
+                or not isinstance(item.get("assignment_id"), str)
+                or not isinstance(item.get("revision_id"), str)
+                or not isinstance(item.get("acknowledged"), bool)
+            ):
+                raise RuntimeError(
+                    f"invalid student PR feedback ledger: {self.feedback_path}"
+                )
+            ledger[key] = _FeedbackBinding(
+                assignment_id=item["assignment_id"],
+                revision_id=item["revision_id"],
+                acknowledged=item["acknowledged"],
+            )
+        return ledger
+
+    def _write_feedback_ledger(
+        self,
+        ledger: Mapping[str, _FeedbackBinding],
+    ) -> None:
+        if self.feedback_path is None:
+            self._memory_feedback = dict(ledger)
+            return
+        self.feedback_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.feedback_path.with_suffix(
+            f"{self.feedback_path.suffix}.tmp"
+        )
+        temporary.write_text(
+            json.dumps(
+                {
+                    key: {
+                        "assignment_id": binding.assignment_id,
+                        "revision_id": binding.revision_id,
+                        "acknowledged": binding.acknowledged,
+                    }
+                    for key, binding in sorted(ledger.items())
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(self.feedback_path)
 
     def _human_issue_events(
         self,
@@ -250,7 +524,9 @@ class GitHubMailbox:
                 ],
             ]
             human_messages = [
-                message for message in messages if message["author"] != actor
+                message
+                for message in messages
+                if str(message["author"]).casefold() != actor.casefold()
             ]
             if not human_messages:
                 continue
@@ -406,6 +682,28 @@ def _object(value: object) -> dict[str, object]:
     return value
 
 
+def _is_trusted_human_feedback(
+    item: Mapping[str, object],
+    *,
+    actor: str,
+) -> bool:
+    user = item.get("user")
+    if not isinstance(user, dict):
+        return False
+    if user.get("type") != "User":
+        return False
+    if item.get("author_association") not in _TRUSTED_HUMAN_ASSOCIATIONS:
+        return False
+    body = str(item.get("body") or "")
+    return not (
+        str(user.get("login") or "").casefold() == actor.casefold()
+        and any(
+            line.startswith("<!-- senpai-") and line.endswith(" -->")
+            for line in body.splitlines()
+        )
+    )
+
+
 def _github_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value).astimezone(UTC)
 
@@ -415,3 +713,18 @@ def _bounded_text(value: str, *, limit: int) -> str:
     if len(encoded) <= limit:
         return value
     return encoded[-limit:].decode(errors="ignore")
+
+
+def _feedback_excerpt(value: str, *, limit: int) -> tuple[str, bool]:
+    encoded = value.encode()
+    if len(encoded) <= limit:
+        return value, False
+    marker = "\n\n[... middle omitted; open feedback_url for full text ...]\n\n".encode()
+    content_bytes = limit - len(marker)
+    head_bytes = 3 * content_bytes // 4
+    excerpt = (
+        encoded[:head_bytes].decode(errors="ignore")
+        + marker.decode()
+        + encoded[-(content_bytes - head_bytes) :].decode(errors="ignore")
+    )
+    return excerpt, True

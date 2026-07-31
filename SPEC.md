@@ -70,6 +70,8 @@ record, ServiceAccount, RBAC, cross-node token, or tailnet.
 GitHub state is level-triggered:
 
 - `status:wip` plus exactly one `student:<name>` label is an assignment;
+- trusted human comments and reviews on one assigned open `status:wip` or
+  `status:review` PR wake its exact student assignment conversation;
 - `status:review` is a durable advisor wake;
 - `status:blocked`, `status:needs-rebase`, missing or duplicate student labels,
   stale WIP, and duplicate assignments are advisor-action events; and
@@ -81,6 +83,16 @@ dedupe key and `human_message_id`. An agent reply updates the Issue but does not
 create a new wake for its own comment. `respond_to_issue` verifies the exact
 human message before writing an idempotent response.
 Launches with human-Issue handling disabled skip that GitHub query entirely.
+
+Assigned-PR issue comments, submitted reviews, and inline comments each use
+their immutable GitHub ID as a level-triggered event key. Senpai accepts GitHub
+users associated as repository owners, members, or collaborators. A comment by
+the authenticated actor containing a Senpai protocol marker is automation, not
+human feedback. Every accepted event carries its first-seen assignment and
+revision identity, so monitor and feedback events resume one student UUID.
+Successful turns atomically acknowledge immutable feedback keys in a small JSON
+ledger. Oldest unacknowledged events are delivered in bounded count/byte
+batches; immediate post-turn polls drain later batches without dropping them.
 
 While an advisor OpenHands turn is running, `ActiveGitHubWatcher` polls the same
 GitHub state and enqueues newly visible events in the local advisor event
@@ -119,6 +131,7 @@ Student state:
 ```text
 /var/lib/senpai/openhands_state/
 ├── controller-lease.json
+├── github-feedback.json
 ├── student-conversations.json
 ├── student-events.sqlite3
 ├── conversation-state.json
@@ -138,6 +151,11 @@ The controller replaces this one document atomically after a successful turn,
 so a restart cannot observe those two facts at different revisions. A
 `training_monitor` event carries its original conversation UUID and therefore
 resumes, rather than replaces, the student conversation.
+
+`github-feedback.json` records every immutable PR feedback key's first-seen
+assignment revision, then marks it acknowledged only after its student turn
+succeeds. This prevents pending or completed feedback from replaying or
+rebinding to a later assignment revision after a restart.
 
 When `conversation-state.json` does not yet exist, startup atomically migrates
 the previous `started-conversations.json` and

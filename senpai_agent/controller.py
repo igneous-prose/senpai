@@ -438,6 +438,11 @@ def controller_main(
         stale_wip_seconds=int(env.get("SENPAI_STALE_WIP_SECONDS", "7200")),
         trusted_actor=runner_config.github_trusted_actor,
         human_issues_enabled=human_issues == "true",
+        feedback_path=(
+            runner_config.state_dir / "github-feedback.json"
+            if role == "student"
+            else None
+        ),
     )
     mailbox: Mailbox = github_mailbox
     conversation_selector = None

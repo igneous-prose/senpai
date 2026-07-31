@@ -153,7 +153,7 @@ class StudentConversationSelector:
     def _conversation_for(self, event: ControllerEvent) -> UUID:
         if event.kind in {"local_events_pending", "training_monitor"}:
             return UUID(str(event.payload["conversation_id"]))
-        if event.kind == "student_assignment":
+        if event.kind in {"student_assignment", "student_pr_feedback"}:
             return self.registry.for_assignment(
                 str(event.payload["assignment_id"]),
                 str(event.payload["revision_id"]),
