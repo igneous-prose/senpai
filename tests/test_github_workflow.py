@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from pydantic import SecretStr
 
+from senpai_agent.git_workflow import PushResult
 from senpai_agent.github_workflow import (
     GitHubAPIError,
     GitHubTransportError,
@@ -28,6 +29,11 @@ from senpai_agent.models import (
     render_assignment_marker,
     render_result_comment,
     render_revision_marker,
+)
+from senpai_agent.tools import (
+    GitHubTransitionAction,
+    GitHubTransitionTool,
+    SubmitResultTransition,
 )
 
 REPO = "acme/widgets"
@@ -171,6 +177,7 @@ class FakeGitHub:
         self.issue = issue
         self.comment_page_size = comment_page_size
         self.ignore_label_put = ignore_label_put
+        self.next_heads: list[str] = []
         self.requests: list[tuple[str, str, object | None, dict[str, str]]] = []
 
     @property
@@ -201,6 +208,8 @@ class FakeGitHub:
         issue_path = f"/repos/{REPO}/issues/7"
 
         if method == "GET" and path == pull_path:
+            if self.next_heads:
+                self.pr["head_sha"] = self.next_heads.pop(0)
             return HttpResponse(200, self._pull_payload())
 
         if method == "GET" and path == issue_path and self.issue is not None:
@@ -998,6 +1007,60 @@ def test_submit_result_preflight_rejects_a_foreign_branch_before_mutation():
         )
 
     assert fake.mutations == []
+
+
+def test_submit_result_waits_for_the_pushed_head_to_reach_github(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    final_head = "c" * 40
+    fake = FakeGitHub(
+        pull_request(labels={"student:one", "status:wip"}, draft=True)
+    )
+    sleeps: list[float] = []
+    pushes: list[str] = []
+
+    def push(_workspace, **kwargs):
+        pushes.append(kwargs["expected_local_sha"])
+        fake.next_heads = [HEAD_SHA, HEAD_SHA, kwargs["expected_local_sha"]]
+        return PushResult(
+            changed=True,
+            branch=kwargs["branch"],
+            head_sha=kwargs["expected_local_sha"],
+        )
+
+    monkeypatch.setattr("senpai_agent.tools.push_assignment_branch", push)
+    monkeypatch.setattr("senpai_agent.tools.time.sleep", sleeps.append)
+    transition = GitHubTransitionTool.create(
+        workflow=workflow(fake),
+        role="student",
+        workspace=tmp_path,
+    )[0]
+
+    observation = transition(
+        GitHubTransitionAction(
+            transition=SubmitResultTransition(
+                operation="submit_result",
+                pr_number=7,
+                branch="student-one/lower-lr",
+                expected_remote_sha=HEAD_SHA,
+                expected_head_sha=final_head,
+                result=experiment_result(
+                    commit_sha=final_head,
+                    expected_head_sha=final_head,
+                ),
+            )
+        )
+    )
+
+    assert observation.state == "result_submitted"
+    assert pushes == [final_head]
+    assert sleeps == [0.5, 1.0]
+    assert fake.pr["head_sha"] == final_head
+    assert fake.pr["labels"] == {"student:one", "status:review"}
+    assert fake.pr["draft"] is False
+    assert len(fake.comments) == 1
+    assert "<!-- senpai-result:v1 " in str(fake.comments[0]["body"])
 
 
 def test_submit_result_recovers_in_call_from_an_ambiguous_comment_write():
