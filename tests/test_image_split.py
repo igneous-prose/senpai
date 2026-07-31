@@ -37,6 +37,12 @@ def test_advisor_image_is_a_locked_lightweight_openhands_runtime():
     assert "@anthropic-ai/claude-code" not in lowered
 
 
+def test_advisor_image_has_openhands_stable_terminal_runtime():
+    dockerfile = (ROOT / "Dockerfile.advisor").read_text(encoding="utf-8")
+
+    assert "procps tmux" in dockerfile
+
+
 def test_student_image_keeps_the_locked_cuda_training_runtime():
     dockerfile = (ROOT / "Dockerfile.student").read_text(encoding="utf-8")
     lowered = dockerfile.lower()
