@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 from openhands.sdk.context.view import View
-from openhands.sdk.event import MessageEvent
+from openhands.sdk.conversation.event_store import EventLog
+from openhands.sdk.event import MessageEvent, ObservationEvent
+from openhands.sdk.io import InMemoryFileStore
 from openhands.sdk.llm import Message, TextContent
 from openhands.sdk.tool import Tool, resolve_tool
 from openhands.tools.terminal import TerminalAction, TerminalObservation
@@ -45,6 +47,7 @@ from senpai_agent.tools import (
     RunTrainingTool,
     SenpaiTerminalExecutor,
     SubmitResultTransition,
+    TrainingResultObservation,
     clear_github_credentials,
     configure_github_credentials,
     register_senpai_tools,
@@ -384,6 +387,30 @@ def test_training_and_github_tools_delegate_existing_typed_interfaces(
         assert pr_observation.to_llm_content[0].text == pr_result.markdown
     finally:
         close_tools(tools)
+
+
+def test_running_training_observation_survives_event_log_restore():
+    observation = TrainingResultObservation(
+        training_id="training-17",
+        state=TrainingState.RUNNING,
+        exit_code=None,
+        elapsed_seconds=12.5,
+        log_path="/state/training-17.log",
+    )
+    event = ObservationEvent(
+        tool_name="run_training",
+        tool_call_id="call-17",
+        action_id="action-17",
+        observation=observation,
+    )
+    store = InMemoryFileStore()
+    EventLog(store).append(event)
+
+    restored = EventLog(store)[0]
+
+    assert isinstance(restored, ObservationEvent)
+    assert isinstance(restored.observation, TrainingResultObservation)
+    assert restored.observation.exit_code is None
 
 
 def test_training_tool_interrupt_cancels_the_supervisor(tmp_path: Path):

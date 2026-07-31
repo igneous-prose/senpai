@@ -206,7 +206,7 @@ class TrainingResultObservation(Observation):
     pid: int | None = None
     process_group_id: int | None = None
     process_start_time: float | None = None
-    exit_code: int | None
+    exit_code: int | None = None
     elapsed_seconds: float
     log_path: str
     wandb_run_ids: tuple[str, ...] = ()
