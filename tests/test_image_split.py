@@ -199,6 +199,17 @@ def test_entrypoints_delegate_runtime_lifecycle_to_the_python_supervisor():
     assert advisor["spec"]["strategy"] == {"type": "Recreate"}
 
 
+def test_entrypoints_support_group_writable_mounted_runner_state():
+    for role in ("advisor", "student"):
+        entrypoint = (ROOT / "k8s" / f"entrypoint-{role}.sh").read_text(
+            encoding="utf-8"
+        )
+
+        assert 'umask "${SENPAI_UMASK:-0022}"' in entrypoint
+        assert 'git config --global safe.directory "$WORKDIR"' in entrypoint
+        assert "(umask 077; printf '%s' \"$GITHUB_TOKEN\"" in entrypoint
+
+
 def test_bootstrap_git_credentials_are_not_exposed_in_process_arguments():
     for role in ("advisor", "student"):
         deployment = load_kubernetes_template(f"{role}-deployment.yaml")
