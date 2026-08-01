@@ -639,6 +639,44 @@ def test_controller_waits_behind_start_gate_while_refreshing_its_lease(
     assert lease.phase == "poll"
 
 
+def test_controller_requires_start_and_launch_gates_before_polling(
+    tmp_path: Path,
+):
+    start_gate = tmp_path / "start-gate"
+    launch_gate = tmp_path / "launch-gate"
+    lease_path = tmp_path / "controller-lease.json"
+    mailbox = Mailbox([()])
+    sleeps = []
+    lease_phases = []
+
+    def open_next_gate(seconds):
+        sleeps.append(seconds)
+        lease_phases.append(WorkerLease.read(lease_path).phase)
+        gate = start_gate if not start_gate.is_file() else launch_gate
+        gate.write_text("open")
+
+    controller = Controller(
+        role="advisor",
+        mailbox=mailbox,
+        turns=Turns(),
+        conversation_id=UUID("00000000-0000-0000-0000-000000000087"),
+        full_prompt="programme",
+        progress=ProgressLease(lease_path),
+        start_gate_path=start_gate,
+        launch_gate_path=launch_gate,
+        start_gate_poll_seconds=7,
+        sleep=open_next_gate,
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+    )
+
+    controller.run(max_cycles=1)
+
+    assert sleeps == [7, 7]
+    assert lease_phases == ["start-gate", "start-gate"]
+    assert mailbox.calls == 1
+
+
 def test_assignment_reconciliation_preserves_unpushed_commits_on_restart(
     tmp_path: Path,
 ):

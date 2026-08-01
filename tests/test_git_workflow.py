@@ -189,6 +189,36 @@ def test_push_assignment_branch_rejects_dirty_or_diverged_worktree(
         )
 
 
+def test_push_assignment_branch_rejects_non_fast_forward_with_current_lease(
+    tmp_path: Path,
+):
+    workspace, remote, _ = repository(tmp_path)
+    other = tmp_path / "other"
+    git(tmp_path, "clone", str(remote), str(other))
+    git(other, "config", "user.name", "Other")
+    git(other, "config", "user.email", "other@example.com")
+    git(other, "checkout", "experiment-7")
+
+    (other / "remote.py").write_text("winner = True\n")
+    git(other, "add", "remote.py")
+    git(other, "commit", "-m", "merge winner")
+    git(other, "push", "origin", "experiment-7")
+    remote_sha = git(other, "rev-parse", "HEAD")
+
+    (workspace / "notes.md").write_text("stale baseline notes\n")
+    git(workspace, "add", "notes.md")
+    git(workspace, "commit", "-m", "record result from stale baseline")
+
+    with pytest.raises(GitWorkflowPreconditionError, match="fast-forward"):
+        push_assignment_branch(
+            workspace,
+            branch="experiment-7",
+            expected_remote_sha=remote_sha,
+        )
+
+    assert git(remote, "rev-parse", "refs/heads/experiment-7") == remote_sha
+
+
 def test_push_assignment_branch_rejects_the_wrong_local_head_before_publication(
     tmp_path: Path,
 ):
@@ -304,7 +334,7 @@ def test_typed_push_injects_auth_only_into_git_subprocesses(
         assert "ambient-gh-token" not in env.values()
         assert "GITHUB_TOKEN" not in env
         assert "GH_TOKEN" not in env
-        if command[1] in {"ls-remote", "push"}:
+        if command[1] in {"ls-remote", "fetch", "push"}:
             encoded = env["GIT_CONFIG_VALUE_0"].removeprefix("Authorization: Basic ")
             assert base64.b64decode(encoded).decode() == (
                 "x-access-token:typed-write-token"

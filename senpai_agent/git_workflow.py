@@ -73,6 +73,22 @@ def push_assignment_branch(
             f"remote head is {remote_sha or '<missing>'}, "
             f"expected {expected_remote_sha}"
         )
+    _git(
+        workspace,
+        "fetch",
+        "--no-tags",
+        remote,
+        f"refs/heads/{branch}",
+        token=token,
+    )
+    if _git(workspace, "rev-parse", "FETCH_HEAD") != remote_sha:
+        raise GitWorkflowPreconditionError("remote head moved while preparing the push")
+    try:
+        _git(workspace, "merge-base", "--is-ancestor", remote_sha, local_sha)
+    except GitWorkflowPreconditionError as error:
+        raise GitWorkflowPreconditionError(
+            f"local head {local_sha} does not fast-forward remote head {remote_sha}"
+        ) from error
 
     _git(
         workspace,

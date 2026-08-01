@@ -168,6 +168,7 @@ class Controller:
         operation_timeout_seconds: float = 300,
         turn_timeout_seconds: float = 3660,
         start_gate_path: Path | None = None,
+        launch_gate_path: Path | None = None,
         start_gate_poll_seconds: float = 30,
         sleep: Callable[[float], None] = time.sleep,
         poll_interval_seconds: float = 600,
@@ -188,7 +189,9 @@ class Controller:
         self.progress = progress
         self.operation_timeout_seconds = operation_timeout_seconds
         self.turn_timeout_seconds = turn_timeout_seconds
-        self.start_gate_path = start_gate_path
+        self.start_gate_paths = tuple(
+            path for path in (start_gate_path, launch_gate_path) if path is not None
+        )
         self.start_gate_poll_seconds = start_gate_poll_seconds
         self.full_prompt = full_prompt.strip()
         self.system_context = system_context.strip()
@@ -200,7 +203,7 @@ class Controller:
         self._visible: set[str] = set()
 
     def run(self, *, max_cycles: int | None = None) -> None:
-        self._wait_for_start_gate()
+        self._wait_for_start_gates()
         cycles = 0
         turn_failures = 0
         while max_cycles is None or cycles < max_cycles:
@@ -315,8 +318,8 @@ class Controller:
             return tuple(self.conversation_for_events(events))
         return (ConversationBatch(self.conversation_id, tuple(events)),)
 
-    def _wait_for_start_gate(self) -> None:
-        while self.start_gate_path is not None and not self.start_gate_path.is_file():
+    def _wait_for_start_gates(self) -> None:
+        while any(not path.is_file() for path in self.start_gate_paths):
             self._publish_progress(
                 "start-gate",
                 self.start_gate_poll_seconds + self.operation_timeout_seconds,
@@ -554,6 +557,11 @@ def controller_main(
         start_gate_path=(
             Path(env["SENPAI_START_GATE_PATH"])
             if env.get("SENPAI_START_GATE_PATH")
+            else None
+        ),
+        launch_gate_path=(
+            Path(env["SENPAI_LAUNCH_GATE_PATH"])
+            if env.get("SENPAI_LAUNCH_GATE_PATH")
             else None
         ),
         start_gate_poll_seconds=float(env.get("SENPAI_START_GATE_POLL_SECONDS", "30")),
