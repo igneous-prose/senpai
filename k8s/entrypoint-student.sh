@@ -29,6 +29,7 @@ echo "GPUs:         $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/n
 
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
+git config --global safe.directory "$WORKDIR"
 source "$SENPAI_PLUGIN/scripts/git-guard.sh"
 install_senpai_git_guard "$WORKDIR" "$TARGET_WORKDIR" "$GIT_ASKPASS_FILE"
 
