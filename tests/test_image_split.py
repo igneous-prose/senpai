@@ -75,6 +75,7 @@ def test_both_images_expose_the_controller_lease_as_their_healthcheck():
 
         assert "HEALTHCHECK" in dockerfile
         assert "senpai_agent.supervisor health" in dockerfile
+        assert "|| kill -TERM 1" in dockerfile
 
 
 def test_both_images_record_the_exact_source_revision():

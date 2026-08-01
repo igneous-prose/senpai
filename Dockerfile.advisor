@@ -64,7 +64,8 @@ ENV HOME=/home/senpai
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=5 \
     CMD python -m senpai_agent.supervisor health \
-      "/var/lib/senpai/${RESEARCH_TAG}/advisor/openhands_state/controller-lease.json"
+      "/var/lib/senpai/${RESEARCH_TAG}/advisor/openhands_state/controller-lease.json" \
+      || kill -TERM 1
 
 WORKDIR /workspaces
 USER 10001:10001
