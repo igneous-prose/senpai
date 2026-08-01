@@ -578,23 +578,19 @@ class GitHubMailbox:
             if "human" not in labels or not role_labels & labels:
                 continue
             actor = self._github.actor()
-            messages = [
-                {
-                    "id": int(issue["id"]),
-                    "author": str(_object(issue["user"])["login"]),
-                    "body": str(issue.get("body") or ""),
-                    "created_at": str(issue["created_at"]),
-                },
-                *[
+            messages = []
+            for item in (issue, *self._issue_comments(issue)):
+                user = _object(item["user"])
+                if user.get("type") != "User":
+                    continue
+                messages.append(
                     {
-                        "id": int(comment["id"]),
-                        "author": str(_object(comment["user"])["login"]),
-                        "body": str(comment.get("body") or ""),
-                        "created_at": str(comment["created_at"]),
+                        "id": int(item["id"]),
+                        "author": str(user["login"]),
+                        "body": str(item.get("body") or ""),
+                        "created_at": str(item["created_at"]),
                     }
-                    for comment in self._issue_comments(issue)
-                ],
-            ]
+                )
             human_messages = [
                 message
                 for message in messages

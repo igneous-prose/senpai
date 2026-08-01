@@ -783,22 +783,8 @@ class GitHubWorkflow:
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
-        if before.merged:
-            raise WorkflowPreconditionError(
-                "pull request must be unmerged before it can be closed"
-            )
-        marker_body = _marker_body(marker, reason)
-        marker_changed, _ = self._upsert_marker_comment(
-            number,
-            marker=marker,
-            body=marker_body,
-        )
-        current, _ = self._assigned_pull_at_head(
-            number,
-            assignment_id=assignment_id,
-            expected_head_sha=expected_head_sha,
-        )
-        state_changed = current.state != "closed"
+        _require_unmerged(before)
+        state_changed = before.state != "closed"
         if state_changed:
             self._mutate(
                 "PATCH",
@@ -806,13 +792,28 @@ class GitHubWorkflow:
                 json_body={"state": "closed"},
                 expected_statuses={200},
             )
+        closed, _ = self._assigned_pull_at_head(
+            number,
+            assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
+        )
+        _require_unmerged(closed)
+        if closed.state != "closed":
+            raise ReconciliationError("GitHub did not close the pull request")
+        marker_body = _marker_body(marker, reason)
+        marker_changed, _ = self._upsert_marker_comment(
+            number,
+            marker=marker,
+            body=marker_body,
+        )
         after, _ = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
+        _require_unmerged(after)
         if after.state != "closed":
-            raise ReconciliationError("GitHub did not close the pull request")
+            raise ReconciliationError("pull request reopened during reconciliation")
         return MutationResult(
             changed=marker_changed or state_changed,
             resource_url=after.url,
@@ -1542,6 +1543,13 @@ def _require_assignment_identity(
 def _require_open(snapshot: PullRequestSnapshot) -> None:
     if snapshot.state != "open" or snapshot.merged:
         raise WorkflowPreconditionError("pull request must be open and unmerged")
+
+
+def _require_unmerged(snapshot: PullRequestSnapshot) -> None:
+    if snapshot.merged:
+        raise WorkflowPreconditionError(
+            "pull request must be unmerged before it can be closed"
+        )
 
 
 def _require_current_revision(

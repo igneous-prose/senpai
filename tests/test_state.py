@@ -6,7 +6,7 @@ from uuid import UUID
 from senpai_agent.state import ConversationStateLedger
 
 
-def test_conversation_state_migrates_legacy_ledgers_atomically(
+def test_conversation_state_migrates_legacy_ledgers(
     tmp_path: Path,
 ) -> None:
     current_id = UUID("00000000-0000-0000-0000-000000000001")

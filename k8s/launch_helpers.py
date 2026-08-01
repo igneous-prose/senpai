@@ -438,6 +438,13 @@ def render_launch_secret(
     )
 
 
+def _redact_secrets(text: str, *secrets: str) -> str:
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "<redacted>")
+    return text
+
+
 def _api_error_summary(error: urllib.error.HTTPError, *secrets: str) -> str:
     body = error.read().decode(errors="replace").strip()
     try:
@@ -454,9 +461,7 @@ def _api_error_summary(error: urllib.error.HTTPError, *secrets: str) -> str:
         request_id = payload.get("request_id") or payload.get("requestId")
         if request_id:
             summary = f"{summary} (request id: {request_id})"
-    for secret in secrets:
-        if secret:
-            summary = summary.replace(secret, "<redacted>")
+    summary = _redact_secrets(summary, *secrets)
     return (summary or "<empty response>")[:1000]
 
 
@@ -548,6 +553,7 @@ def preflight_check_wandb_api_key(api_key: str) -> None:
         sys.exit(f"ERROR: W&B API key failed: {error.reason}")
     if not payload.get("data", {}).get("viewer"):
         errors = json.dumps(payload.get("errors", []), sort_keys=True)
+        errors = _redact_secrets(errors, api_key, basic_auth)
         sys.exit(f"ERROR: W&B API key failed to resolve a viewer: {errors[:1000]}")
     print("  OK — W&B API key authenticated")
 

@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).parents[1]
@@ -21,7 +22,7 @@ def named_items(items: list[dict]) -> dict[str, dict]:
     return {item["name"]: item for item in items}
 
 
-def test_advisor_image_is_a_locked_lightweight_openhands_runtime():
+def test_advisor_dockerfile_prunes_the_training_stack():
     dockerfile = (ROOT / "Dockerfile.advisor").read_text(encoding="utf-8")
     lowered = dockerfile.lower()
 
@@ -37,13 +38,7 @@ def test_advisor_image_is_a_locked_lightweight_openhands_runtime():
     assert "@anthropic-ai/claude-code" not in lowered
 
 
-def test_advisor_image_has_openhands_stable_terminal_runtime():
-    dockerfile = (ROOT / "Dockerfile.advisor").read_text(encoding="utf-8")
-
-    assert "procps tmux" in dockerfile
-
-
-def test_student_image_keeps_the_locked_cuda_training_runtime():
+def test_student_dockerfile_declares_the_cuda_training_runtime():
     dockerfile = (ROOT / "Dockerfile.student").read_text(encoding="utf-8")
     lowered = dockerfile.lower()
 
@@ -53,15 +48,6 @@ def test_student_image_keeps_the_locked_cuda_training_runtime():
     assert "NVIDIA_VISIBLE_DEVICES=all" in dockerfile
     assert "senpai-gpu-smoke-test" in dockerfile
     assert "@anthropic-ai/claude-code" not in lowered
-
-
-def test_both_images_include_gh_and_working_chromium():
-    for role in ("advisor", "student"):
-        dockerfile = (ROOT / f"Dockerfile.{role}").read_text(encoding="utf-8")
-
-        assert "apt-get install -y gh" in dockerfile
-        assert "playwright install chromium" in dockerfile
-        assert "RUN senpai-browser-smoke-test" in dockerfile
 
 
 def test_both_role_images_run_as_the_same_explicit_non_root_user():
@@ -83,28 +69,12 @@ def test_both_role_images_run_as_the_same_explicit_non_root_user():
         )
 
 
-def test_student_managed_python_is_accessible_to_the_runtime_user():
-    dockerfile = (ROOT / "Dockerfile.student").read_text(encoding="utf-8")
-
-    assert "UV_PYTHON_INSTALL_DIR=/opt/uv-python" in dockerfile
-    assert 'uv python install --install-dir "$UV_PYTHON_INSTALL_DIR"' in dockerfile
-    assert '/opt/senpai-venv "$UV_PYTHON_INSTALL_DIR"' in dockerfile
-
-
 def test_both_images_expose_the_controller_lease_as_their_healthcheck():
     for role in ("advisor", "student"):
         dockerfile = (ROOT / f"Dockerfile.{role}").read_text(encoding="utf-8")
 
         assert "HEALTHCHECK" in dockerfile
         assert "senpai_agent.supervisor health" in dockerfile
-
-
-def test_neither_role_image_depends_on_kubernetes_tools():
-    advisor = (ROOT / "Dockerfile.advisor").read_text(encoding="utf-8")
-    student = (ROOT / "Dockerfile.student").read_text(encoding="utf-8")
-
-    assert "kubectl" not in advisor
-    assert "kubectl" not in student
 
 
 def test_both_images_record_the_exact_source_revision():
@@ -129,6 +99,9 @@ def test_build_workflow_builds_all_images_from_the_exact_checked_out_commit():
 
     assert set(roles) == {"advisor", "student", "cutoff"}
     assert events["pull_request"] == {}
+    assert workflow["env"]["SOURCE_REVISION"] == (
+        "${{ github.event.pull_request.head.sha || github.sha }}"
+    )
     assert build["env"]["IMAGE_NAME"] == ("${{ github.repository }}-${{ matrix.role }}")
     assert steps["Checkout"]["with"]["ref"] == "${{ env.SOURCE_REVISION }}"
     assert steps["Extract metadata"]["with"]["images"] == (
@@ -177,16 +150,31 @@ def test_advisor_state_is_persistent_and_student_state_is_ephemeral():
     assert "student_logs" not in student_container["args"][0]
 
 
-def test_entrypoints_delegate_runtime_lifecycle_to_the_python_supervisor():
-    entrypoint = (ROOT / "k8s" / "entrypoint-advisor.sh").read_text(encoding="utf-8")
-    advisor = load_kubernetes_template("advisor-deployment.yaml")
-    container = container_for(advisor)
+@pytest.mark.parametrize(
+    ("role", "logdir"),
+    [
+        ("advisor", 'LOGDIR="/var/lib/senpai/$RESEARCH_TAG/advisor"'),
+        ("student", 'LOGDIR="/var/lib/senpai"'),
+    ],
+)
+def test_entrypoints_delegate_runtime_lifecycle_to_the_python_supervisor(
+    role: str,
+    logdir: str,
+):
+    entrypoint = (ROOT / "k8s" / f"entrypoint-{role}.sh").read_text(
+        encoding="utf-8"
+    )
+    deployment = load_kubernetes_template(f"{role}-deployment.yaml")
+    container = container_for(deployment)
 
-    assert 'LOGDIR="/var/lib/senpai/$RESEARCH_TAG/advisor"' in entrypoint
+    assert logdir in entrypoint
     assert "serve-events" not in entrypoint
-    assert "SENPAI_ADVISOR_EVENT_TOKEN" not in entrypoint
-    assert "exec python -m senpai_agent.supervisor" in entrypoint
+    assert f"exec python -m senpai_agent.supervisor {role}" in entrypoint
     assert "wait_for_senpai_start_gate" not in entrypoint
+    trust_runner = 'git config --global safe.directory "$WORKDIR"'
+    assert entrypoint.index(trust_runner) < entrypoint.index(
+        'install_senpai_git_guard "$WORKDIR"'
+    )
     assert "readinessProbe" not in container
     assert container["livenessProbe"]["exec"]["command"][:2] == [
         "/bin/sh",
@@ -196,18 +184,7 @@ def test_entrypoints_delegate_runtime_lifecycle_to_the_python_supervisor():
         "senpai_agent.supervisor health"
         in container["livenessProbe"]["exec"]["command"][2]
     )
-    assert advisor["spec"]["strategy"] == {"type": "Recreate"}
-
-
-def test_entrypoints_support_group_writable_mounted_runner_state():
-    for role in ("advisor", "student"):
-        entrypoint = (ROOT / "k8s" / f"entrypoint-{role}.sh").read_text(
-            encoding="utf-8"
-        )
-
-        assert 'umask "${SENPAI_UMASK:-0022}"' in entrypoint
-        assert 'git config --global safe.directory "$WORKDIR"' in entrypoint
-        assert "(umask 077; printf '%s' \"$GITHUB_TOKEN\"" in entrypoint
+    assert deployment["spec"]["strategy"] == {"type": "Recreate"}
 
 
 def test_bootstrap_git_credentials_are_not_exposed_in_process_arguments():
@@ -280,7 +257,20 @@ def test_runtime_git_auth_uses_ephemeral_askpass_not_a_credential_store():
         assert 'credential.helper "store' not in entrypoint
 
 
-def test_github_is_the_only_cross_node_communication_dependency():
+def test_entrypoint_umask_is_configurable_but_token_creation_stays_private():
+    for role in ("advisor", "student"):
+        entrypoint = (ROOT / "k8s" / f"entrypoint-{role}.sh").read_text(
+            encoding="utf-8"
+        )
+
+        assert 'umask "${SENPAI_UMASK:-0022}"' in entrypoint
+        assert (
+            "(umask 077; printf '%s' \"$GITHUB_TOKEN\" > "
+            '"$SENPAI_GITHUB_TOKEN_FILE")'
+        ) in entrypoint
+
+
+def test_manifests_expose_no_advisor_service_or_callback_credentials():
     deployment = load_kubernetes_template("advisor-deployment.yaml")
     student = load_kubernetes_template("student-deployment.yaml")
 

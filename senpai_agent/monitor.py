@@ -587,7 +587,11 @@ class TrainingMonitorEngine:
                 continue
             sample = None
             try:
-                if spec.metric and result.wandb_run_ids:
+                if (
+                    result.state is TrainingState.RUNNING
+                    and spec.metric
+                    and result.wandb_run_ids
+                ):
                     sample = self.metrics.latest(
                         result.wandb_run_ids[-1],
                         spec.metric,
@@ -603,13 +607,23 @@ class TrainingMonitorEngine:
                     produced.append(signal)
                 continue
             try:
+                previous = (
+                    self.store.previous_sample(spec.training_id)
+                    if result.state is TrainingState.RUNNING
+                    else None
+                )
+                baseline = (
+                    self.store.baseline_sample(spec.training_id)
+                    if result.state is TrainingState.RUNNING
+                    else None
+                )
                 evaluation, latest = evaluate_monitor(
                     spec,
                     result,
                     sample,
-                    previous=self.store.previous_sample(spec.training_id),
+                    previous=previous,
                     emitted=self.store.emitted(spec.training_id),
-                    baseline=self.store.baseline_sample(spec.training_id),
+                    baseline=baseline,
                     now=now,
                 )
                 self.store.record_poll(spec, evaluation, latest, now=now)

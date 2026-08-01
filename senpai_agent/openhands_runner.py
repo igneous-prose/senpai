@@ -209,14 +209,18 @@ def github_token(
         return SecretStr(value)
 
     value = next(
-        (env[name] for name in GITHUB_TOKEN_ENV_NAMES if env.get(name)),
+        (
+            candidate
+            for name in GITHUB_TOKEN_ENV_NAMES
+            if (candidate := env.get(name, "").strip())
+        ),
         None,
     )
     if value is None:
         if required:
             raise RuntimeError("GITHUB_TOKEN or GH_TOKEN is required")
         return None
-    return SecretStr(value.strip())
+    return SecretStr(value)
 
 
 def github_repo(env: Mapping[str, str]) -> str:

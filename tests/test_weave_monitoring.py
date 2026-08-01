@@ -54,9 +54,16 @@ def test_monitoring_uses_the_senpai_wandb_project_and_student_identity(monkeypat
     assert calls[-1] == "finish"
 
 
-def test_monitoring_requires_complete_wandb_project_configuration():
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"WANDB_ENTITY": "wandb-applied-ai-team"},
+        {"WANDB_PROJECT": "senpai-v1"},
+    ],
+)
+def test_monitoring_requires_complete_wandb_project_configuration(env):
     with pytest.raises(RuntimeError, match="must be set together"):
-        monitoring.weave_project_name({"WANDB_ENTITY": "wandb-applied-ai-team"})
+        monitoring.weave_project_name(env)
 
 
 def test_agent_observability_url_targets_the_durable_conversation():

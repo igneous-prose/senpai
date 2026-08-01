@@ -123,13 +123,6 @@ class AdvisorEventStore:
         self.close()
 
 
-def merge_system_instructions(harness_file: Path, role_file: Path) -> str:
-    return compose_system_instructions(
-        harness_file.read_text(),
-        role_file.read_text(),
-    )
-
-
 def compose_system_instructions(harness: str, role: str) -> str:
     return f"# Senpai harness\n\n{harness.strip()}\n\n# Senpai role\n\n{role.strip()}\n"
 

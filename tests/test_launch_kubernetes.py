@@ -1,0 +1,150 @@
+import subprocess
+
+import pytest
+
+from launch_test_support import launch, launch_args, launch_helpers
+
+
+def test_kubectl_apply_raises_with_the_resource_and_error_detail(monkeypatch):
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured.update(argv=argv, kwargs=kwargs)
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=1,
+            stdout="",
+            stderr="forbidden",
+        )
+
+    monkeypatch.setattr(launch_helpers.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="advisor service.*forbidden"):
+        launch_helpers.kubectl_apply(
+            "kind: Service",
+            "advisor service",
+            kube_context="gpu-cluster",
+            namespace="research",
+        )
+
+    assert captured["argv"] == [
+        "kubectl",
+        "--context",
+        "gpu-cluster",
+        "--namespace",
+        "research",
+        "apply",
+        "-f",
+        "-",
+    ]
+    assert captured["kwargs"]["input"] == "kind: Service"
+
+
+def test_student_discovery_uses_the_requested_cluster_scope(monkeypatch):
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=0,
+            stdout="fern\nfrieren\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(launch_helpers.subprocess, "run", run)
+
+    names = launch_helpers.existing_student_names(
+        "track-a",
+        kube_context="gpu-cluster",
+        namespace="research",
+    )
+
+    assert names == ["fern", "frieren"]
+    assert captured["argv"][:5] == [
+        "kubectl",
+        "--context",
+        "gpu-cluster",
+        "--namespace",
+        "research",
+    ]
+    assert "app=senpai,role=student,research-tag=track-a" in captured["argv"]
+
+
+def test_kubectl_default_scope_omits_an_empty_context():
+    assert launch_helpers.kubectl_command("apply", "-f", "-") == [
+        "kubectl",
+        "--namespace",
+        "default",
+        "apply",
+        "-f",
+        "-",
+    ]
+
+
+def bypass_external_preflight(monkeypatch):
+    for name, value in (
+        ("resolve_github_token", "github"),
+        ("resolve_anthropic_api_key", "anthropic"),
+        ("resolve_exa_api_key", "exa"),
+        ("resolve_wandb_api_key", "wandb"),
+    ):
+        monkeypatch.setattr(launch, name, lambda _path, value=value: value)
+    for name in (
+        "preflight_check_target_repo_access",
+        "preflight_check_anthropic_api_key",
+        "preflight_check_exa_api_key",
+        "preflight_check_wandb_api_key",
+        "ensure_advisor_branch",
+        "ensure_target_repo_labels",
+    ):
+        monkeypatch.setattr(launch, name, lambda *_args: None)
+    monkeypatch.setattr(
+        launch,
+        "preflight_check_target_repo_branch",
+        lambda *_args: "main",
+    )
+
+
+def test_launch_uses_one_scope_for_apply_discovery_and_handoff_commands(
+    monkeypatch,
+    capsys,
+):
+    args = launch_args(
+        tag="scope-test",
+        kube_context="gpu-cluster",
+        namespace="research",
+    )
+    monkeypatch.setattr(launch.sp, "parse", lambda *_args, **_kwargs: args)
+    bypass_external_preflight(monkeypatch)
+
+    discovery = []
+
+    def existing(tag, *, kube_context, namespace):
+        discovery.append((tag, kube_context, namespace))
+        return []
+
+    monkeypatch.setattr(launch, "existing_student_names", existing)
+    applies = []
+
+    def apply(_manifest, name, *, kube_context, namespace):
+        applies.append((name, kube_context, namespace))
+
+    monkeypatch.setattr(launch, "kubectl_apply", apply)
+
+    launch.main()
+
+    assert discovery == [("scope-test", "gpu-cluster", "research")]
+    assert applies == [
+        ("secret senpai-launch-secrets-scope-test", "gpu-cluster", "research"),
+        ("student fern", "gpu-cluster", "research"),
+        ("advisor", "gpu-cluster", "research"),
+    ]
+    prefix = "kubectl --context gpu-cluster --namespace research"
+    handoff_commands = [
+        line.strip()
+        for line in capsys.readouterr().out.splitlines()
+        if line.strip().startswith("kubectl ")
+    ]
+    assert len(handoff_commands) == 4
+    assert all(command.startswith(prefix) for command in handoff_commands)

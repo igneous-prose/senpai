@@ -182,8 +182,8 @@ def test_legacy_weave_claude_plugin_removed(test_pod):
     assert out == "ok"
 
 
-def test_python_deps_and_icml_target_import(test_pod):
-    """The image has the Python deps needed by the new ICML target."""
+def test_python_runtime_and_training_dependencies(test_pod):
+    """The student image exposes its pinned Python and training stack."""
     cmd = (
         "python - <<'PY'\n"
         "import importlib.metadata\n"

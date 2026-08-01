@@ -404,6 +404,7 @@ class _DelegateAgentExecutor(
         self.event_db_path = event_db_path
         self.max_runtime_seconds = max_runtime_seconds
         self.background_allowed = background_allowed
+        self._max_workers = max_workers
         self._slots = threading.BoundedSemaphore(max_workers)
         self._pool = ThreadPoolExecutor(
             max_workers=max_workers,
@@ -437,7 +438,9 @@ class _DelegateAgentExecutor(
         )
         if action.background:
             if not self._slots.acquire(blocking=False):
-                raise RuntimeError("all eight subagent slots are active")
+                raise RuntimeError(
+                    f"subagent capacity is full ({self._max_workers} active)"
+                )
             try:
                 runner = self.child_runner_factory(request)
                 future = self._pool.submit(

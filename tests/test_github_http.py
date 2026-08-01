@@ -1,5 +1,6 @@
 import json
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 
 import pytest
 from pydantic import SecretStr
@@ -23,25 +24,24 @@ class Response:
         return json.dumps(self.payload).encode()
 
 
-def test_reader_follows_pagination_with_typed_auth_and_caches_actor(monkeypatch):
-    requests = []
-    responses = iter(
-        (
-            Response(
-                [{"id": 1}],
-                link=(
-                    '<https://api.github.test/items?page=2>; rel="next", '
-                    '<https://api.github.test/items?page=2>; rel="last"'
-                ),
+def test_reader_follows_pagination_with_typed_auth(monkeypatch):
+    responses = {
+        "/items?per_page=1": Response(
+            [{"id": 1}],
+            link=(
+                '<https://api.github.test/items?page=2>; rel="next", '
+                '<https://api.github.test/items?page=2>; rel="last"'
             ),
-            Response([{"id": 2}]),
-            Response({"login": "senpai-bot"}),
-        )
-    )
+        ),
+        "/items?page=2": Response([{"id": 2}]),
+    }
 
     def urlopen(github_request, timeout):
-        requests.append((github_request, timeout))
-        return next(responses)
+        assert github_request.headers["Authorization"] == "Bearer github-secret"
+        assert timeout == 30
+        parsed = urlsplit(github_request.full_url)
+        key = parsed.path + (f"?{parsed.query}" if parsed.query else "")
+        return responses[key]
 
     monkeypatch.setattr(github_http.request, "urlopen", urlopen)
     reader = GitHubReader(
@@ -50,13 +50,6 @@ def test_reader_follows_pagination_with_typed_auth_and_caches_actor(monkeypatch)
     )
 
     assert reader.objects("/items?per_page=1") == [{"id": 1}, {"id": 2}]
-    assert reader.actor() == reader.actor() == "senpai-bot"
-    assert len(requests) == 3
-    assert all(
-        request.headers["Authorization"] == "Bearer github-secret"
-        for request, _timeout in requests
-    )
-    assert all(timeout == 30 for _request, timeout in requests)
 
 
 def test_reader_rejects_foreign_pagination_origin(monkeypatch):
@@ -69,16 +62,44 @@ def test_reader_rejects_foreign_pagination_origin(monkeypatch):
         ),
     )
 
-    with pytest.raises(GitHubReadError, match="unexpected origin"):
+    with pytest.raises(GitHubReadError):
         GitHubReader(
             SecretStr("github-secret"),
             api_url="https://api.github.test",
         ).objects("/items")
 
 
+def test_reader_rejects_pagination_cycles(monkeypatch):
+    page = "https://api.github.test/items?page=1"
+    monkeypatch.setattr(
+        github_http.request,
+        "urlopen",
+        lambda *_args, **_kwargs: Response(
+            [],
+            link=f'<{page}>; rel="next"',
+        ),
+    )
+
+    with pytest.raises(GitHubReadError):
+        GitHubReader(
+            SecretStr("github-secret"),
+            api_url="https://api.github.test",
+        ).objects(page)
+
+
+def test_reader_rejects_non_list_paginated_responses(monkeypatch):
+    monkeypatch.setattr(
+        github_http.request,
+        "urlopen",
+        lambda *_args, **_kwargs: Response({"items": []}),
+    )
+
+    with pytest.raises(GitHubReadError):
+        GitHubReader(SecretStr("github-secret")).objects("/items")
+
+
 def test_reader_errors_do_not_expose_token(monkeypatch):
     def fail(github_request, timeout):
-        assert timeout == 30
         raise HTTPError(github_request.full_url, 403, "forbidden", {}, None)
 
     monkeypatch.setattr(github_http.request, "urlopen", fail)

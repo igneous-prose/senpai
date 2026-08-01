@@ -321,7 +321,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 def create_exa_client() -> Exa:
     load_dotenv(dotenv_path=find_dotenv(usecwd=True), override=False)
-    api_key = os.environ.get("EXA_API_KEY")
+    api_key = os.environ.get("EXA_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("EXA_API_KEY is not set; add it to .env or the environment")
     return Exa(api_key)

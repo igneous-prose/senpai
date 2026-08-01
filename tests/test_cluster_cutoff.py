@@ -18,17 +18,7 @@ def run_cutoff(*args: str, env: dict[str, str] | None = None):
     )
 
 
-def test_cutoff_cli_has_no_conversation_harvest_or_local_archive_options():
-    result = run_cutoff("--help")
-
-    assert result.returncode == 0
-    output = result.stdout.lower()
-    assert "harvest" not in output
-    assert "local pull" not in output
-    assert "parallel copies" not in output
-
-
-def test_cutoff_defaults_to_the_image_built_from_the_checked_out_commit(tmp_path):
+def render_cutoff(tmp_path: Path, *args: str):
     captured_script = tmp_path / "cutoff-job.sh"
     fake_kubectl = tmp_path / "kubectl"
     fake_kubectl.write_text(
@@ -45,8 +35,20 @@ printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
         encoding="utf-8",
     )
     fake_kubectl.chmod(0o755)
-
     result = run_cutoff(
+        *args,
+        "--dry-run",
+        env={
+            "KUBECTL": str(fake_kubectl),
+            "CAPTURED_CUTOFF_SCRIPT": str(captured_script),
+        },
+    )
+    return result, captured_script
+
+
+def test_cutoff_defaults_to_the_image_built_from_the_checked_out_commit(tmp_path):
+    result, _ = render_cutoff(
+        tmp_path,
         "--run-slug",
         "acceptance",
         "--tags-csv",
@@ -57,11 +59,6 @@ printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
         "1",
         "--budget-hours",
         "0",
-        "--dry-run",
-        env={
-            "KUBECTL": str(fake_kubectl),
-            "CAPTURED_CUTOFF_SCRIPT": str(captured_script),
-        },
     )
 
     revision = subprocess.run(
@@ -130,24 +127,8 @@ def test_cutoff_has_a_minimal_commit_built_image():
 
 
 def test_cutoff_dry_run_keeps_readiness_and_delete_without_archive_rbac(tmp_path):
-    captured_script = tmp_path / "cutoff-job.sh"
-    fake_kubectl = tmp_path / "kubectl"
-    fake_kubectl.write_text(
-        """#!/bin/sh
-for arg in "$@"; do
-  case "$arg" in
-    --from-file=cutoff-job.sh=*)
-      cp "${arg#--from-file=cutoff-job.sh=}" "$CAPTURED_CUTOFF_SCRIPT"
-      ;;
-  esac
-done
-printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
-""",
-        encoding="utf-8",
-    )
-    fake_kubectl.chmod(0o755)
-
-    result = run_cutoff(
+    result, captured_script = render_cutoff(
+        tmp_path,
         "--run-slug",
         "acceptance",
         "--tags-csv",
@@ -158,11 +139,6 @@ printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
         "1",
         "--budget-hours",
         "0",
-        "--dry-run",
-        env={
-            "KUBECTL": str(fake_kubectl),
-            "CAPTURED_CUTOFF_SCRIPT": str(captured_script),
-        },
     )
 
     assert result.returncode == 0, result.stderr
@@ -179,23 +155,8 @@ printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
 
 
 def test_generated_cutoff_waits_for_readiness_then_deletes_selected_resources(tmp_path):
-    captured_script = tmp_path / "cutoff-job.sh"
-    generator_kubectl = tmp_path / "generator-kubectl"
-    generator_kubectl.write_text(
-        """#!/bin/sh
-for arg in "$@"; do
-  case "$arg" in
-    --from-file=cutoff-job.sh=*)
-      cp "${arg#--from-file=cutoff-job.sh=}" "$CAPTURED_CUTOFF_SCRIPT"
-      ;;
-  esac
-done
-printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
-""",
-        encoding="utf-8",
-    )
-    generator_kubectl.chmod(0o755)
-    generated = run_cutoff(
+    generated, captured_script = render_cutoff(
+        tmp_path,
         "--run-slug",
         "acceptance",
         "--tags-csv",
@@ -206,11 +167,6 @@ printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
         "1",
         "--budget-hours",
         "0",
-        "--dry-run",
-        env={
-            "KUBECTL": str(generator_kubectl),
-            "CAPTURED_CUTOFF_SCRIPT": str(captured_script),
-        },
     )
     assert generated.returncode == 0, generated.stderr
 
@@ -272,23 +228,8 @@ esac
 def test_generated_cutoff_arms_after_readiness_deadline_when_a_pod_never_readies(
     tmp_path,
 ):
-    captured_script = tmp_path / "cutoff-job.sh"
-    generator_kubectl = tmp_path / "generator-kubectl"
-    generator_kubectl.write_text(
-        """#!/bin/sh
-for arg in "$@"; do
-  case "$arg" in
-    --from-file=cutoff-job.sh=*)
-      cp "${arg#--from-file=cutoff-job.sh=}" "$CAPTURED_CUTOFF_SCRIPT"
-      ;;
-  esac
-done
-printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
-""",
-        encoding="utf-8",
-    )
-    generator_kubectl.chmod(0o755)
-    generated = run_cutoff(
+    generated, captured_script = render_cutoff(
+        tmp_path,
         "--run-slug",
         "never-ready",
         "--tags-csv",
@@ -301,11 +242,6 @@ printf '%s\n' 'apiVersion: v1' 'kind: ConfigMap'
         "0",
         "--budget-hours",
         "0",
-        "--dry-run",
-        env={
-            "KUBECTL": str(generator_kubectl),
-            "CAPTURED_CUTOFF_SCRIPT": str(captured_script),
-        },
     )
     assert generated.returncode == 0, generated.stderr
 

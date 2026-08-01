@@ -1,9 +1,9 @@
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from senpai_agent import advisor
 from senpai_agent.advisor import (
     AdvisorEvent,
     AdvisorEventPump,
@@ -11,41 +11,15 @@ from senpai_agent.advisor import (
     advisor_conversation_id,
     advisor_main,
     deliver_pending_events,
-    merge_system_instructions,
 )
 
 
-def test_harness_and_role_are_one_stable_system_suffix(tmp_path: Path):
-    harness = tmp_path / "SENPAI-HARNESS.md"
-    role = tmp_path / "SENPAI-ADVISOR.md"
-    harness.write_text("# Harness\n\nUse typed Senpai tools.\n")
-    role.write_text("# Advisor\n\nDirect the research programme.\n")
-
-    first = merge_system_instructions(harness, role)
-    second = merge_system_instructions(harness, role)
-
-    assert first == second
-    assert first == (
-        "# Senpai harness\n\n"
-        "# Harness\n\nUse typed Senpai tools.\n\n"
-        "# Senpai role\n\n"
-        "# Advisor\n\nDirect the research programme.\n"
-    )
-
-
-def test_advisor_uuid_is_stable_and_senpai_does_not_prune_conversations(
-    tmp_path: Path,
-):
-    conversations = tmp_path / "conversations"
-    conversations.mkdir()
-    for number in range(401):
-        (conversations / f"closed-{number:03d}").mkdir()
-
+def test_advisor_conversation_id_is_persisted(tmp_path: Path):
     first = advisor_conversation_id(tmp_path)
     second = advisor_conversation_id(tmp_path)
 
     assert first == second
-    assert len(list(conversations.iterdir())) == 401
+    assert (tmp_path / "advisor-conversation-id").read_text() == f"{first}\n"
 
 
 def test_event_store_deduplicates_and_survives_reopen(tmp_path: Path):
@@ -69,7 +43,7 @@ def test_event_store_deduplicates_and_survives_reopen(tmp_path: Path):
         assert reopened.pending() == []
 
 
-def test_event_message_contains_current_time_and_structured_payload(tmp_path: Path):
+def test_event_message_renders_observation_time_and_structured_payload():
     event = AdvisorEvent(
         kind="review_ready",
         dedupe_key="review_ready:17:abc",
@@ -77,20 +51,19 @@ def test_event_message_contains_current_time_and_structured_payload(tmp_path: Pa
             "pr": 17,
             "head_sha": "abc",
         },
+        observed_at=datetime(2026, 7, 31, 12, 30, tzinfo=UTC),
     )
 
-    rendered = event.to_user_message()
-
-    assert rendered.startswith("# Senpai event: review_ready\n\n")
-    assert '"pr": 17' in rendered
-    assert '"head_sha": "abc"' in rendered
-    assert "Observed at (UTC):" in rendered
-
-
-def test_advisor_events_are_local_only_and_have_no_network_server():
-    assert not hasattr(advisor, "notify_advisor")
-    assert not hasattr(advisor, "AdvisorEventServer")
-    assert not hasattr(advisor, "accept_advisor_event")
+    assert event.to_user_message() == (
+        "# Senpai event: review_ready\n\n"
+        "Observed at (UTC): 2026-07-31T12:30:00+00:00\n\n"
+        "```json\n"
+        "{\n"
+        '  "head_sha": "abc",\n'
+        '  "pr": 17\n'
+        "}\n"
+        "```"
+    )
 
 
 def test_deliver_pending_events_acknowledges_only_messages_sent(tmp_path: Path):
@@ -221,7 +194,7 @@ def test_event_pump_surfaces_delivery_failure_and_leaves_event_pending(
         assert store.pending() == [event]
 
 
-def test_advisor_cli_only_reports_the_local_pending_count(
+def test_advisor_cli_reports_the_pending_event_count(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ):

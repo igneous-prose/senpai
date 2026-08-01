@@ -32,6 +32,63 @@ _TRAIN_LAUNCHERS = {"accelerate", "deepspeed", "torchrun"}
 _TRAIN_SCRIPT = re.compile(r"^train[^/]*[.]py$")
 _HELP_FLAGS = {"-h", "--help"}
 _REDIRECTION_OPERATORS = {"<", ">", ">>", "<>", ">|", "<&", ">&", "&>", "&>>"}
+_GIT_TERMINAL_COMMANDS = {
+    "add",
+    "apply",
+    "bisect",
+    "blame",
+    "branch",
+    "cat-file",
+    "check-ignore",
+    "check-ref-format",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "describe",
+    "diff",
+    "diff-tree",
+    "fetch",
+    "for-each-ref",
+    "gc",
+    "grep",
+    "hash-object",
+    "help",
+    "init",
+    "log",
+    "ls-files",
+    "ls-remote",
+    "ls-tree",
+    "merge",
+    "merge-base",
+    "merge-tree",
+    "mv",
+    "name-rev",
+    "notes",
+    "range-diff",
+    "rebase",
+    "reflog",
+    "reset",
+    "restore",
+    "rev-list",
+    "rev-parse",
+    "revert",
+    "rm",
+    "shortlog",
+    "show",
+    "show-ref",
+    "sparse-checkout",
+    "stash",
+    "status",
+    "submodule",
+    "switch",
+    "tag",
+    "verify-commit",
+    "verify-tag",
+    "version",
+    "worktree",
+}
 
 
 def _without_literal_file_heredocs(command: str) -> str:
@@ -387,6 +444,41 @@ def _timeout_command(arguments: list[str]) -> list[str]:
     return arguments[position + 1 :]
 
 
+def _git_policy(arguments: list[str]) -> PolicyDecision:
+    command_line = _wrapper_command(
+        arguments,
+        value_options={
+            "-C",
+            "-c",
+            "--config-env",
+            "--git-dir",
+            "--namespace",
+            "--work-tree",
+        },
+    )
+    if not command_line:
+        return PolicyDecision(True)
+    command, *options = command_line
+    if command == "config":
+        read_only = {"--get", "--get-all", "--get-regexp", "--list", "-l"}
+        if read_only & set(options):
+            return PolicyDecision(True)
+    elif command == "remote":
+        operation = next(
+            (value for value in options if not value.startswith("-")),
+            None,
+        )
+        if operation in {None, "get-url", "show"}:
+            return PolicyDecision(True)
+    elif command in _GIT_TERMINAL_COMMANDS:
+        return PolicyDecision(True)
+    return PolicyDecision(
+        False,
+        "Only explicit local or read-only Git commands may use the terminal; "
+        "use the typed Senpai tool for branch publication.",
+    )
+
+
 def _segment_policy(tokens: list[str]) -> PolicyDecision:
     index = _program_index(tokens)
     if index is None:
@@ -412,12 +504,14 @@ def _segment_policy(tokens: list[str]) -> PolicyDecision:
         command = _shell_command(arguments)
         if command is not None:
             return terminal_policy(command, "", Path.cwd())
-
-    if program == "git" and "push" in arguments:
+    if program == "eval":
         return PolicyDecision(
             False,
-            "Use the typed Senpai branch-push tool; raw git push bypasses guards.",
+            "Do not use eval to execute commands hidden from Senpai's policy.",
         )
+
+    if program == "git":
+        return _git_policy(arguments)
     if program == "gh":
         return _gh_policy(tokens, index)
     if program == "curl":
