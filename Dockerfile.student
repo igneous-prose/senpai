@@ -49,10 +49,12 @@ RUN cd /tmp/senpai && \
     rm -rf /root/.cache/uv
 
 COPY scripts/senpai-browser-smoke-test.py /usr/local/bin/senpai-browser-smoke-test
+COPY scripts/senpai-container-health.sh /usr/local/bin/senpai-container-health
 
 RUN uvx --from "playwright==${PLAYWRIGHT_VERSION}" \
       playwright install chromium --with-deps --no-shell && \
-    chmod +x /usr/local/bin/senpai-browser-smoke-test && \
+    chmod +x /usr/local/bin/senpai-browser-smoke-test \
+      /usr/local/bin/senpai-container-health && \
     mkdir -p /workspace /workspaces /var/lib/senpai && \
     chown -R 10001:10001 \
       /home/senpai /workspace /workspaces /var/lib/senpai && \
@@ -72,9 +74,8 @@ RUN chmod +x /usr/local/bin/senpai-gpu-smoke-test && \
 ENV HOME=/home/senpai
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10m --retries=5 \
-    CMD python -m senpai_agent.supervisor health \
-      "/var/lib/senpai/openhands_state/controller-lease.json" \
-      || kill -TERM 1
+    CMD senpai-container-health \
+      "/var/lib/senpai/openhands_state/controller-lease.json"
 
 WORKDIR /workspaces
 USER 10001:10001

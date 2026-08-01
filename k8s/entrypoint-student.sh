@@ -7,6 +7,7 @@
 set -e
 set -o pipefail
 umask "${SENPAI_UMASK:-0022}"
+date +%s > "${SENPAI_BOOTSTRAP_STARTED_PATH:-/var/lib/senpai/.bootstrap-started}"
 
 WORKDIR="/workspace/senpai"
 GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
