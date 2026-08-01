@@ -6,7 +6,7 @@ ARG SENPAI_SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${SENPAI_SOURCE_REVISION}"
 
 ENV PATH="/opt/senpai-venv/bin:/home/senpai/.local/bin:${PATH}" \
-    PLAYWRIGHT_BROWSERS_PATH=/home/senpai/.cache/ms-playwright \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     UV_PYTHON_INSTALL_DIR=/opt/uv-python \
     SENPAI_IMAGE_REVISION="${SENPAI_SOURCE_REVISION}" \
     BROWSER_USE_DISABLE_EXTENSIONS=1
@@ -51,8 +51,13 @@ RUN cd /tmp/senpai && \
 COPY scripts/senpai-browser-smoke-test.py /usr/local/bin/senpai-browser-smoke-test
 COPY scripts/senpai-container-health.sh /usr/local/bin/senpai-container-health
 
+# Expose the pinned browser on PATH because launchers give roles a persistent HOME.
 RUN uvx --from "playwright==${PLAYWRIGHT_VERSION}" \
       playwright install chromium --with-deps --no-shell && \
+    chromium_path=$(find "$PLAYWRIGHT_BROWSERS_PATH" \
+      -type f -path '*/chrome-linux*/chrome' -print -quit) && \
+    test -x "$chromium_path" && \
+    ln -s "$chromium_path" /usr/local/bin/chromium && \
     chmod +x /usr/local/bin/senpai-browser-smoke-test \
       /usr/local/bin/senpai-container-health && \
     mkdir -p /workspace /workspaces /var/lib/senpai && \
@@ -81,4 +86,4 @@ WORKDIR /workspaces
 USER 10001:10001
 
 # Exercise the browser as the same non-root user used in production.
-RUN senpai-browser-smoke-test
+RUN HOME=/var/lib/senpai/home senpai-browser-smoke-test

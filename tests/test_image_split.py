@@ -56,16 +56,14 @@ def test_both_role_images_run_as_the_same_explicit_non_root_user():
 
         assert "USER 10001:10001" in dockerfile
         assert "HOME=/home/senpai" in dockerfile
-        assert (
-            "PLAYWRIGHT_BROWSERS_PATH=/home/senpai/.cache/ms-playwright"
-            in dockerfile
-        )
+        assert "PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright" in dockerfile
+        assert 'ln -s "$chromium_path" /usr/local/bin/chromium' in dockerfile
         assert "mkdir -p /workspace /workspaces /var/lib/senpai" in dockerfile
         assert dockerfile.rindex("ENV HOME=/home/senpai") < dockerfile.index(
             "USER 10001:10001"
         )
         assert dockerfile.index("USER 10001:10001") < dockerfile.index(
-            "RUN senpai-browser-smoke-test"
+            "RUN HOME=/var/lib/senpai/home senpai-browser-smoke-test"
         )
 
 
