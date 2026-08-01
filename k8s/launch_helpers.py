@@ -289,6 +289,67 @@ def preflight_check_target_repo_branch(
     return branch
 
 
+def preflight_check_student_name_availability(
+    target_repo_url: str,
+    token: str,
+    student_names: list[str],
+    advisor_branch: str,
+) -> None:
+    """Reject student names routing an active PR from another advisor branch."""
+    slug = target_repo_slug(target_repo_url)
+    print(f"Preflight: checking student assignment labels on {slug}")
+    conflicts: dict[str, list[tuple[int, str]]] = {}
+    active_statuses = {"status:wip", "status:review"}
+
+    for student in dict.fromkeys(student_names):
+        page = 1
+        while True:
+            query = urllib.parse.urlencode(
+                {
+                    "state": "open",
+                    "labels": f"student:{student}",
+                    "per_page": 100,
+                    "page": page,
+                }
+            )
+            issues = _github_api(f"/repos/{slug}/issues?{query}", token)
+            if not isinstance(issues, list):
+                sys.exit(
+                    "ERROR: GitHub returned invalid active assignments for "
+                    f"student:{student}"
+                )
+            for issue in issues:
+                labels = {label["name"] for label in issue["labels"]}
+                if issue.get("pull_request") is None or not active_statuses & labels:
+                    continue
+                number = int(issue["number"])
+                pull = _github_api(f"/repos/{slug}/pulls/{number}", token)
+                base_branch = pull["base"]["ref"]
+                if base_branch != advisor_branch:
+                    conflicts.setdefault(student, []).append((number, base_branch))
+            if len(issues) < 100:
+                break
+            page += 1
+
+    if conflicts:
+        conflict_lines = "\n".join(
+            f"  student:{student}: "
+            + ", ".join(
+                f"#{number} (base {base_branch})"
+                for number, base_branch in student_conflicts
+            )
+            for student, student_conflicts in conflicts.items()
+        )
+        sys.exit(
+            "ERROR: target repo has active assignment PRs on other advisor "
+            f"branches for requested students:\n{conflict_lines}\n"
+            "  Launching would make student routing ambiguous. Use "
+            "--student_prefix <prefix> for unique student labels, or finish/relabel "
+            "the existing assignments."
+        )
+    print("  OK — requested student labels are available for this advisor branch")
+
+
 def ensure_advisor_branch(
     target_repo_url: str,
     token: str,

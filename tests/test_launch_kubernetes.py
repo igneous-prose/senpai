@@ -92,6 +92,7 @@ def bypass_external_preflight(monkeypatch):
         monkeypatch.setattr(launch, name, lambda _path, value=value: value)
     for name in (
         "preflight_check_target_repo_access",
+        "preflight_check_student_name_availability",
         "preflight_check_anthropic_api_key",
         "preflight_check_exa_api_key",
         "preflight_check_wandb_api_key",
@@ -148,3 +149,40 @@ def test_launch_uses_one_scope_for_apply_discovery_and_handoff_commands(
     ]
     assert len(handoff_commands) == 4
     assert all(command.startswith(prefix) for command in handoff_commands)
+
+
+def test_assignment_collision_stops_before_launch_mutation(monkeypatch):
+    args = launch_args(student_prefix="acceptance")
+    monkeypatch.setattr(launch.sp, "parse", lambda *_args, **_kwargs: args)
+    bypass_external_preflight(monkeypatch)
+
+    checked = []
+
+    def reject(_repo, _token, students, advisor_branch):
+        checked.extend(students)
+        assert advisor_branch == "schmidhuber"
+        raise SystemExit("active assignment")
+
+    monkeypatch.setattr(launch, "preflight_check_student_name_availability", reject)
+    mutations = []
+    monkeypatch.setattr(
+        launch,
+        "ensure_advisor_branch",
+        lambda *_args: mutations.append("branch"),
+    )
+    monkeypatch.setattr(
+        launch,
+        "ensure_target_repo_labels",
+        lambda *_args: mutations.append("labels"),
+    )
+    monkeypatch.setattr(
+        launch,
+        "kubectl_apply",
+        lambda *_args, **_kwargs: mutations.append("kubernetes"),
+    )
+
+    with pytest.raises(SystemExit, match="active assignment"):
+        launch.main()
+
+    assert checked == ["acceptance-fern"]
+    assert mutations == []

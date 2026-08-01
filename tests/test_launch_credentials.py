@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import urllib.error
+import urllib.parse
 
 import pytest
 
@@ -159,3 +160,171 @@ def test_repo_access_fails_closed_if_the_impossible_write_is_accepted(monkeypatc
             "https://github.com/example/problem.git",
             "github-secret",
         )
+
+
+def test_student_name_preflight_uses_open_assignment_workflow_labels(monkeypatch):
+    captured = {}
+
+    def urlopen(request, timeout):
+        captured.update(request=request, timeout=timeout)
+        return JSONResponse(
+            [
+                {
+                    "number": 12,
+                    "pull_request": {},
+                    "labels": [
+                        {"name": "student:fern"},
+                        {"name": "status:merged"},
+                    ],
+                },
+                {
+                    "number": 13,
+                    "labels": [
+                        {"name": "student:fern"},
+                        {"name": "status:wip"},
+                    ],
+                },
+            ]
+        )
+
+    monkeypatch.setattr(launch_helpers.urllib.request, "urlopen", urlopen)
+
+    launch_helpers.preflight_check_student_name_availability(
+        "https://github.com/example/problem.git",
+        "github-secret",
+        ["fern"],
+        "advisor",
+    )
+
+    request = captured["request"]
+    assert request.get_method() == "GET"
+    assert request.full_url == (
+        "https://api.github.com/repos/example/problem/issues?"
+        "state=open&labels=student%3Afern&per_page=100&page=1"
+    )
+
+
+def test_student_name_preflight_reports_active_prs_and_prefix_fix(monkeypatch):
+    assignments = {
+        "student:fern": [
+            {
+                "number": 17,
+                "pull_request": {},
+                "labels": [
+                    {"name": "student:fern"},
+                    {"name": "status:wip"},
+                ],
+            }
+        ],
+        "student:frieren": [
+            {
+                "number": 23,
+                "pull_request": {},
+                "labels": [
+                    {"name": "student:frieren"},
+                    {"name": "status:review"},
+                ],
+            }
+        ],
+    }
+    bases = {17: "old-track", 23: "other-track"}
+
+    def urlopen(request, timeout):
+        url = urllib.parse.urlsplit(request.full_url)
+        if url.path.endswith("/issues"):
+            query = urllib.parse.parse_qs(url.query)
+            return JSONResponse(assignments[query["labels"][0]])
+        return JSONResponse({"base": {"ref": bases[int(url.path.rsplit("/", 1)[1])]}})
+
+    monkeypatch.setattr(launch_helpers.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(SystemExit) as raised:
+        launch_helpers.preflight_check_student_name_availability(
+            "https://github.com/example/problem.git",
+            "github-secret",
+            ["fern", "frieren"],
+            "advisor",
+        )
+
+    message = str(raised.value)
+    assert "student:fern: #17 (base old-track)" in message
+    assert "student:frieren: #23 (base other-track)" in message
+    assert "--student_prefix <prefix>" in message
+
+
+def test_student_name_preflight_allows_resume_on_same_advisor_branch(monkeypatch):
+    requests = []
+
+    def urlopen(request, timeout):
+        requests.append(request.full_url)
+        if request.full_url.endswith("/pulls/31"):
+            return JSONResponse({"base": {"ref": "advisor"}})
+        return JSONResponse(
+            [
+                {
+                    "number": 31,
+                    "pull_request": {},
+                    "labels": [
+                        {"name": "student:fern"},
+                        {"name": "status:review"},
+                    ],
+                }
+            ]
+        )
+
+    monkeypatch.setattr(launch_helpers.urllib.request, "urlopen", urlopen)
+
+    launch_helpers.preflight_check_student_name_availability(
+        "https://github.com/example/problem.git",
+        "github-secret",
+        ["fern"],
+        "advisor",
+    )
+
+    assert requests[-1].endswith("/pulls/31")
+
+
+def test_student_name_preflight_checks_every_issue_page(monkeypatch):
+    requests = []
+
+    def urlopen(request, timeout):
+        requests.append(request.full_url)
+        url = urllib.parse.urlsplit(request.full_url)
+        if url.path.endswith("/pulls/117"):
+            return JSONResponse({"base": {"ref": "other-track"}})
+        page = urllib.parse.parse_qs(url.query)["page"][0]
+        if page == "1":
+            return JSONResponse(
+                [
+                    {
+                        "number": number,
+                        "labels": [{"name": "student:fern"}],
+                    }
+                    for number in range(1, 101)
+                ]
+            )
+        return JSONResponse(
+            [
+                {
+                    "number": 117,
+                    "pull_request": {},
+                    "labels": [
+                        {"name": "student:fern"},
+                        {"name": "status:wip"},
+                    ],
+                }
+            ]
+        )
+
+    monkeypatch.setattr(launch_helpers.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(SystemExit, match=r"#117 \(base other-track\)"):
+        launch_helpers.preflight_check_student_name_availability(
+            "https://github.com/example/problem.git",
+            "github-secret",
+            ["fern"],
+            "advisor",
+        )
+
+    assert any("page=1" in request for request in requests)
+    assert any("page=2" in request for request in requests)

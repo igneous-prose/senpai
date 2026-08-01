@@ -25,6 +25,7 @@ from launch_helpers import (
     pod_template_hash,
     preflight_check_anthropic_api_key,
     preflight_check_exa_api_key,
+    preflight_check_student_name_availability,
     preflight_check_target_repo_access,
     preflight_check_target_repo_branch,
     preflight_check_wandb_api_key,
@@ -142,9 +143,29 @@ def load_extra_instructions(extra_instructions: str) -> str:
     return p.read_text() if p.exists() else extra_instructions
 
 
-def build_extra_instructions(args: Args, tag: str, student_list: list[str]) -> str:
+def build_extra_instructions(
+    args: Args,
+    tag: str,
+    student_list: list[str],
+    *,
+    backend: str,
+) -> str:
     students = ", ".join(student_list)
     target_base = args.target_repo_branch or "<default>"
+    runtime = f"""# Authoritative launch context
+
+These values were resolved by the Senpai launcher and describe the actual runtime.
+They override conflicting compute or run-limit claims in the target repository's
+`program.md` and role prompts.
+
+- Compute backend: `{backend}`.
+- Visible GPUs per student: `{args.gpus_per_student}`.
+- Hard limits for each training run: `{args.timeout_minutes:g}` minutes wall-clock
+  and `{args.max_epochs}` epochs.
+- Use tools and operational commands that work with `{backend}`. Do not follow
+  target-repository instructions written for another backend.
+- Do not assume additional GPUs or bypass, extend, or continue past the hard training limits.
+"""
     isolation = f"""# Launch isolation and run-limit rules
 
 - This launch is scoped to research tag `{tag}`, advisor branch `{args.advisor_branch}`, and target base branch `{target_base}`.
@@ -156,15 +177,30 @@ def build_extra_instructions(args: Args, tag: str, student_list: list[str]) -> s
 """
     user_extra = load_extra_instructions(args.extra_instructions)
     return (
-        isolation
+        runtime + "\n" + isolation
         if not user_extra
-        else isolation + "\n# Additional operator instructions\n\n" + user_extra
+        else runtime
+        + "\n"
+        + isolation
+        + "\n# Additional operator instructions\n\n"
+        + user_extra
     )
 
 
-def encoded_extra_instructions(args: Args, tag: str, student_list: list[str]) -> str:
+def encoded_extra_instructions(
+    args: Args,
+    tag: str,
+    student_list: list[str],
+    *,
+    backend: str,
+) -> str:
     return base64.b64encode(
-        build_extra_instructions(args, tag, student_list).encode()
+        build_extra_instructions(
+            args,
+            tag,
+            student_list,
+            backend=backend,
+        ).encode()
     ).decode()
 
 
@@ -203,7 +239,10 @@ def render_student(
             "SENPAI_POLL_INTERVAL_S": str(args.poll_interval_s),
             "SENPAI_POLL_JITTER_S": str(args.poll_jitter_s),
             "EXTRA_INSTRUCTIONS_B64": encoded_extra_instructions(
-                args, tag, [student_name]
+                args,
+                tag,
+                [student_name],
+                backend="kubernetes",
             ),
             "PROBLEM_DIR": args.problem_dir,
             "PVC_MOUNT_PATH": args.pvc_mount_path,
@@ -263,7 +302,12 @@ def render_advisor(
         "PVC_MOUNT_PATH": args.pvc_mount_path,
         "SENPAI_START_GATE_PATH": args.start_gate_path,
     }
-    data["EXTRA_INSTRUCTIONS_B64"] = encoded_extra_instructions(args, tag, student_list)
+    data["EXTRA_INSTRUCTIONS_B64"] = encoded_extra_instructions(
+        args,
+        tag,
+        student_list,
+        backend="kubernetes",
+    )
     configmap = render_configmap(
         name=advisor_configmap_name,
         labels={"app": "senpai", "role": "advisor", "research-tag": tag},
@@ -322,6 +366,14 @@ def main():
     if target_repo_slug(args.target_repo_url) == target_repo_slug(args.repo_url):
         sys.exit("ERROR: --target_repo_url must be a different repo from --repo_url")
 
+    # Resolve student list before backend-independent GitHub preflight.
+    if args.names:
+        student_list = [n.strip() for n in args.names.split(",")]
+    else:
+        student_list = expand_student_names(args.n_students)
+    if args.student_prefix:
+        student_list = [f"{args.student_prefix}-{name}" for name in student_list]
+
     github_token = anthropic_api_key = exa_api_key = wandb_api_key = ""
     if not args.dry_run or args.preflight_only:
         github_token = resolve_github_token(DOTENV_PATH)
@@ -334,20 +386,18 @@ def main():
             github_token,
             args.target_repo_branch,
         )
+        preflight_check_student_name_availability(
+            args.target_repo_url,
+            github_token,
+            student_list,
+            args.advisor_branch,
+        )
         preflight_check_anthropic_api_key(anthropic_api_key)
         preflight_check_exa_api_key(exa_api_key)
         preflight_check_wandb_api_key(wandb_api_key)
         if args.preflight_only:
             print("Preflight OK — credentials and target repo access verified.")
             return
-
-    # Resolve student list
-    if args.names:
-        student_list = [n.strip() for n in args.names.split(",")]
-    else:
-        student_list = expand_student_names(args.n_students)
-    if args.student_prefix:
-        student_list = [f"{args.student_prefix}-{name}" for name in student_list]
 
     if not args.dry_run:
         ensure_advisor_branch(
