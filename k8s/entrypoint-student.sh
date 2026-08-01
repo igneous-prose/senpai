@@ -6,6 +6,7 @@
 
 set -e
 set -o pipefail
+umask "${SENPAI_UMASK:-0022}"
 
 WORKDIR="/workspace/senpai"
 GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
@@ -90,8 +91,7 @@ export SENPAI_OPENHANDS_HARNESS_FILE="$WORKDIR/system_instructions/SENPAI-HARNES
 export SENPAI_OPENHANDS_TIMEOUT_SECONDS="${SENPAI_OPENHANDS_TIMEOUT_SECONDS:-3600}"
 if [ -z "${SENPAI_GITHUB_TOKEN_FILE:-}" ]; then
     export SENPAI_GITHUB_TOKEN_FILE="/tmp/senpai-supervisor-github-token"
-    umask 077
-    printf '%s' "$GITHUB_TOKEN" > "$SENPAI_GITHUB_TOKEN_FILE"
+    (umask 077; printf '%s' "$GITHUB_TOKEN" > "$SENPAI_GITHUB_TOKEN_FILE")
 fi
 unset GITHUB_TOKEN GH_TOKEN GIT_ASKPASS
 rm -f "$GIT_ASKPASS_FILE"
