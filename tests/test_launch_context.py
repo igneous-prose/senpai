@@ -6,6 +6,16 @@ import yaml
 from launch_test_support import launch, launch_args, render_role
 
 
+def test_default_fleet_is_four_students_with_one_gpu_each():
+    args = launch.Args(
+        tag="defaults",
+        target_repo_url="https://github.com/example/problem.git",
+    )
+
+    assert args.n_students == 4
+    assert args.gpus_per_student == 1
+
+
 @pytest.mark.parametrize("backend", ["kubernetes", "docker", "aws"])
 def test_launch_context_records_resolved_runtime_facts(backend):
     args = launch_args(

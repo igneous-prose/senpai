@@ -242,6 +242,46 @@ def test_cancel_training_retires_its_monitor(tmp_path: Path):
         monitors.close()
 
 
+def test_cancel_training_keeps_monitor_when_cancellation_is_not_terminal(
+    tmp_path: Path,
+):
+    class NonTerminalCancellation(StubTraining):
+        def cancel_training(self, training_id: str) -> TrainingResult:
+            self.cancelled.append(training_id)
+            return self.result.model_copy(update={"state": TrainingState.RUNNING})
+
+    workspace = init_workspace(tmp_path)
+    training = NonTerminalCancellation(workspace, finished_result(tmp_path))
+    monitors = MonitorStore(tmp_path / "monitors.sqlite3")
+    conversation_id = uuid.uuid4()
+    RunTrainingTool.create(training, monitors)[0].executor(
+        RunTrainingAction(
+            spec=TrainingSpec(
+                argv=("python", "train.py"),
+                cwd=workspace,
+                timeout_seconds=20,
+            )
+        ),
+        SimpleNamespace(id=conversation_id),
+    )
+
+    try:
+        cancel = CancelTrainingTool.create(training, monitors)[0].executor
+
+        with pytest.raises(RuntimeError, match="did not reach a terminal state"):
+            cancel(
+                CancelTrainingAction(training_id="training-17"),
+                SimpleNamespace(id=conversation_id),
+            )
+
+        assert training.cancelled == ["training-17"]
+        assert [monitor.training_id for monitor in monitors.active()] == [
+            "training-17"
+        ]
+    finally:
+        monitors.close()
+
+
 def test_interrupting_run_training_closes_its_runtime(tmp_path: Path):
     training = StubTraining(tmp_path, finished_result(tmp_path))
     monitors = MonitorStore(tmp_path / "monitors.sqlite3")

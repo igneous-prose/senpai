@@ -14,6 +14,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import simple_parsing as sp
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from senpai_agent.launch_context import render_launch_context
+
 from launch_helpers import (
     ensure_advisor_branch,
     ensure_target_repo_labels,
@@ -58,7 +65,7 @@ class Args:
     names: str = ""  # comma-separated student names (e.g. "frieren,fern")
     n_students: int = 4  # number of students to launch (ignored if --names is provided)
     student_prefix: str = ""  # make assignment labels unique across parallel launches using the same base names
-    gpus_per_student: int = 8  # GPUs requested by each student pod
+    gpus_per_student: int = 1  # GPUs requested by each student pod
     cpu_per_gpu: int = 15  # CPU requested per student GPU
     memory_gi_per_gpu: int = 120  # memory Gi requested per student GPU
     repo_url: str = (
@@ -136,13 +143,6 @@ def validate_timing_args(args: Args) -> None:
             )
 
 
-def load_extra_instructions(extra_instructions: str) -> str:
-    if not extra_instructions:
-        return ""
-    p = Path(extra_instructions)
-    return p.read_text() if p.exists() else extra_instructions
-
-
 def build_extra_instructions(
     args: Args,
     tag: str,
@@ -150,40 +150,16 @@ def build_extra_instructions(
     *,
     backend: str,
 ) -> str:
-    students = ", ".join(student_list)
-    target_base = args.target_repo_branch or "<default>"
-    runtime = f"""# Authoritative launch context
-
-These values were resolved by the Senpai launcher and describe the actual runtime.
-They override conflicting compute or run-limit claims in the target repository's
-`program.md` and role prompts.
-
-- Compute backend: `{backend}`.
-- Visible GPUs per student: `{args.gpus_per_student}`.
-- Hard limits for each training run: `{args.timeout_minutes:g}` minutes wall-clock
-  and `{args.max_epochs}` epochs.
-- Use tools and operational commands that work with `{backend}`. Do not follow
-  target-repository instructions written for another backend.
-- Do not assume additional GPUs or bypass, extend, or continue past the hard training limits.
-"""
-    isolation = f"""# Launch isolation and run-limit rules
-
-- This launch is scoped to research tag `{tag}`, advisor branch `{args.advisor_branch}`, and target base branch `{target_base}`.
-- Only inspect, modify, or reason from `{args.advisor_branch}` plus PR branches assigned to these students in this launch: {students}.
-- Do not inspect, compare, summarize, cherry-pick, borrow from, or base decisions on any PR or branch outside `{args.advisor_branch}` and the assigned student PR branches for this launch.
-- Do not use unrelated experiment runs or historical results unless the human explicitly names them during this launch.
-- Students branch from `{args.advisor_branch}`. Do not rebase or retarget work onto unrelated branches.
-- Treat `SENPAI_TIMEOUT_MINUTES` and `SENPAI_MAX_EPOCHS` as hard per-training-run bounds. Do not override them or continue a run past them.
-"""
-    user_extra = load_extra_instructions(args.extra_instructions)
-    return (
-        runtime + "\n" + isolation
-        if not user_extra
-        else runtime
-        + "\n"
-        + isolation
-        + "\n# Additional operator instructions\n\n"
-        + user_extra
+    return render_launch_context(
+        backend=backend,
+        gpus_per_student=args.gpus_per_student,
+        timeout_minutes=args.timeout_minutes,
+        max_epochs=args.max_epochs,
+        tag=tag,
+        advisor_branch=args.advisor_branch,
+        target_base=args.target_repo_branch,
+        students=student_list,
+        extra_instructions=args.extra_instructions,
     )
 
 

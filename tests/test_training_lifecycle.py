@@ -3,7 +3,13 @@ from pathlib import Path
 import pytest
 
 from senpai_agent.training import TrainingState, TrainingSupervisor
-from training_test_support import make_supervisor, run_python, wait_for_terminal
+from training_test_support import (
+    assert_process_stopped,
+    make_supervisor,
+    run_python,
+    wait_for_path,
+    wait_for_terminal,
+)
 
 
 def test_finished_training_persists_its_result_and_log(tmp_path: Path):
@@ -103,6 +109,38 @@ def test_cancel_training_stops_one_run_and_is_idempotent(tmp_path: Path):
 
     assert cancelled.state is TrainingState.CANCELLED
     assert supervisor.cancel_training(running.training_id) == cancelled
+
+
+def test_cancel_training_stops_term_ignoring_descendants(tmp_path: Path):
+    workspace, supervisor = make_supervisor(
+        tmp_path,
+        terminate_grace_seconds=0.1,
+    )
+    descendant_path = workspace / "descendant.pid"
+    running = run_python(
+        supervisor,
+        workspace,
+        (
+            "import pathlib, signal, subprocess, sys, time; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "child = subprocess.Popen([sys.executable, '-c', "
+            "'import signal, time; signal.signal(signal.SIGTERM, "
+            "signal.SIG_IGN); time.sleep(60)']); "
+            "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+            "time.sleep(60)"
+        ),
+        str(descendant_path),
+        timeout_seconds=60,
+    )
+    wait_for_path(descendant_path)
+    descendant_pid = int(descendant_path.read_text())
+
+    cancelled = supervisor.cancel_training(running.training_id)
+
+    assert cancelled.state is TrainingState.CANCELLED
+    assert running.pid is not None
+    assert_process_stopped(running.pid)
+    assert_process_stopped(descendant_pid)
 
 
 def test_supervisor_drain_waits_for_training_to_finish(tmp_path: Path):

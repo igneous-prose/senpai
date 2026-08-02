@@ -312,6 +312,11 @@ class _CancelTrainingExecutor(
                 "training belongs to a different student conversation"
             )
         result = self.training.cancel_training(action.training_id)
+        if result.state is TrainingState.RUNNING:
+            raise RuntimeError(
+                "cancel_training did not reach a terminal state; "
+                "the training monitor remains active"
+            )
         self.store.complete(action.training_id)
         return TrainingResultObservation.from_result(result)
 

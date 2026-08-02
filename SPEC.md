@@ -397,6 +397,7 @@ Students receive:
 ```text
 run_training(spec: TrainingSpec) -> TrainingResult
 get_training_status(training_id: str) -> TrainingResult
+cancel_training(training_id: str) -> TrainingResult
 monitor_training(
   training_id,
   metric=None,
@@ -422,6 +423,10 @@ repeating it replaces the default or previous policy.
 The timeout is a total wall-clock ceiling, not merely the point at which
 shutdown begins. TERM is sent early enough that the configured grace period
 ends at the deadline, after which the complete process group is killed.
+`cancel_training` follows the same process-group cleanup path and does not
+return until the supervisor has persisted a terminal state. Target training
+code remains responsible for handling SIGTERM and flushing external services
+such as W&B before the grace period expires.
 
 The controller polls only monitors that are due. It fetches one latest selected
 metric value from W&B, evaluates deterministic threshold/change/staleness and
