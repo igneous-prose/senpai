@@ -8,6 +8,8 @@ from openhands.sdk.tool import Tool, resolve_tool
 
 from senpai_agent.monitor import MonitorStore
 from senpai_agent.tools import (
+    CancelTrainingAction,
+    CancelTrainingTool,
     MonitorTrainingAction,
     MonitorTrainingTool,
     RunTrainingAction,
@@ -24,6 +26,7 @@ class StubTraining:
         self.result = result
         self.launched: list[TrainingSpec] = []
         self.status_checks: list[str] = []
+        self.cancelled: list[str] = []
         self.closed = False
 
     def run_training(self, spec: TrainingSpec) -> TrainingResult:
@@ -33,6 +36,10 @@ class StubTraining:
     def get_training_status(self, training_id: str) -> TrainingResult:
         self.status_checks.append(training_id)
         return self.result
+
+    def cancel_training(self, training_id: str) -> TrainingResult:
+        self.cancelled.append(training_id)
+        return self.result.model_copy(update={"state": TrainingState.CANCELLED})
 
     def close(self) -> None:
         self.closed = True
@@ -180,21 +187,57 @@ def test_monitor_training_replaces_the_default_policy(tmp_path: Path):
             ),
             SimpleNamespace(id=conversation_id),
         )
-        monitor_tool.executor(
-            MonitorTrainingAction(
-                training_id="training-17",
-                metric="validation/loss",
-                direction="min",
-                stale_after_seconds=300,
-            ),
-            SimpleNamespace(id=conversation_id),
+        action = MonitorTrainingAction(
+            training_id="training-17",
+            metric="validation/loss",
+            direction="min",
+            stale_after_seconds=300,
         )
+        with pytest.raises(PermissionError, match="different student conversation"):
+            monitor_tool.executor(action, SimpleNamespace(id=uuid.uuid4()))
+        monitor_tool.executor(action, SimpleNamespace(id=conversation_id))
 
         monitor = monitors.spec("training-17")
-        assert training.status_checks == ["training-17"]
+        assert training.status_checks == ["training-17", "training-17"]
         assert monitor.metric == "validation/loss"
         assert monitor.direction == "min"
         assert monitor.stale_after_seconds == 300
+    finally:
+        monitors.close()
+
+
+def test_cancel_training_retires_its_monitor(tmp_path: Path):
+    workspace = init_workspace(tmp_path)
+    training = StubTraining(workspace, finished_result(tmp_path))
+    monitors = MonitorStore(tmp_path / "monitors.sqlite3")
+    conversation_id = uuid.uuid4()
+    RunTrainingTool.create(training, monitors)[0].executor(
+        RunTrainingAction(
+            spec=TrainingSpec(
+                argv=("python", "train.py"),
+                cwd=workspace,
+                timeout_seconds=20,
+            )
+        ),
+        SimpleNamespace(id=conversation_id),
+    )
+
+    try:
+        cancel = CancelTrainingTool.create(training, monitors)[0].executor
+        with pytest.raises(PermissionError, match="different student conversation"):
+            cancel(
+                CancelTrainingAction(training_id="training-17"),
+                SimpleNamespace(id=uuid.uuid4()),
+            )
+
+        observation = cancel(
+            CancelTrainingAction(training_id="training-17"),
+            SimpleNamespace(id=conversation_id),
+        )
+
+        assert observation.state is TrainingState.CANCELLED
+        assert training.cancelled == ["training-17"]
+        assert monitors.active() == []
     finally:
         monitors.close()
 
@@ -225,6 +268,7 @@ def test_registered_training_tools_share_one_runtime(tmp_path: Path):
 
     try:
         assert set(by_name) == {
+            "cancel_training",
             "run_training",
             "get_training_status",
             "monitor_training",
@@ -236,6 +280,10 @@ def test_registered_training_tools_share_one_runtime(tmp_path: Path):
         assert (
             by_name["run_training"].executor.training
             is by_name["monitor_training"].executor.training
+        )
+        assert (
+            by_name["run_training"].executor.training
+            is by_name["cancel_training"].executor.training
         )
         assert (
             by_name["run_training"].executor.monitor_store

@@ -359,6 +359,10 @@ class GitHubWorkflow:
     def __repr__(self) -> str:
         return f"{type(self).__name__}(repo={self._repo!r}, api_url={self._api_url!r})"
 
+    @property
+    def repo(self) -> str:
+        return self._repo
+
     def __getstate__(self) -> None:
         raise TypeError("GitHubWorkflow cannot be serialized")
 

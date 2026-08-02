@@ -15,6 +15,7 @@ from senpai_agent.tools import (
 
 class Workflow:
     def __init__(self):
+        self.repo = "acme/widgets"
         self.calls = []
 
     def create_assignment(self, assignment, **kwargs):
@@ -69,6 +70,7 @@ def test_advisor_push_is_limited_to_the_configured_branch(
                     operation="push_branch",
                     branch="main",
                     expected_remote_sha="a" * 40,
+                    expected_head_sha="b" * 40,
                 )
             )
         )
@@ -77,8 +79,10 @@ def test_advisor_push_is_limited_to_the_configured_branch(
         GitHubTransitionAction(
             transition=PushBranchTransition(
                 operation="push_branch",
+                repo="acme/widgets",
                 branch="schmidhuber",
                 expected_remote_sha="a" * 40,
+                expected_head_sha="b" * 40,
             )
         )
     )
@@ -91,10 +95,28 @@ def test_advisor_push_is_limited_to_the_configured_branch(
             {
                 "branch": "schmidhuber",
                 "expected_remote_sha": "a" * 40,
+                "expected_local_sha": "b" * 40,
                 "token": None,
             },
         )
     ]
+
+
+def test_transition_rejects_a_repository_outside_the_bound_runtime(tmp_path: Path):
+    tool = advisor_tool(Workflow(), tmp_path)
+
+    with pytest.raises(PermissionError, match="repository"):
+        tool(
+            GitHubTransitionAction(
+                transition=MergeExperimentTransition(
+                    operation="merge_experiment",
+                    repo="other/widgets",
+                    pr_number=17,
+                    assignment_id="assignment-17",
+                    expected_head_sha="a" * 40,
+                )
+            )
+        )
 
 
 def test_create_assignment_uses_the_created_branch_head_for_the_pr(

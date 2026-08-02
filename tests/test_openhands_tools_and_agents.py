@@ -89,6 +89,7 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
         "assign-experiment",
         "bootstrap-target",
         "check-human-issues",
+        "close-experiment",
         "merge-winner",
         "submit-experiment-results",
     }

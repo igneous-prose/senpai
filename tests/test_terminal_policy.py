@@ -41,6 +41,8 @@ def test_policy_denies_recognized_publication_and_github_mutations(command: str)
         "git add model.py",
         "git commit -m 'record experiment'",
         "git -c color.ui=always diff --stat",
+        "git config user.name",
+        "git config user.email 'Senpai Student'",
         "git config --get remote.origin.url",
         "git remote -v",
         "gh pr view 17 --json title",

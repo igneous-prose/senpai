@@ -46,6 +46,7 @@ def submit_action() -> GitHubTransitionAction:
     return GitHubTransitionAction(
         transition=SubmitResultTransition(
             operation="submit_result",
+            repo="acme/widgets",
             pr_number=17,
             branch="student-one/candidate",
             expected_remote_sha="a" * 40,
@@ -57,6 +58,7 @@ def submit_action() -> GitHubTransitionAction:
 
 class RecordingWorkflow:
     def __init__(self):
+        self.repo = "acme/widgets"
         self.events: list[tuple[str, int, dict]] = []
 
     def preflight_submit_result(self, number, **kwargs):

@@ -87,6 +87,24 @@ def test_supervisor_close_cancels_active_training(tmp_path: Path):
     )
 
 
+def test_cancel_training_stops_one_run_and_is_idempotent(tmp_path: Path):
+    workspace, supervisor = make_supervisor(
+        tmp_path,
+        terminate_grace_seconds=0.1,
+    )
+    running = run_python(
+        supervisor,
+        workspace,
+        "import time; time.sleep(60)",
+        timeout_seconds=60,
+    )
+
+    cancelled = supervisor.cancel_training(running.training_id)
+
+    assert cancelled.state is TrainingState.CANCELLED
+    assert supervisor.cancel_training(running.training_id) == cancelled
+
+
 def test_supervisor_drain_waits_for_training_to_finish(tmp_path: Path):
     workspace, supervisor = make_supervisor(tmp_path)
     running = run_python(

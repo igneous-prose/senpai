@@ -184,6 +184,24 @@ class TrainingSupervisor:
                 )
         return result
 
+    def cancel_training(self, training_id: str) -> TrainingResult:
+        """Cancel one supervised run and wait for its terminal state."""
+
+        result = self.get_training_status(training_id)
+        if result.state is not TrainingState.RUNNING:
+            return result
+
+        with self._lock:
+            active = self._active.get(training_id)
+            if active is not None:
+                active.cancelled = True
+                thread = active.thread
+            else:
+                thread = None
+        if thread is not None:
+            thread.join()
+        return self.get_training_status(training_id)
+
     def _monitor(self, training_id: str) -> None:
         with self._lock:
             active = self._active[training_id]

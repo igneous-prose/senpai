@@ -35,6 +35,7 @@ per-run metrics, hyperparameters, or aliases such as `head_sha`,
 {
   "transition": {
     "operation": "submit_result",
+    "repo": "owner/repo",
     "pr_number": 123,
     "branch": "student/experiment",
     "expected_remote_sha": "REMOTE_SHA_BEFORE_PUSH",

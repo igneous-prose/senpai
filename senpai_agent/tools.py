@@ -148,6 +148,13 @@ class GetTrainingStatusAction(Action):
     )
 
 
+class CancelTrainingAction(Action):
+    training_id: str = Field(
+        min_length=1,
+        description="Running training ID returned by run_training.",
+    )
+
+
 class MonitorTrainingAction(Action):
     training_id: str = Field(
         min_length=1,
@@ -285,6 +292,30 @@ class _GetTrainingStatusExecutor(
         )
 
 
+class _CancelTrainingExecutor(
+    ToolExecutor[CancelTrainingAction, TrainingResultObservation]
+):
+    def __init__(self, training: TrainingSupervisor, store: MonitorStore):
+        self.training = training
+        self.store = store
+
+    def __call__(
+        self,
+        action: CancelTrainingAction,
+        conversation: LocalConversation | None = None,
+    ) -> TrainingResultObservation:
+        if conversation is None:
+            raise ValueError("cancel_training requires its student conversation")
+        monitor = self.store.spec(action.training_id)
+        if monitor.conversation_id != conversation.id:
+            raise PermissionError(
+                "training belongs to a different student conversation"
+            )
+        result = self.training.cancel_training(action.training_id)
+        self.store.complete(action.training_id)
+        return TrainingResultObservation.from_result(result)
+
+
 class RunTrainingTool(ToolDefinition[RunTrainingAction, TrainingResultObservation]):
     @classmethod
     def create(
@@ -341,6 +372,37 @@ class GetTrainingStatusTool(
         ]
 
 
+class CancelTrainingTool(
+    ToolDefinition[CancelTrainingAction, TrainingResultObservation]
+):
+    @classmethod
+    def create(
+        cls,
+        training: TrainingSupervisor,
+        monitor_store: MonitorStore,
+    ) -> Sequence[Self]:
+        return [
+            cls(
+                description=(
+                    "Cancel one supervised training process, wait for its durable "
+                    "terminal state, and retire its monitor. Use this after a stop "
+                    "condition or hard monitor signal instead of killing processes "
+                    "through the terminal."
+                ),
+                action_type=CancelTrainingAction,
+                observation_type=TrainingResultObservation,
+                annotations=ToolAnnotations(
+                    title="Cancel training",
+                    readOnlyHint=False,
+                    destructiveHint=True,
+                    idempotentHint=True,
+                    openWorldHint=False,
+                ),
+                executor=_CancelTrainingExecutor(training, monitor_store),
+            )
+        ]
+
+
 class _MonitorTrainingExecutor(
     ToolExecutor[MonitorTrainingAction, MonitorTrainingObservation]
 ):
@@ -356,6 +418,11 @@ class _MonitorTrainingExecutor(
         if conversation is None:
             raise ValueError("monitor_training requires its student conversation")
         self.training.get_training_status(action.training_id)
+        monitor = self.store.spec(action.training_id)
+        if monitor.conversation_id != conversation.id:
+            raise PermissionError(
+                "training belongs to a different student conversation"
+            )
         spec = TrainingMonitorSpec(
             training_id=action.training_id,
             conversation_id=conversation.id,
@@ -408,7 +475,7 @@ class MonitorTrainingTool(
 
 
 class TrainingToolSet(ToolDefinition[RunTrainingAction, TrainingResultObservation]):
-    """Create both training tools around one process supervisor."""
+    """Create the training tools around one process supervisor."""
 
     @classmethod
     def create(
@@ -429,6 +496,10 @@ class TrainingToolSet(ToolDefinition[RunTrainingAction, TrainingResultObservatio
                 monitor_store=monitor_store,
             ),
             *GetTrainingStatusTool.create(training=training),
+            *CancelTrainingTool.create(
+                training=training,
+                monitor_store=monitor_store,
+            ),
             *MonitorTrainingTool.create(
                 training=training,
                 monitor_store=monitor_store,
@@ -610,6 +681,15 @@ class GetPRsTool(ToolDefinition[GetPRsAction, GetPRsObservation]):
 class _Transition(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    repo: str | None = Field(
+        default=None,
+        min_length=3,
+        description=(
+            "Optional target repository in owner/name form. When supplied, it "
+            "must match the repository bound to this Senpai runtime."
+        ),
+    )
+
 
 class ReconcileLabelsTransition(_Transition):
     operation: Literal["reconcile_labels"]
@@ -727,6 +807,13 @@ class PushBranchTransition(_Transition):
     operation: Literal["push_branch"]
     branch: str = Field(min_length=1)
     expected_remote_sha: str = Field(min_length=1)
+    expected_head_sha: str = Field(
+        min_length=1,
+        description=(
+            "Expected local commit to publish. The transition fails if the "
+            "worktree HEAD differs."
+        ),
+    )
 
 
 class CreateAssignmentTransition(_Transition):
@@ -813,8 +900,24 @@ class _GitHubTransitionExecutor(
         conversation: LocalConversation | None = None,
     ) -> GitHubTransitionObservation:
         transition = action.transition
-        if isinstance(transition, CreateAssignmentTransition):
+        if isinstance(
+            transition,
+            (
+                CreateAssignmentTransition,
+                PushBranchTransition,
+                ReconcileLabelsTransition,
+                RequestRevisionTransition,
+                SendAssignmentFeedbackTransition,
+                CloseExperimentTransition,
+                MergeExperimentTransition,
+            ),
+        ):
             self._require_role("advisor")
+        elif isinstance(transition, SubmitResultTransition):
+            self._require_role("student")
+        self._require_repo_scope(transition.repo)
+
+        if isinstance(transition, CreateAssignmentTransition):
             branch = create_assignment_branch(
                 self.workspace,
                 branch=transition.head_branch,
@@ -838,18 +941,18 @@ class _GitHubTransitionExecutor(
                 body=transition.body,
             )
         elif isinstance(transition, PushBranchTransition):
-            self._require_role("advisor")
             if transition.branch != self.advisor_branch:
                 raise PermissionError(
                     "push_branch is limited to the configured advisor branch "
                     f"{self.advisor_branch!r}"
                 )
-            pushed = push_assignment_branch(
-                self.workspace,
-                branch=transition.branch,
-                expected_remote_sha=transition.expected_remote_sha,
-                token=self.git_token,
-            )
+            push_options = {
+                "branch": transition.branch,
+                "expected_remote_sha": transition.expected_remote_sha,
+                "expected_local_sha": transition.expected_head_sha,
+                "token": self.git_token,
+            }
+            pushed = push_assignment_branch(self.workspace, **push_options)
             return GitHubTransitionObservation(
                 changed=pushed.changed,
                 resource_url=f"git:origin/{pushed.branch}",
@@ -857,7 +960,6 @@ class _GitHubTransitionExecutor(
                 version=pushed.head_sha,
             )
         elif isinstance(transition, SubmitResultTransition):
-            self._require_role("student")
             try:
                 self.workflow.preflight_submit_result(
                     transition.pr_number,
@@ -884,7 +986,6 @@ class _GitHubTransitionExecutor(
             )
             result = self._submit_result_after_push(transition)
         elif isinstance(transition, ReconcileLabelsTransition):
-            self._require_role("advisor")
             result = self.workflow.reconcile_labels(
                 transition.pr_number,
                 assignment_id=transition.assignment_id,
@@ -893,7 +994,6 @@ class _GitHubTransitionExecutor(
                 expected_head_sha=transition.expected_head_sha,
             )
         elif isinstance(transition, RequestRevisionTransition):
-            self._require_role("advisor")
             result = self.workflow.request_revision(
                 transition.pr_number,
                 assignment_id=transition.assignment_id,
@@ -902,7 +1002,6 @@ class _GitHubTransitionExecutor(
                 comment=transition.comment,
             )
         elif isinstance(transition, SendAssignmentFeedbackTransition):
-            self._require_role("advisor")
             result = self.workflow.send_assignment_feedback(
                 transition.pr_number,
                 assignment_id=transition.assignment_id,
@@ -918,7 +1017,6 @@ class _GitHubTransitionExecutor(
                 response=transition.response,
             )
         elif isinstance(transition, CloseExperimentTransition):
-            self._require_role("advisor")
             result = self.workflow.close_experiment(
                 transition.pr_number,
                 assignment_id=transition.assignment_id,
@@ -934,7 +1032,6 @@ class _GitHubTransitionExecutor(
                 reason=transition.reason,
             )
         elif isinstance(transition, MergeExperimentTransition):
-            self._require_role("advisor")
             result = self.workflow.merge_experiment(
                 transition.pr_number,
                 expected_head_sha=transition.expected_head_sha,
@@ -976,6 +1073,16 @@ class _GitHubTransitionExecutor(
         if self.role != expected:
             raise PermissionError(
                 f"{self.role} cannot perform this {expected}-owned transition"
+            )
+
+    def _require_repo_scope(self, repo: str | None) -> None:
+        if repo is None:
+            return
+        configured_repo = self.workflow.repo
+        if repo != configured_repo:
+            raise PermissionError(
+                "transition repository does not match the configured GitHub "
+                "repository"
             )
 
 

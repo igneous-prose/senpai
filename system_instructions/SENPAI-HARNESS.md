@@ -63,7 +63,9 @@ only when its named tool is present in your schema:
   terminal-state monitor for the current student conversation.
   `get_training_status` returns its typed status. `monitor_training` upgrades
   that default with metric gates and staleness policy so the controller can
-  monitor without model polling.
+  monitor without model polling. `cancel_training` stops one supervised run
+  and retires its monitor; use it instead of killing training processes through
+  the terminal.
 - When present, `github_transition` owns assignment creation, lease-guarded
   branch pushes, non-revision assignment feedback, desired labels, revision
   requests, authenticated result submission, closing, and merging. Do not

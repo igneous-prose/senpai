@@ -16,8 +16,21 @@ effort: high
 Retrieve the complete PR with `get_prs` and validate its code, assignment,
 authenticated terminal result, W&B evidence, metric direction, and current
 remote head SHA. Then call `github_transition` with
-`operation="merge_experiment"`, the PR number, exact head SHA, assignment ID,
-and the desired merge method.
+`operation="merge_experiment"`, `repo`, the PR number, exact head SHA,
+assignment ID, and the desired merge method:
+
+```json
+{
+  "transition": {
+    "operation": "merge_experiment",
+    "repo": "owner/repo",
+    "pr_number": 123,
+    "expected_head_sha": "CURRENT_PR_HEAD_SHA",
+    "assignment_id": "assignment-id",
+    "merge_method": "squash"
+  }
+}
+```
 
 The transition refuses drafts, missing or foreign results, stale heads,
 blocking labels, unknown mergeability, and conflicts. It verifies the merged
@@ -33,7 +46,19 @@ longer supported. If the existing evidence is still decisive, retry with
 After a successful merge, update the target-prescribed baseline/research log
 with the PR, metrics, run IDs and links, reproduction command, and conclusion.
 Commit that advisor-owned update. Publish it only through the typed branch-push
-operation advertised by `github_transition`; never use raw `git push`.
+operation advertised by `github_transition`; never use raw `git push`:
+
+```json
+{
+  "transition": {
+    "operation": "push_branch",
+    "repo": "owner/repo",
+    "branch": "advisor-branch",
+    "expected_remote_sha": "REMOTE_SHA_BEFORE_PUSH",
+    "expected_head_sha": "LOCAL_COMMIT_SHA"
+  }
+}
+```
 
 Merge multiple winners strongest-first and refresh the advisor baseline between
 each decision.

@@ -55,8 +55,10 @@ useful primary-metric direction, acceptance/regression gates, or a stale-update
 timeout; it upgrades the default policy. Then finish the turn. The deterministic
 controller polls while training runs and directly resumes this exact student
 conversation when the registered policy emits a signal. Use
-`get_training_status` only for an immediate bounded check; do not stream epoch
-logs, sleep in the terminal, or create background polling loops.
+`cancel_training` when that signal or the assignment requires an early stop.
+Use `get_training_status` only for an immediate bounded check; do not kill the
+process, stream epoch logs, sleep in the terminal, or create background polling
+loops.
 
 Every real experiment must log the target-required configuration, metrics, and
 artifacts to W&B. Use groups only when the assignment calls for related arms.

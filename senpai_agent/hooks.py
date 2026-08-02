@@ -463,6 +463,12 @@ def _git_policy(arguments: list[str]) -> PolicyDecision:
         read_only = {"--get", "--get-all", "--get-regexp", "--list", "-l"}
         if read_only & set(options):
             return PolicyDecision(True)
+        if (
+            len(options) in {1, 2}
+            and options[0] in {"user.name", "user.email"}
+            and all(not value.startswith("-") for value in options)
+        ):
+            return PolicyDecision(True)
     elif command == "remote":
         operation = next(
             (value for value in options if not value.startswith("-")),

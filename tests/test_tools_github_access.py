@@ -60,6 +60,7 @@ ADVISOR_TRANSITIONS = [
             operation="push_branch",
             branch="advisor-branch",
             expected_remote_sha="a" * 40,
+            expected_head_sha="b" * 40,
         ),
         id="push-branch",
     ),
