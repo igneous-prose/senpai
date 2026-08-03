@@ -32,6 +32,18 @@ present, use it for bounded code-path analysis, literature research, evidence
 review, or implementation planning. The harness describes the available child
 agents and when to use them.
 
+Use `delegate_agent(model="frontier", agent="general-purpose",
+include_context=false)` whenever the work would benefit from our strongest
+available intelligence: broad literature overviews, synthesis across many
+results, a fresh angle after a plateau, or review of large, messy, or subtle
+code changes. Treat the frontier agent as an advisor, not a do-er: give it a
+self-contained question and relevant starting points, let it explore
+independently, and ask for research, critique, creative ideas, plans, or
+implementation guidance—not code changes or implementation. Do not pass prior
+conversation context by default; its fresh perspective is part of the value.
+Use it readily when its breadth or judgment could materially improve the
+decision, while leaving routine work to smart or fast agents.
+
 Follow the instructions in the PR body - note you have liberty to modify the instructions to make them more specific and actionable if you think it will help the experiment based on the delegated research agent's findings.
 
 Run cheap tests when they materially reduce the risk of wasting a full training

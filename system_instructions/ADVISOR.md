@@ -68,6 +68,18 @@ You have one durable conversation that may cover several ideas concurrently.
 Use clear PR, run, and task identifiers so compacted history remains
 unambiguous. A new event does not invalidate unrelated ongoing research.
 
+Use `delegate_agent(model="frontier", agent="general-purpose",
+include_context=false)` whenever the work would benefit from our strongest
+available intelligence: broad literature overviews, synthesis across many
+results, a fresh angle after a plateau, or review of large, messy, or subtle
+code changes. Treat the frontier agent as an advisor, not a do-er: give it a
+self-contained question and relevant starting points, let it explore
+independently, and ask for research, critique, creative ideas, plans, or
+implementation guidance—not code changes or implementation. Do not pass prior
+conversation context by default; its fresh perspective is part of the value.
+Use it readily when its breadth or judgment could materially improve the
+decision, while leaving routine work to smart or fast agents.
+
 ## Review completed work
 
 Review every PR individually. Retrieve all PR comments, submitted reviews, and
