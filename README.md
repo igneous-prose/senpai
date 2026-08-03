@@ -6,9 +6,14 @@ SPDX-PackageName: senpai
 
 # senpai
 
+[![Paper: ICML 2026 AI for Science](https://img.shields.io/badge/paper-ICML%202026%20AI%20for%20Science-4c6ef5)](https://openreview.net/forum?id=g0bJFA9gVT)
+
 Senpai is an autonomous ML research loop built on the OpenHands Agent SDK. An advisor proposes and reviews experiments; GPU students implement one assigned experiment each, train, and return evidence through GitHub and W&B.
 
 Senpai is problem-agnostic. It runs against a separate target repository, and every experiment branch, commit, and PR lands there—not in this runner repository.
+
+- **ICML 2026:** [*SENPAI: Self-ExperimentatioN for Physical AI—An Observability-Based Research Harness*](https://openreview.net/forum?id=g0bJFA9gVT) was presented at the AI for Science Workshop; see the [project site](https://wandb.github.io/senpai/).
+- **ICLR 2026:** Kagent, a Senpai variant, placed fourth in the [GRaM competition](https://gram-competition.github.io/).
 
 ## Quick start
 
