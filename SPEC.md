@@ -210,16 +210,17 @@ harness or role and injects the current text once into the same conversation
 UUID. Current time is rendered for every controller wake.
 
 File-based subagents are discovered from `.agents/agents`. Skill bodies are not
-concatenated into agent definitions. The pinned OpenHands fork applies each
-agent definition's `reasoning_effort` override after resolving its inherited
-LLM or stored model profile.
+concatenated into agent definitions. The OpenHands fork's `main` branch applies
+each agent definition's `reasoning_effort` override after resolving its
+inherited LLM or stored model profile.
 
 ## Prompt caching
 
-The pinned SDK fork is
+The SDK and tools track the `main` branch of
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-and is based on OpenHands SDK 1.40.0. `pyproject.toml` and `uv.lock` are the
-authoritative dependency revision; CI verifies the same revision directly.
+and are based on OpenHands SDK 1.40.0. `uv.lock` records the exact `main` commit
+used for reproducible image builds, while runtime CI installs directly from
+`main` to verify the current fork head.
 
 `prompt_cache_configuration()` sets:
 

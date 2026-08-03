@@ -1,5 +1,7 @@
 import re
+import tomllib
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from openhands.sdk import Agent, LLM, LocalConversation
@@ -19,23 +21,61 @@ from senpai_agent.openhands_runner import (
 from openhands_support import REPO_ROOT, runtime_config
 
 
-def test_openhands_fork_revision_is_consistent_across_install_paths():
-    pins = []
-    for path in (
-        REPO_ROOT / "pyproject.toml",
-        REPO_ROOT / "uv.lock",
-        REPO_ROOT / ".github" / "workflows" / "test.yaml",
-    ):
-        matches = {
-            match
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if "morganmcg1/software-agent-sdk" in line
-            for match in re.findall(r"[0-9a-f]{40}", line)
-        }
-        assert len(matches) == 1, f"expected one OpenHands fork revision in {path}"
-        pins.extend(matches)
+def test_openhands_fork_main_is_consistent_across_install_paths():
+    package_names = {"openhands-sdk", "openhands-tools"}
+    fork_url = "git+https://github.com/morganmcg1/software-agent-sdk.git"
+    expected_requirements = {
+        f"{name} @ {fork_url}@main#subdirectory={name}"
+        for name in package_names
+    }
 
-    assert len(set(pins)) == 1
+    project = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    project_requirements = {
+        requirement
+        for requirement in project["project"]["dependencies"]
+        if requirement.partition(" @ ")[0] in package_names
+    }
+    assert project_requirements == expected_requirements
+
+    workflow = (REPO_ROOT / ".github" / "workflows" / "test.yaml").read_text(
+        encoding="utf-8"
+    )
+    ci_requirements = {
+        match.group(1)
+        for line in workflow.splitlines()
+        if (
+            match := re.fullmatch(
+                r'\s*"(openhands-(?:sdk|tools) @ git\+[^"]+)"(?:\s+\\)?\s*',
+                line,
+            )
+        )
+    }
+    assert ci_requirements == expected_requirements
+
+    lock = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked_packages = {
+        package["name"]: package
+        for package in lock["package"]
+        if package["name"] in package_names
+    }
+    assert locked_packages.keys() == package_names
+
+    resolved_revisions = set()
+    for name, package in locked_packages.items():
+        source = urlsplit(package["source"]["git"])
+        assert source.scheme == "https"
+        assert source.netloc == "github.com"
+        assert source.path == "/morganmcg1/software-agent-sdk.git"
+        assert parse_qs(source.query) == {
+            "subdirectory": [name],
+            "rev": ["main"],
+        }
+        assert re.fullmatch(r"[0-9a-f]{40}", source.fragment)
+        resolved_revisions.add(source.fragment)
+
+    assert len(resolved_revisions) == 1
 
 
 @pytest.mark.parametrize(
