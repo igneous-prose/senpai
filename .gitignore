@@ -38,6 +38,9 @@ plots/
 # models
 models/
 
+# Local operator config
+senpai.local.yaml
+
 # K8s secrets (keep the .template, ignore actual secrets)
 k8s/secrets.yaml
 
