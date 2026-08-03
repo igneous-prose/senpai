@@ -54,13 +54,19 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "workspace": tmp_path / "target",
         "state_dir": tmp_path / "state",
         "smart_model": "anthropic/claude-opus-4-8",
+        "smart_reasoning_effort": "xhigh",
+        "smart_api_key_env": "ANTHROPIC_API_KEY",
+        "smart_api_key": "anthropic-secret",
         "fast_model": "anthropic/claude-haiku-4-5",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "api_key": "model-secret",
+        "fast_reasoning_effort": "low",
+        "fast_api_key_env": "ANTHROPIC_API_KEY",
+        "fast_api_key": "anthropic-secret",
+        "frontier_model": "openai/gpt-5.6",
+        "frontier_reasoning_effort": "max",
+        "frontier_api_key_env": "OPENAI_API_KEY",
+        "frontier_api_key": "openai-secret",
         "github_repo": "acme/widgets",
         "github_trusted_actor": None,
-        "smart_reasoning_effort": "xhigh",
-        "fast_reasoning_effort": "low",
         "role_file": tmp_path / "ADVISOR.md",
         "harness_file": tmp_path / "SENPAI-HARNESS.md",
         "plugin_dir": tmp_path / "plugin",
@@ -131,7 +137,7 @@ def test_optional_process_deadline_kills_an_uncooperative_group(tmp_path: Path):
         os.kill(int(pid_file.read_text()), 0)
 
 
-def test_child_command_selects_agent_model_and_effort(tmp_path: Path):
+def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path):
     config = delegation_config(tmp_path)
 
     fast = OpenHandsChildProcess(
@@ -142,21 +148,77 @@ def test_child_command_selects_agent_model_and_effort(tmp_path: Path):
         config,
         delegation_request(agent="search", model="smart", search_mode="general-web"),
     )
+    frontier = OpenHandsChildProcess(
+        config,
+        delegation_request(agent="general-purpose", model="frontier"),
+    )
 
     assert "--agent" in fast.command
     assert fast.command[fast.command.index("--agent") + 1] == "bash-runner"
     assert "anthropic/claude-haiku-4-5" in fast.command
     assert fast.command[fast.command.index("--reasoning-effort") + 1] == "low"
+    assert fast.command[fast.command.index("--api-key-env") + 1] == (
+        "ANTHROPIC_API_KEY"
+    )
     assert "anthropic/claude-opus-4-8" in smart.command
     assert smart.command[smart.command.index("--reasoning-effort") + 1] == "xhigh"
+    assert "openai/gpt-5.6" in frontier.command
+    assert frontier.command[frontier.command.index("--reasoning-effort") + 1] == (
+        "max"
+    )
+    assert frontier.command[frontier.command.index("--api-key-env") + 1] == (
+        "OPENAI_API_KEY"
+    )
     assert fast.state_dir.parent == config.state_dir / "children"
-    assert fast.environment["ANTHROPIC_API_KEY"] == "model-secret"
+    assert fast.environment["ANTHROPIC_API_KEY"] == "anthropic-secret"
+    assert fast.environment["OPENAI_API_KEY"] == "openai-secret"
+    assert fast.environment["SENPAI_OPENHANDS_API_KEY_ENV"] == "ANTHROPIC_API_KEY"
+    assert frontier.environment["SENPAI_OPENHANDS_API_KEY_ENV"] == "OPENAI_API_KEY"
     assert fast.environment["GH_REPO"] == "acme/widgets"
     assert "GITHUB_TOKEN" not in fast.environment
     assert "GH_TOKEN" not in fast.environment
     assert fast.environment["EXA_API_KEY"] == "exa-secret"
     assert fast.environment["SENPAI_OPENHANDS_SMART_MODEL"] == config.smart_model
+    assert fast.environment["SENPAI_OPENHANDS_SMART_API_KEY_ENV"] == (
+        config.smart_api_key_env
+    )
     assert fast.environment["SENPAI_OPENHANDS_FAST_MODEL"] == config.fast_model
+    assert fast.environment["SENPAI_OPENHANDS_FAST_API_KEY_ENV"] == (
+        config.fast_api_key_env
+    )
+    assert fast.environment["SENPAI_OPENHANDS_FRONTIER_MODEL"] == (
+        config.frontier_model
+    )
+    assert fast.environment["SENPAI_OPENHANDS_FRONTIER_API_KEY_ENV"] == (
+        config.frontier_api_key_env
+    )
+    assert fast.environment["SENPAI_OPENHANDS_SMART_REASONING_EFFORT"] == (
+        config.smart_reasoning_effort
+    )
+    assert fast.environment["SENPAI_OPENHANDS_FAST_REASONING_EFFORT"] == (
+        config.fast_reasoning_effort
+    )
+    assert fast.environment["SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT"] == (
+        config.frontier_reasoning_effort
+    )
+
+
+def test_child_environment_replaces_ambient_model_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "stale-anthropic-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "stale-openai-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "unconfigured-model-key")
+
+    environment = OpenHandsChildProcess(
+        delegation_config(tmp_path),
+        delegation_request(model="frontier", agent="general-purpose"),
+    ).environment
+
+    assert environment["ANTHROPIC_API_KEY"] == "anthropic-secret"
+    assert environment["OPENAI_API_KEY"] == "openai-secret"
+    assert "GEMINI_API_KEY" not in environment
 
 
 def test_child_process_never_receives_the_github_write_token(

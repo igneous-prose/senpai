@@ -392,6 +392,7 @@ def ensure_advisor_branch(
 LAUNCH_CREDENTIAL_ENV_NAMES = (
     "GITHUB_TOKEN",
     "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
     "EXA_API_KEY",
     "WANDB_API_KEY",
 )
@@ -460,6 +461,11 @@ def resolve_anthropic_api_key(dotenv_path: Path) -> str:
     )
 
 
+def resolve_openai_api_key(dotenv_path: Path) -> str:
+    """Resolve the OpenAI API key: $OPENAI_API_KEY → .env → hard error."""
+    return resolve_required_secret(dotenv_path, "OPENAI_API_KEY", "OpenAI API key")
+
+
 def resolve_exa_api_key(dotenv_path: Path) -> str:
     """Resolve the Exa API key: $EXA_API_KEY → .env → hard error."""
     return resolve_required_secret(dotenv_path, "EXA_API_KEY", "Exa API key")
@@ -473,30 +479,39 @@ def resolve_wandb_api_key(dotenv_path: Path) -> str:
 def render_launch_secret(
     tag: str,
     github_token: str,
-    anthropic_api_key: str,
     exa_api_key: str,
     wandb_api_key: str,
+    *,
+    anthropic_api_key: str | None = None,
+    openai_api_key: str | None = None,
 ) -> str:
     """Per-launch k8s Secret holding API credentials used by advisor/student pods."""
-    github_enc = base64.b64encode(github_token.encode()).decode()
-    anthropic_enc = base64.b64encode(anthropic_api_key.encode()).decode()
-    exa_enc = base64.b64encode(exa_api_key.encode()).decode()
-    wandb_enc = base64.b64encode(wandb_api_key.encode()).decode()
-    return (
-        "apiVersion: v1\n"
-        "kind: Secret\n"
-        "metadata:\n"
-        f"  name: senpai-launch-secrets-{tag}\n"
-        "  labels:\n"
-        "    app: senpai\n"
-        f"    research-tag: {tag}\n"
-        "type: Opaque\n"
-        "data:\n"
-        f"  github-token: {github_enc}\n"
-        f"  anthropic-api-key: {anthropic_enc}\n"
-        f"  exa-api-key: {exa_enc}\n"
-        f"  wandb-api-key: {wandb_enc}\n"
-    )
+    credentials = {
+        "github-token": github_token,
+        "exa-api-key": exa_api_key,
+        "wandb-api-key": wandb_api_key,
+    }
+    if anthropic_api_key is not None:
+        credentials["anthropic-api-key"] = anthropic_api_key
+    if openai_api_key is not None:
+        credentials["openai-api-key"] = openai_api_key
+    encoded = {
+        name: base64.b64encode(value.encode()).decode()
+        for name, value in credentials.items()
+    }
+    lines = [
+        "apiVersion: v1",
+        "kind: Secret",
+        "metadata:",
+        f"  name: senpai-launch-secrets-{tag}",
+        "  labels:",
+        "    app: senpai",
+        f"    research-tag: {tag}",
+        "type: Opaque",
+        "data:",
+    ]
+    lines.extend(f"  {name}: {value}" for name, value in encoded.items())
+    return "\n".join(lines) + "\n"
 
 
 def _redact_secrets(text: str, *secrets: str) -> str:
@@ -557,6 +572,18 @@ def preflight_check_anthropic_api_key(api_key: str) -> None:
         },
     )
     _preflight_http("Anthropic API key", req, api_key, timeout=10)
+
+
+def preflight_check_openai_api_key(api_key: str) -> None:
+    """Verify the supplied OpenAI API key can authenticate to the API."""
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/models",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "senpai-launch-preflight",
+        },
+    )
+    _preflight_http("OpenAI API key", req, api_key, timeout=10)
 
 
 def preflight_check_exa_api_key(api_key: str) -> None:

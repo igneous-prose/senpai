@@ -32,6 +32,7 @@ from launch_helpers import (
     pod_template_hash,
     preflight_check_anthropic_api_key,
     preflight_check_exa_api_key,
+    preflight_check_openai_api_key,
     preflight_check_student_name_availability,
     preflight_check_target_repo_access,
     preflight_check_target_repo_branch,
@@ -42,6 +43,7 @@ from launch_helpers import (
     resolve_anthropic_api_key,
     resolve_exa_api_key,
     resolve_github_token,
+    resolve_openai_api_key,
     resolve_wandb_api_key,
     routing_labels,
     source_revision_for_image,
@@ -80,6 +82,16 @@ class Args:
     namespace: str = "default"  # Kubernetes namespace for all launch resources
     wandb_entity: str = "wandb-applied-ai-team"  # W&B entity (team or username)
     wandb_project: str = "senpai-v1"  # W&B project name
+    advisor_model: str = "anthropic/claude-opus-4-8"
+    advisor_reasoning_effort: str = "xhigh"
+    student_model: str = "anthropic/claude-opus-4-8"
+    student_reasoning_effort: str = "xhigh"
+    smart_model: str = "anthropic/claude-opus-4-8"
+    smart_reasoning_effort: str = "xhigh"
+    fast_model: str = "anthropic/claude-haiku-4-5"
+    fast_reasoning_effort: str = "low"
+    frontier_model: str = "openai/gpt-5.6-sol"
+    frontier_reasoning_effort: str = "max"
     human_issues: bool = (
         True  # allow human GitHub issue triage; disable for isolated launches
     )
@@ -109,6 +121,113 @@ class Args:
     preflight_only: bool = (
         False  # validate credentials/access only: do not render or apply manifests
     )
+
+
+MODEL_PROVIDERS = {
+    "anthropic": ("ANTHROPIC_API_KEY", "anthropic-api-key"),
+    "openai": ("OPENAI_API_KEY", "openai-api-key"),
+}
+REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max", "none"}
+
+
+def model_provider(model: str) -> str:
+    provider, separator, model_name = model.partition("/")
+    if not separator or not model_name or provider not in MODEL_PROVIDERS:
+        supported = ", ".join(sorted(MODEL_PROVIDERS))
+        sys.exit(
+            "ERROR: model must be provider/name using a supported provider "
+            f"({supported}): {model}"
+        )
+    return provider
+
+
+def configured_models(args: Args, role: str | None = None) -> tuple[str, ...]:
+    main_models = {
+        "advisor": args.advisor_model,
+        "student": args.student_model,
+    }
+    models = (
+        args.smart_model,
+        args.fast_model,
+        args.frontier_model,
+    )
+    if role is not None:
+        return (main_models[role], *models)
+    return (*main_models.values(), *models)
+
+
+def configured_model_providers(args: Args, role: str | None = None) -> set[str]:
+    return {model_provider(model) for model in configured_models(args, role)}
+
+
+def deployed_model_providers(args: Args) -> set[str]:
+    providers = configured_model_providers(args, "student")
+    if args.advisor:
+        providers |= configured_model_providers(args, "advisor")
+    return providers
+
+
+def validate_model_config(args: Args) -> None:
+    profiles = {
+        "student": (args.student_model, args.student_reasoning_effort),
+        "smart": (args.smart_model, args.smart_reasoning_effort),
+        "fast": (args.fast_model, args.fast_reasoning_effort),
+        "frontier": (args.frontier_model, args.frontier_reasoning_effort),
+    }
+    if args.advisor:
+        profiles["advisor"] = (
+            args.advisor_model,
+            args.advisor_reasoning_effort,
+        )
+    for name, (model, effort) in profiles.items():
+        model_provider(model)
+        if effort not in REASONING_EFFORTS:
+            choices = ", ".join(sorted(REASONING_EFFORTS))
+            sys.exit(f"ERROR: --{name}_reasoning_effort must be one of: {choices}")
+        normalized_model = model.lower()
+        supports_max = normalized_model == "openai/gpt-5.6" or (
+            normalized_model.startswith("openai/gpt-5.6-")
+        )
+        if effort == "max" and not supports_max:
+            sys.exit(
+                f"ERROR: --{name}_reasoning_effort=max requires an "
+                "openai/gpt-5.6* model"
+            )
+
+
+def role_model_config(args: Args, role: str) -> dict[str, str]:
+    model = args.advisor_model if role == "advisor" else args.student_model
+    reasoning_effort = (
+        args.advisor_reasoning_effort
+        if role == "advisor"
+        else args.student_reasoning_effort
+    )
+    return {
+        "SENPAI_OPENHANDS_MODEL": model,
+        "SENPAI_OPENHANDS_REASONING_EFFORT": reasoning_effort,
+        "SENPAI_OPENHANDS_SMART_MODEL": args.smart_model,
+        "SENPAI_OPENHANDS_SMART_REASONING_EFFORT": args.smart_reasoning_effort,
+        "SENPAI_OPENHANDS_FAST_MODEL": args.fast_model,
+        "SENPAI_OPENHANDS_FAST_REASONING_EFFORT": args.fast_reasoning_effort,
+        "SENPAI_OPENHANDS_FRONTIER_MODEL": args.frontier_model,
+        "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": args.frontier_reasoning_effort,
+    }
+
+
+def model_provider_env(args: Args, role: str, secret_name: str) -> str:
+    lines = []
+    for index, provider in enumerate(sorted(configured_model_providers(args, role))):
+        env_name, secret_key = MODEL_PROVIDERS[provider]
+        lines.extend(
+            (
+                f"{'name' if index == 0 else '        - name'}: {env_name}",
+                "          valueFrom:",
+                "            secretKeyRef:",
+                f"              name: {secret_name}",
+                f"              key: {secret_key}",
+            )
+        )
+    return "\n".join(lines)
 
 
 def validate_timing_args(args: Args) -> None:
@@ -196,6 +315,7 @@ def render_student(
         name=student_configmap_name,
         labels={"app": "senpai", "role": "student", "research-tag": tag},
         data={
+            **role_model_config(args, "student"),
             "REPO_URL": args.repo_url,
             "REPO_REVISION": args.repo_revision,
             "TARGET_REPO_URL": args.target_repo_url,
@@ -241,6 +361,7 @@ def render_student(
             "STUDENT_MEMORY": f"{student_memory_gi}Gi",
             "GPUS_PER_STUDENT": str(args.gpus_per_student),
             "POD_CONFIG_HASH": pod_template_hash(configmap, launch_secret),
+            "MODEL_PROVIDER_ENV": model_provider_env(args, "student", secret_name),
         },
     )
     return configmap + "\n---\n" + deployment
@@ -257,6 +378,7 @@ def render_advisor(
     advisor_configmap_name = f"senpai-config-advisor-{tag}"
     advisor_deployment_name = f"senpai-advisor-{tag}"
     data = {
+        **role_model_config(args, "advisor"),
         "REPO_URL": args.repo_url,
         "REPO_REVISION": args.repo_revision,
         "TARGET_REPO_URL": args.target_repo_url,
@@ -300,6 +422,7 @@ def render_advisor(
             "PVC_MOUNT_PATH": args.pvc_mount_path,
             "LAUNCH_SECRET_NAME": secret_name,
             "POD_CONFIG_HASH": pod_template_hash(configmap, launch_secret),
+            "MODEL_PROVIDER_ENV": model_provider_env(args, "advisor", secret_name),
         },
     )
     return configmap + "\n---\n" + deployment
@@ -312,6 +435,7 @@ def main():
             "ERROR: --gpus_per_student, --cpu_per_gpu, and --memory_gi_per_gpu must all be at least 1"
         )
     validate_timing_args(args)
+    validate_model_config(args)
     if not args.preflight_only:
         for role, image in (
             ("advisor", args.advisor_image),
@@ -350,10 +474,15 @@ def main():
     if args.student_prefix:
         student_list = [f"{args.student_prefix}-{name}" for name in student_list]
 
-    github_token = anthropic_api_key = exa_api_key = wandb_api_key = ""
+    model_providers = deployed_model_providers(args)
+    github_token = exa_api_key = wandb_api_key = ""
+    provider_api_keys: dict[str, str] = {}
     if not args.dry_run or args.preflight_only:
         github_token = resolve_github_token(DOTENV_PATH)
-        anthropic_api_key = resolve_anthropic_api_key(DOTENV_PATH)
+        if "anthropic" in model_providers:
+            provider_api_keys["anthropic"] = resolve_anthropic_api_key(DOTENV_PATH)
+        if "openai" in model_providers:
+            provider_api_keys["openai"] = resolve_openai_api_key(DOTENV_PATH)
         exa_api_key = resolve_exa_api_key(DOTENV_PATH)
         wandb_api_key = resolve_wandb_api_key(DOTENV_PATH)
         preflight_check_target_repo_access(args.target_repo_url, github_token)
@@ -368,7 +497,10 @@ def main():
             student_list,
             args.advisor_branch,
         )
-        preflight_check_anthropic_api_key(anthropic_api_key)
+        if anthropic_api_key := provider_api_keys.get("anthropic"):
+            preflight_check_anthropic_api_key(anthropic_api_key)
+        if openai_api_key := provider_api_keys.get("openai"):
+            preflight_check_openai_api_key(openai_api_key)
         preflight_check_exa_api_key(exa_api_key)
         preflight_check_wandb_api_key(wandb_api_key)
         if args.preflight_only:
@@ -391,12 +523,18 @@ def main():
     student_template = STUDENT_TEMPLATE.read_text()
     advisor_template = ADVISOR_TEMPLATE.read_text()
     secret_name = f"senpai-launch-secrets-{args.tag}"
+    if args.dry_run:
+        provider_api_keys = {
+            provider: f"<REDACTED_{MODEL_PROVIDERS[provider][0]}>"
+            for provider in model_providers
+        }
     launch_secret = render_launch_secret(
         args.tag,
         github_token if not args.dry_run else "<REDACTED_GITHUB_TOKEN>",
-        (anthropic_api_key if not args.dry_run else "<REDACTED_ANTHROPIC_API_KEY>"),
         exa_api_key if not args.dry_run else "<REDACTED_EXA_API_KEY>",
         wandb_api_key if not args.dry_run else "<REDACTED_WANDB_API_KEY>",
+        anthropic_api_key=provider_api_keys.get("anthropic"),
+        openai_api_key=provider_api_keys.get("openai"),
     )
 
     # --- Apply per-launch secret first (pods reference it on startup) ---

@@ -452,6 +452,7 @@ def controller_main(
         parse_runner_args,
         read_role_instructions,
         resolve_config,
+        scrub_model_credentials,
     )
     from senpai_agent.tools import (
         close_training_runtimes,
@@ -478,7 +479,7 @@ def controller_main(
     )
     if runner_config.github_token is None:
         raise RuntimeError("controller worker requires GitHub credentials")
-    os.environ.pop(runner_config.api_key_env, None)
+    scrub_model_credentials(os.environ, runner_config)
     github_mailbox = GitHubMailbox(
         repo=runner_config.github_repo,
         token=runner_config.github_token,

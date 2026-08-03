@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 AgentKind = Literal["general-purpose", "explore", "search", "bash-runner"]
-ModelTier = Literal["smart", "fast"]
+ModelTier = Literal["smart", "fast", "frontier"]
 SearchMode = Literal["general-web", "research-publications"]
 MAX_PARALLEL_AGENTS = 8
 
@@ -65,18 +65,32 @@ class ChildAgentRunnerFactory(Protocol):
 
 
 @dataclass(frozen=True)
+class DelegationModelProfile:
+    model: str
+    reasoning_effort: str
+    api_key_env: str
+    api_key: str
+
+
+@dataclass(frozen=True)
 class DelegationConfig:
     python_executable: Path
     workspace: Path
     state_dir: Path
     smart_model: str
+    smart_reasoning_effort: str
+    smart_api_key_env: str
+    smart_api_key: str
     fast_model: str
-    api_key_env: str
-    api_key: str
+    fast_reasoning_effort: str
+    fast_api_key_env: str
+    fast_api_key: str
+    frontier_model: str
+    frontier_reasoning_effort: str
+    frontier_api_key_env: str
+    frontier_api_key: str
     github_repo: str
     github_trusted_actor: str | None
-    smart_reasoning_effort: str
-    fast_reasoning_effort: str
     role_file: Path
     harness_file: Path
     plugin_dir: Path
@@ -84,6 +98,33 @@ class DelegationConfig:
     command_secrets: Mapping[str, str]
     role: str
     background_allowed: bool
+
+    def profile(self, tier: ModelTier) -> DelegationModelProfile:
+        if tier == "smart":
+            return DelegationModelProfile(
+                self.smart_model,
+                self.smart_reasoning_effort,
+                self.smart_api_key_env,
+                self.smart_api_key,
+            )
+        if tier == "fast":
+            return DelegationModelProfile(
+                self.fast_model,
+                self.fast_reasoning_effort,
+                self.fast_api_key_env,
+                self.fast_api_key,
+            )
+        if tier == "frontier":
+            return DelegationModelProfile(
+                self.frontier_model,
+                self.frontier_reasoning_effort,
+                self.frontier_api_key_env,
+                self.frontier_api_key,
+            )
+        raise ValueError(f"unknown delegation model tier: {tier}")
+
+    def profiles(self) -> tuple[DelegationModelProfile, ...]:
+        return tuple(self.profile(tier) for tier in ("smart", "fast", "frontier"))
 
 
 _DELEGATION_CONFIG: DelegationConfig | None = None
@@ -187,16 +228,7 @@ class OpenHandsChildProcess:
     @property
     def command(self) -> tuple[str, ...]:
         browser_flag = "--browser" if self._config.enable_browser else "--no-browser"
-        model = (
-            self._config.smart_model
-            if self._request.model == "smart"
-            else self._config.fast_model
-        )
-        effort = (
-            self._config.smart_reasoning_effort
-            if self._request.model == "smart"
-            else self._config.fast_reasoning_effort
-        )
+        profile = self._config.profile(self._request.model)
         return (
             str(self._config.python_executable),
             "-m",
@@ -205,11 +237,11 @@ class OpenHandsChildProcess:
             "--max-turns",
             "1000",
             "--model",
-            model,
+            profile.model,
             "--api-key-env",
-            self._config.api_key_env,
+            profile.api_key_env,
             "--reasoning-effort",
-            effort,
+            profile.reasoning_effort,
             "--agent",
             self._request.agent,
             "--workspace",
@@ -231,26 +263,50 @@ class OpenHandsChildProcess:
     def environment(self) -> dict[str, str]:
         environment = dict(os.environ)
         scrub_github_credentials(environment)
+        for name in tuple(environment):
+            if name.endswith("_API_KEY"):
+                environment.pop(name)
         for name in (
             "SENPAI_OPENHANDS_AGENT",
             "SENPAI_OPENHANDS_CONVERSATION_ID",
         ):
             environment.pop(name, None)
         environment.update(self._config.command_secrets)
+        profiles = self._config.profiles()
+        environment.update(
+            {profile.api_key_env: profile.api_key for profile in profiles}
+        )
+        selected = self._config.profile(self._request.model)
         environment.update(
             {
                 "OPENHANDS_SUPPRESS_BANNER": "1",
                 "SENPAI_ROLE": self._config.role,
-                "SENPAI_OPENHANDS_API_KEY_ENV": self._config.api_key_env,
+                "SENPAI_OPENHANDS_API_KEY_ENV": selected.api_key_env,
                 "SENPAI_OPENHANDS_SMART_MODEL": self._config.smart_model,
+                "SENPAI_OPENHANDS_SMART_API_KEY_ENV": (
+                    self._config.smart_api_key_env
+                ),
                 "SENPAI_OPENHANDS_FAST_MODEL": self._config.fast_model,
+                "SENPAI_OPENHANDS_FAST_API_KEY_ENV": self._config.fast_api_key_env,
+                "SENPAI_OPENHANDS_FRONTIER_MODEL": self._config.frontier_model,
+                "SENPAI_OPENHANDS_FRONTIER_API_KEY_ENV": (
+                    self._config.frontier_api_key_env
+                ),
+                "SENPAI_OPENHANDS_SMART_REASONING_EFFORT": (
+                    self._config.smart_reasoning_effort
+                ),
+                "SENPAI_OPENHANDS_FAST_REASONING_EFFORT": (
+                    self._config.fast_reasoning_effort
+                ),
+                "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": (
+                    self._config.frontier_reasoning_effort
+                ),
                 "SENPAI_PARENT_CONVERSATION_HISTORY_DIR": str(
                     self._config.state_dir
                     / uuid.UUID(self._request.parent_conversation_id).hex
                     / "events"
                 ),
                 "GH_REPO": self._config.github_repo,
-                self._config.api_key_env: self._config.api_key,
             }
         )
         if self._config.github_trusted_actor is not None:
@@ -331,8 +387,9 @@ class DelegateAgentAction(Action):
         description=(
             "Use fast for mechanical lookup, command execution, grep, and "
             "straightforward extraction. Use smart for ambiguous synthesis, "
-            "literature research, code review, or decisions where missing a "
-            "subtlety is costly."
+            "literature research, and code review. Use frontier with the "
+            "general-purpose agent for the most demanding broad research, "
+            "analysis, or implementation work."
         ),
     )
     background: bool = Field(
@@ -573,7 +630,9 @@ class DelegateAgentTool(ToolDefinition[DelegateAgentAction, DelegateAgentObserva
                     "Launch one file-defined Senpai subagent. Up to eight independent "
                     "calls in one response run concurrently. Choose fast for mechanical "
                     "search, CLI execution, and extraction, and smart for subtle "
-                    "synthesis. Foreground is the default and returns the result inline; "
+                    "synthesis. Choose frontier with the general-purpose agent for the "
+                    "most demanding broad research, analysis, or implementation work. "
+                    "Foreground is the default and returns the result inline; "
                     "background returns a task ID and reports through the durable local "
                     "event stream."
                 ),

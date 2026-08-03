@@ -16,6 +16,18 @@ from launch_test_support import (
 )
 
 
+def test_default_config_exposes_every_model_profile_and_effort():
+    config = yaml.safe_load(launch.SENPAI_CONFIG.read_text())
+
+    assert {
+        name
+        for profile in ("advisor", "student", "smart", "fast", "frontier")
+        for name in (f"{profile}_model", f"{profile}_reasoning_effort")
+    } <= set(config)
+    assert config["frontier_model"] == "openai/gpt-5.6-sol"
+    assert config["frontier_reasoning_effort"] == "max"
+
+
 @pytest.mark.parametrize(
     "image",
     [
@@ -164,6 +176,7 @@ def test_launch_secret_contains_each_credential_and_both_roles_reference_it():
     expected_values = {
         "github-token": "github",
         "anthropic-api-key": "anthropic",
+        "openai-api-key": "openai",
         "exa-api-key": "exa",
         "wandb-api-key": "wandb",
     }
@@ -191,14 +204,122 @@ def test_launch_secret_contains_each_credential_and_both_roles_reference_it():
         }
 
 
+def test_role_model_configuration_preserves_the_configured_efforts():
+    args = launch_args(
+        advisor_model="openai/gpt-5.6-sol",
+        advisor_reasoning_effort="max",
+        student_model="anthropic/claude-opus-4-8",
+        student_reasoning_effort="medium",
+        smart_model="anthropic/claude-sonnet-4-6",
+        smart_reasoning_effort="high",
+        fast_model="openai/gpt-5.6-mini",
+        fast_reasoning_effort="none",
+        frontier_model="openai/gpt-5.6-sol",
+        frontier_reasoning_effort="max",
+    )
+
+    advisor_config, _deployment, _secret = render_role("advisor", args)
+    student_config, _deployment, _secret = render_role("student", args)
+    advisor = yaml.safe_load(advisor_config)["data"]
+    student = yaml.safe_load(student_config)["data"]
+
+    assert advisor["SENPAI_OPENHANDS_MODEL"] == args.advisor_model
+    assert advisor["SENPAI_OPENHANDS_REASONING_EFFORT"] == "max"
+    assert student["SENPAI_OPENHANDS_MODEL"] == args.student_model
+    assert student["SENPAI_OPENHANDS_REASONING_EFFORT"] == "medium"
+    for config in (advisor, student):
+        assert config["SENPAI_OPENHANDS_SMART_MODEL"] == args.smart_model
+        assert config["SENPAI_OPENHANDS_SMART_REASONING_EFFORT"] == "high"
+        assert config["SENPAI_OPENHANDS_FAST_MODEL"] == args.fast_model
+        assert config["SENPAI_OPENHANDS_FAST_REASONING_EFFORT"] == "none"
+        assert config["SENPAI_OPENHANDS_FRONTIER_MODEL"] == args.frontier_model
+        assert config["SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT"] == "max"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"advisor_reasoning_effort": "ultra"}, "must be one of"),
+        ({"advisor_reasoning_effort": "max"}, "requires an openai/gpt-5.6"),
+        (
+            {
+                "advisor_model": "openai/gpt-5.60",
+                "advisor_reasoning_effort": "max",
+            },
+            "requires an openai/gpt-5.6",
+        ),
+    ],
+)
+def test_launch_rejects_unsupported_reasoning_effort(overrides, message):
+    with pytest.raises(SystemExit, match=message):
+        launch.validate_model_config(launch_args(**overrides))
+
+
+@pytest.mark.parametrize(
+    ("model", "provider_env", "secret_key"),
+    [
+        ("anthropic/claude-opus-4-8", "ANTHROPIC_API_KEY", "anthropic-api-key"),
+        ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "openai-api-key"),
+    ],
+)
+def test_roles_mount_only_the_provider_used_by_their_models(
+    model, provider_env, secret_key
+):
+    args = launch_args(
+        advisor_model=model,
+        student_model=model,
+        smart_model=model,
+        fast_model=model,
+        frontier_model=model,
+    )
+
+    _configmap, deployment, secret = render_role("advisor", args)
+    secret_keys = set(yaml.safe_load(secret)["data"])
+    environment = yaml.safe_load(deployment)["spec"]["template"]["spec"][
+        "containers"
+    ][0]["env"]
+
+    assert secret_keys == {"github-token", secret_key, "exa-api-key", "wandb-api-key"}
+    assert {item["name"] for item in environment} == {
+        "GITHUB_TOKEN",
+        provider_env,
+        "EXA_API_KEY",
+        "WANDB_API_KEY",
+    }
+
+
+def test_role_mounts_include_its_main_model_and_shared_profiles_only():
+    args = launch_args(
+        advisor_model="anthropic/claude-opus-4-8",
+        student_model="openai/gpt-5.6",
+        smart_model="anthropic/claude-opus-4-8",
+        fast_model="anthropic/claude-haiku-4-5",
+        frontier_model="anthropic/claude-opus-4-8",
+        frontier_reasoning_effort="xhigh",
+    )
+
+    mounted = {}
+    for role in ("advisor", "student"):
+        _configmap, deployment, _secret = render_role(role, args)
+        environment = yaml.safe_load(deployment)["spec"]["template"]["spec"][
+            "containers"
+        ][0]["env"]
+        mounted[role] = {item["name"] for item in environment}
+
+    common = {"GITHUB_TOKEN", "ANTHROPIC_API_KEY", "EXA_API_KEY", "WANDB_API_KEY"}
+    assert mounted["advisor"] == common
+    assert mounted["student"] == common | {"OPENAI_API_KEY"}
+
+
 def test_pod_template_hash_covers_complete_config_and_secret_content():
     config = "kind: ConfigMap\ndata:\n  POLL_INTERVAL: '60'\n"
     secret = launch_helpers.render_launch_secret(
         "track",
         "github",
-        "anthropic",
         "exa",
         "wandb",
+        anthropic_api_key="anthropic",
+        openai_api_key="openai",
     )
 
     first = launch_helpers.pod_template_hash(config, secret)

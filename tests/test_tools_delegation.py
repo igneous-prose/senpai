@@ -121,6 +121,34 @@ def test_foreground_delegation_returns_the_result_and_runtime_inline():
         delegate.executor.close()
 
 
+def test_frontier_delegation_defaults_to_the_general_purpose_agent():
+    release = threading.Event()
+    release.set()
+    child = FakeChild(release=release)
+    requests: list[DelegationRequest] = []
+
+    def factory(request: DelegationRequest) -> FakeChild:
+        requests.append(request)
+        return child
+
+    delegate = make_delegate(factory, EventSink())
+
+    try:
+        observation = delegate(
+            DelegateAgentAction(
+                task="Reconsider the research direction and implement the best fix.",
+                model="frontier",
+            ),
+            parent_conversation(),
+        )
+
+        assert observation.status == "finished"
+        assert requests[0].model == "frontier"
+        assert requests[0].agent == "general-purpose"
+    finally:
+        delegate.executor.close()
+
+
 @pytest.mark.parametrize("include_context", [False, True])
 def test_background_delegation_copies_parent_context_only_when_requested(
     include_context: bool,

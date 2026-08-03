@@ -41,14 +41,12 @@ def test_openhands_fork_revision_is_consistent_across_install_paths():
 @pytest.mark.parametrize(
     ("effort", "model", "expected"),
     [
-        ("max", "anthropic/claude-opus-4-8", "xhigh"),
-        ("ultra", "openai/gpt-5.6", "max"),
         ("max", "openai/gpt-5.6-sol", "max"),
-        ("max", "openai/gpt-5.4", "xhigh"),
         ("high", "openai/gpt-5.6", "high"),
+        ("xhigh", "anthropic/claude-opus-4-8", "xhigh"),
     ],
 )
-def test_reasoning_effort_is_clamped_to_provider_capabilities(
+def test_supported_reasoning_effort_is_preserved(
     effort: str,
     model: str,
     expected: str,
@@ -57,6 +55,29 @@ def test_reasoning_effort_is_clamped_to_provider_capabilities(
 
     assert args.reasoning_effort == effort
     assert openhands_reasoning_effort(effort, model) == expected
+
+
+@pytest.mark.parametrize(
+    ("effort", "model"),
+    [
+        ("max", "anthropic/claude-opus-4-8"),
+        ("max", "openai/gpt-5.4"),
+        ("max", "openai/gpt-5.60"),
+        ("ultra", "openai/gpt-5.6-sol"),
+        ("extreme", "openai/gpt-5.6-sol"),
+    ],
+)
+def test_unsupported_reasoning_effort_fails_instead_of_being_rewritten(
+    effort: str,
+    model: str,
+):
+    with pytest.raises(ValueError, match="unsupported reasoning effort|unsupported for"):
+        openhands_reasoning_effort(effort, model)
+
+
+def test_ultra_is_not_a_cli_reasoning_effort_alias():
+    with pytest.raises(SystemExit):
+        parse_runner_args(["--max-turns", "1", "--reasoning-effort", "ultra"])
 
 
 @pytest.mark.parametrize(

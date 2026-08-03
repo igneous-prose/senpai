@@ -51,12 +51,14 @@ def run_launch(*arguments: str) -> subprocess.CompletedProcess[str]:
 def render_role(role: str, args: launch.Args | None = None) -> tuple[str, str, str]:
     args = launch_args() if args is None else args
     secret_name = f"senpai-launch-secrets-{args.tag}"
+    providers = launch.deployed_model_providers(args)
     secret = launch_helpers.render_launch_secret(
         args.tag,
         "github",
-        "anthropic",
         "exa",
         "wandb",
+        anthropic_api_key="anthropic" if "anthropic" in providers else None,
+        openai_api_key="openai" if "openai" in providers else None,
     )
     template = (ROOT / "k8s" / f"{role}-deployment.yaml").read_text()
     if role == "student":

@@ -13,8 +13,9 @@ from senpai_agent.openhands_runner import (
     resolve_config,
     sanitized_agent_definitions,
     sanitized_project_skills,
+    scrub_model_credentials,
 )
-from openhands_support import runtime_env
+from openhands_support import runtime_config, runtime_env
 from test_agent_markdown import HTML_HEADER, PLAIN_HEADER
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,21 +110,58 @@ def test_resolved_config_separates_runtime_credentials_from_command_secrets(
     config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
     assert config.api_key.get_secret_value() == "anthropic-key"
+    assert config.smart_api_key.get_secret_value() == "anthropic-key"
+    assert config.fast_api_key.get_secret_value() == "anthropic-key"
+    assert config.frontier_api_key.get_secret_value() == "openai-key"
     assert config.github_token.get_secret_value() == "github-key"
     assert config.command_secrets == {
         "WANDB_API_KEY": "wandb-key",
         "EXA_API_KEY": "exa-key",
     }
     assert "ANTHROPIC_API_KEY" not in config.command_secrets
+    assert "OPENAI_API_KEY" not in config.command_secrets
     assert config.training_max_timeout_seconds == 30
+
+    delegated = runner.delegation_config(config)
+    assert delegated.smart_api_key == "anthropic-key"
+    assert delegated.fast_api_key == "anthropic-key"
+    assert delegated.frontier_api_key == "openai-key"
+
+
+def test_default_model_profiles_are_explicit_and_provider_credentials_are_inferred(
+    tmp_path: Path,
+):
+    config = resolve_config(
+        parse_runner_args(["--max-turns", "1"]),
+        runtime_env(tmp_path),
+    )
+
+    assert (
+        config.model,
+        config.api_key_env,
+        config.reasoning_effort,
+    ) == ("anthropic/claude-opus-4-8", "ANTHROPIC_API_KEY", "xhigh")
+    assert (
+        config.smart_model,
+        config.smart_api_key_env,
+        config.smart_reasoning_effort,
+    ) == ("anthropic/claude-opus-4-8", "ANTHROPIC_API_KEY", "xhigh")
+    assert (
+        config.fast_model,
+        config.fast_api_key_env,
+        config.fast_reasoning_effort,
+    ) == ("anthropic/claude-haiku-4-5", "ANTHROPIC_API_KEY", "low")
+    assert (
+        config.frontier_model,
+        config.frontier_api_key_env,
+        config.frontier_reasoning_effort,
+    ) == ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "max")
 
 
 def test_fast_model_defaults_to_the_selected_non_anthropic_provider(tmp_path: Path):
     env = runtime_env(tmp_path)
     env.update(
         {
-            "OPENAI_API_KEY": "openai-key",
-            "SENPAI_OPENHANDS_API_KEY_ENV": "OPENAI_API_KEY",
             "SENPAI_OPENHANDS_MODEL": "openai/gpt-5.6",
         }
     )
@@ -132,6 +170,141 @@ def test_fast_model_defaults_to_the_selected_non_anthropic_provider(tmp_path: Pa
 
     assert config.smart_model == "openai/gpt-5.6"
     assert config.fast_model == "openai/gpt-5.6"
+    assert config.api_key_env == "OPENAI_API_KEY"
+    assert config.smart_api_key_env == "OPENAI_API_KEY"
+    assert config.fast_api_key_env == "OPENAI_API_KEY"
+
+
+def test_all_model_profiles_accept_independent_cli_model_and_effort_settings(
+    tmp_path: Path,
+):
+    args = parse_runner_args(
+        [
+            "--max-turns",
+            "1",
+            "--model",
+            "anthropic/main",
+            "--reasoning-effort",
+            "medium",
+            "--smart-model",
+            "anthropic/smart",
+            "--smart-reasoning-effort",
+            "high",
+            "--fast-model",
+            "anthropic/fast",
+            "--fast-reasoning-effort",
+            "none",
+            "--frontier-model",
+            "openai/gpt-5.6-sol",
+            "--frontier-reasoning-effort",
+            "max",
+        ]
+    )
+
+    config = resolve_config(args, runtime_env(tmp_path))
+
+    assert (config.model, config.reasoning_effort) == ("anthropic/main", "medium")
+    assert (config.smart_model, config.smart_reasoning_effort) == (
+        "anthropic/smart",
+        "high",
+    )
+    assert (config.fast_model, config.fast_reasoning_effort) == (
+        "anthropic/fast",
+        "none",
+    )
+    assert (config.frontier_model, config.frontier_reasoning_effort) == (
+        "openai/gpt-5.6-sol",
+        "max",
+    )
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"SENPAI_OPENHANDS_REASONING_EFFORT": "max"}, "unsupported for"),
+        ({"SENPAI_OPENHANDS_SMART_REASONING_EFFORT": "ultra"}, "unsupported"),
+        (
+            {"SENPAI_OPENHANDS_FRONTIER_MODEL": "anthropic/claude-opus-4-8"},
+            "unsupported for",
+        ),
+    ],
+)
+def test_invalid_model_profile_effort_fails_configuration(
+    tmp_path: Path,
+    updates: dict[str, str],
+    message: str,
+):
+    env = runtime_env(tmp_path)
+    env.update(updates)
+
+    with pytest.raises(ValueError, match=message):
+        resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+
+def test_explicit_api_key_env_preserves_custom_provider_support(tmp_path: Path):
+    env = runtime_env(tmp_path)
+    env.update(
+        {
+            "CUSTOM_API_KEY": "custom-key",
+            "SENPAI_OPENHANDS_MODEL": "custom/main",
+            "SENPAI_OPENHANDS_API_KEY_ENV": "CUSTOM_API_KEY",
+            "SENPAI_OPENHANDS_SMART_MODEL": "custom/smart",
+            "SENPAI_OPENHANDS_FAST_MODEL": "custom/fast",
+        }
+    )
+
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert config.api_key_env == "CUSTOM_API_KEY"
+    assert config.smart_api_key_env == "CUSTOM_API_KEY"
+    assert config.fast_api_key_env == "CUSTOM_API_KEY"
+    assert config.api_key.get_secret_value() == "custom-key"
+    assert config.smart_api_key.get_secret_value() == "custom-key"
+    assert config.fast_api_key.get_secret_value() == "custom-key"
+
+
+def test_custom_main_provider_requires_the_existing_api_key_env_override(
+    tmp_path: Path,
+):
+    env = runtime_env(tmp_path)
+    env["SENPAI_OPENHANDS_MODEL"] = "custom/main"
+
+    with pytest.raises(ValueError, match="cannot infer.*custom") as raised:
+        resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert "SENPAI_OPENHANDS_API_KEY_ENV" in str(raised.value)
+
+
+def test_cross_provider_profile_requires_an_inferable_or_explicit_api_key_env(
+    tmp_path: Path,
+):
+    env = runtime_env(tmp_path)
+    env["SENPAI_OPENHANDS_SMART_MODEL"] = "custom/smart"
+
+    with pytest.raises(ValueError, match="cannot infer.*custom") as raised:
+        resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+    assert "SENPAI_OPENHANDS_SMART_API_KEY_ENV" in str(raised.value)
+
+    env.update(
+        {
+            "CUSTOM_API_KEY": "custom-key",
+            "SENPAI_OPENHANDS_SMART_API_KEY_ENV": "CUSTOM_API_KEY",
+        }
+    )
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+    assert config.smart_api_key.get_secret_value() == "custom-key"
+
+
+def test_model_credentials_are_removed_from_the_agent_environment(tmp_path: Path):
+    environment = {
+        "ANTHROPIC_API_KEY": "anthropic-key",
+        "OPENAI_API_KEY": "openai-key",
+        "WANDB_API_KEY": "wandb-key",
+    }
+
+    scrub_model_credentials(environment, runtime_config(tmp_path))
+
+    assert environment == {"WANDB_API_KEY": "wandb-key"}
 
 
 def test_config_consumes_a_private_one_use_github_token_file(tmp_path: Path):

@@ -86,6 +86,7 @@ def bypass_external_preflight(monkeypatch):
     for name, value in (
         ("resolve_github_token", "github"),
         ("resolve_anthropic_api_key", "anthropic"),
+        ("resolve_openai_api_key", "openai"),
         ("resolve_exa_api_key", "exa"),
         ("resolve_wandb_api_key", "wandb"),
     ):
@@ -94,6 +95,7 @@ def bypass_external_preflight(monkeypatch):
         "preflight_check_target_repo_access",
         "preflight_check_student_name_availability",
         "preflight_check_anthropic_api_key",
+        "preflight_check_openai_api_key",
         "preflight_check_exa_api_key",
         "preflight_check_wandb_api_key",
         "ensure_advisor_branch",
@@ -105,6 +107,81 @@ def bypass_external_preflight(monkeypatch):
         "preflight_check_target_repo_branch",
         lambda *_args: "main",
     )
+
+
+@pytest.mark.parametrize(
+    ("model", "expected_provider"),
+    [
+        ("anthropic/claude-opus-4-8", "anthropic"),
+        ("openai/gpt-5.6-sol", "openai"),
+    ],
+)
+def test_launch_resolves_and_preflights_only_referenced_model_providers(
+    monkeypatch, model, expected_provider
+):
+    args = launch_args(
+        advisor=False,
+        advisor_model=model,
+        student_model=model,
+        smart_model=model,
+        fast_model=model,
+        frontier_model=model,
+        frontier_reasoning_effort="xhigh",
+    )
+    monkeypatch.setattr(launch.sp, "parse", lambda *_args, **_kwargs: args)
+    bypass_external_preflight(monkeypatch)
+    resolved = []
+    checked = []
+
+    for provider in ("anthropic", "openai"):
+        monkeypatch.setattr(
+            launch,
+            f"resolve_{provider}_api_key",
+            lambda _path, provider=provider: resolved.append(provider)
+            or f"{provider}-key",
+        )
+        monkeypatch.setattr(
+            launch,
+            f"preflight_check_{provider}_api_key",
+            lambda _key, provider=provider: checked.append(provider),
+        )
+    monkeypatch.setattr(launch, "kubectl_apply", lambda *_args, **_kwargs: None)
+
+    launch.main()
+
+    assert resolved == [expected_provider]
+    assert checked == [expected_provider]
+
+
+def test_students_only_launch_ignores_the_inactive_advisor_provider(
+    monkeypatch,
+):
+    args = launch_args(
+        advisor=False,
+        advisor_model="openai/gpt-5.6-sol",
+        advisor_reasoning_effort="max",
+        student_model="anthropic/claude-opus-4-8",
+        smart_model="anthropic/claude-opus-4-8",
+        fast_model="anthropic/claude-haiku-4-5",
+        frontier_model="anthropic/claude-opus-4-8",
+        frontier_reasoning_effort="xhigh",
+    )
+    monkeypatch.setattr(launch.sp, "parse", lambda *_args, **_kwargs: args)
+    bypass_external_preflight(monkeypatch)
+    resolved = []
+
+    for provider in ("anthropic", "openai"):
+        monkeypatch.setattr(
+            launch,
+            f"resolve_{provider}_api_key",
+            lambda _path, provider=provider: resolved.append(provider)
+            or f"{provider}-key",
+        )
+    monkeypatch.setattr(launch, "kubectl_apply", lambda *_args, **_kwargs: None)
+
+    launch.main()
+
+    assert resolved == ["anthropic"]
 
 
 def test_launch_uses_one_scope_for_apply_discovery_and_handoff_commands(

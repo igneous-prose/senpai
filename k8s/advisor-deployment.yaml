@@ -89,11 +89,7 @@ spec:
             secretKeyRef:
               name: {{LAUNCH_SECRET_NAME}}
               key: github-token
-        - name: ANTHROPIC_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: {{LAUNCH_SECRET_NAME}}
-              key: anthropic-api-key
+        - {{MODEL_PROVIDER_ENV}}
         - name: EXA_API_KEY
           valueFrom:
             secretKeyRef:

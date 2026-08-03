@@ -48,11 +48,13 @@ uv sync --locked --extra dev
 cp example.env .env
 ```
 
-Fill in the four values in the gitignored `.env` file:
+Fill in the values in the gitignored `.env` file. Model-provider keys are
+required when any configured model uses that provider:
 
 ```dotenv
 GITHUB_TOKEN=
 ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
 EXA_API_KEY=
 WANDB_API_KEY=
 ```
@@ -60,7 +62,8 @@ WANDB_API_KEY=
 | Credential | Required access |
 |---|---|
 | `GITHUB_TOKEN` | Target-repository Contents, Pull requests, and Issues read/write. A classic token with `repo` scope also works. GitHub CLI authentication is the fallback when this value is absent. |
-| `ANTHROPIC_API_KEY` | Access to the configured advisor/student model. The default stack uses Anthropic. |
+| `ANTHROPIC_API_KEY` | Required when an `anthropic/...` model is configured. |
+| `OPENAI_API_KEY` | Required when an `openai/...` model is configured. The default frontier tier uses GPT-5.6 Sol. |
 | `EXA_API_KEY` | General-web and research-publication search. |
 | `WANDB_API_KEY` | Read/write access to the configured W&B entity and project. |
 
@@ -104,6 +107,18 @@ advisor_branch: senpai-research
 wandb_entity: your-team
 wandb_project: your-project
 
+advisor_model: anthropic/claude-opus-4-8
+advisor_reasoning_effort: xhigh
+student_model: anthropic/claude-opus-4-8
+student_reasoning_effort: xhigh
+
+smart_model: anthropic/claude-opus-4-8
+smart_reasoning_effort: xhigh
+fast_model: anthropic/claude-haiku-4-5
+fast_reasoning_effort: low
+frontier_model: openai/gpt-5.6-sol
+frontier_reasoning_effort: max
+
 pvc_claim_name: your-existing-pvc
 pvc_mount_path: /mnt/data
 
@@ -130,7 +145,12 @@ uv run python k8s/launch.py \
   --preflight_only
 ```
 
-Preflight authenticates all four credentials, verifies GitHub Contents write access, resolves the target branch, and rejects student labels already carrying active assignments. It deliberately skips image validation and makes no cluster changes. A real launch additionally verifies immutable image syntax and that both role images identify the same source revision.
+Preflight authenticates GitHub, Exa, W&B, and every model provider referenced by
+the configured model profiles. It also verifies GitHub Contents write access,
+resolves the target branch, and rejects student labels already carrying active
+assignments. It deliberately skips image validation and makes no cluster
+changes. A real launch additionally verifies immutable image syntax and that
+both role images identify the same source revision.
 
 ### 7. Launch
 
@@ -214,10 +234,15 @@ Worker and container restarts preserve completed OpenHands events. Recovered liv
 
 | Agent | Best for | Recommended tier |
 |---|---|---|
-| [General Purpose](.agents/agents/general-purpose.md) | Bounded work combining investigation, editing, and tests. It can delegate nested foreground work. | `smart` for implementation or review; `fast` for straightforward edits. |
+| [General Purpose](.agents/agents/general-purpose.md) | Bounded work combining terminal investigation, code editing, task tracking, tests, and nested foreground delegation. | `smart` for ordinary implementation or review; `frontier` for the hardest generalist work. |
 | [Explore](.agents/agents/explore.md) | Read-only search across code, data, experiment artifacts, papers, or durable conversation history. It returns conclusions with paths and line numbers rather than dumping source. | `fast` for mechanical exploration; `smart` when relationships are subtle. |
 | [Search](.agents/agents/search.md) | External research through Exa in `general-web` or `research-publications` mode, with primary-source links. | `smart`. |
 | [Bash Runner](.agents/agents/bash-runner.md) | Tests, builds, linters, dependency commands, Git inspection, and noisy CLI work. It returns counts and actionable failures rather than raw logs. | `fast`. |
+
+The model tier is independent of the agent specialization. With the default
+`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at `max` effort
+with the general-purpose terminal and code-editing toolset. Pair `frontier`
+with `agent=search` when the hard task is external or publication research.
 
 `background=false` waits for the compact result. `background=true` lets the parent continue and delivers the result later through its durable local event store. `include_context=false` sends only the system prompt and task; the child can still search the supplied parent-history directory. `include_context=true` also copies the model-visible parent history.
 

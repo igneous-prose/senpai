@@ -12,7 +12,7 @@ import stat
 import sys
 import threading
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,10 +75,17 @@ from senpai_agent.tools import (
 
 DEFAULT_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_FAST_MODEL = "anthropic/claude-haiku-4-5"
-DEFAULT_API_KEY_ENV = "ANTHROPIC_API_KEY"
+DEFAULT_FRONTIER_MODEL = "openai/gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "xhigh"
 DEFAULT_FAST_REASONING_EFFORT = "low"
-REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra", "none")
+DEFAULT_FRONTIER_REASONING_EFFORT = "max"
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "none")
+SENPAI_AGENT_NAMES = ("bash-runner", "general-purpose", "explore", "search")
+SENPAI_AGENT_DIR = Path(__file__).resolve().parents[1] / ".agents" / "agents"
+PROVIDER_API_KEY_ENVS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
 COMMAND_SECRET_ENV_NAMES = (
     "WANDB_API_KEY",
     "EXA_API_KEY",
@@ -94,6 +101,24 @@ class RunnerArgs:
     reasoning_effort: str | None = field(
         default=None,
         alias="--reasoning-effort",
+        choices=REASONING_EFFORTS,
+    )
+    smart_model: str | None = field(default=None, alias="--smart-model")
+    smart_reasoning_effort: str | None = field(
+        default=None,
+        alias="--smart-reasoning-effort",
+        choices=REASONING_EFFORTS,
+    )
+    fast_model: str | None = field(default=None, alias="--fast-model")
+    fast_reasoning_effort: str | None = field(
+        default=None,
+        alias="--fast-reasoning-effort",
+        choices=REASONING_EFFORTS,
+    )
+    frontier_model: str | None = field(default=None, alias="--frontier-model")
+    frontier_reasoning_effort: str | None = field(
+        default=None,
+        alias="--frontier-reasoning-effort",
         choices=REASONING_EFFORTS,
     )
     workspace: str | None = field(default=None, alias="--workspace")
@@ -123,8 +148,17 @@ class RunnerConfig:
     command_secrets: Mapping[str, str]
     reasoning_effort: str
     smart_model: str
+    smart_api_key_env: str
+    smart_api_key: SecretStr
+    smart_reasoning_effort: str
     fast_model: str
+    fast_api_key_env: str
+    fast_api_key: SecretStr
     fast_reasoning_effort: str
+    frontier_model: str
+    frontier_api_key_env: str
+    frontier_api_key: SecretStr
+    frontier_reasoning_effort: str
     workspace: Path
     state_dir: Path
     conversation_id: uuid.UUID
@@ -147,11 +181,58 @@ def parse_runner_args(argv: Sequence[str] | None = None) -> RunnerArgs:
 
 def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
     provider, _, model_name = model.lower().partition("/")
-    if reasoning_effort in {"max", "ultra"} and (
-        provider != "openai" or not model_name.startswith("gpt-5.6")
-    ):
-        return "xhigh"
-    return "max" if reasoning_effort == "ultra" else reasoning_effort
+    if reasoning_effort not in REASONING_EFFORTS:
+        choices = ", ".join(REASONING_EFFORTS)
+        raise ValueError(
+            f"unsupported reasoning effort {reasoning_effort!r}; "
+            f"choose one of: {choices}"
+        )
+    supports_max = provider == "openai" and (
+        model_name == "gpt-5.6" or model_name.startswith("gpt-5.6-")
+    )
+    if reasoning_effort == "max" and not supports_max:
+        raise ValueError(
+            f"reasoning effort 'max' is unsupported for model {model!r}; "
+            "use an openai/gpt-5.6 model or select a lower effort"
+        )
+    return reasoning_effort
+
+
+def model_provider(model: str) -> str:
+    provider, separator, model_name = model.lower().partition("/")
+    if not separator or not provider or not model_name:
+        raise ValueError(
+            f"model {model!r} must use a provider/model identifier such as "
+            "'anthropic/claude-opus-4-8' or 'openai/gpt-5.6-sol'"
+        )
+    return provider
+
+
+def infer_api_key_env(model: str, *, override_env: str | None = None) -> str:
+    provider = model_provider(model)
+    try:
+        return PROVIDER_API_KEY_ENVS[provider]
+    except KeyError as error:
+        hint = f"; set {override_env} explicitly" if override_env else ""
+        raise ValueError(
+            f"cannot infer an API key environment variable for model provider "
+            f"{provider!r}{hint}"
+        ) from error
+
+
+def profile_api_key_env(
+    model: str,
+    env: Mapping[str, str],
+    env_key: str,
+    *,
+    inherited_model: str,
+    inherited_api_key_env: str,
+) -> str:
+    if explicit := env.get(env_key, "").strip():
+        return explicit
+    if model_provider(model) == model_provider(inherited_model):
+        return inherited_api_key_env
+    return infer_api_key_env(model, override_env=env_key)
 
 
 def env_value(
@@ -273,13 +354,24 @@ def sanitized_project_skills(workspace: Path) -> list[Skill]:
 
 
 def sanitized_agent_definitions(workspace: Path) -> list[AgentDefinition]:
-    """Discover file agents with clean model-visible Markdown bodies."""
+    """Load Senpai agents first, then unshadowed target and user agents."""
 
+    reserved = {
+        name: AgentDefinition.load(SENPAI_AGENT_DIR / f"{name}.md")
+        for name in SENPAI_AGENT_NAMES
+    }
     return [
         definition.model_copy(
             update={"system_prompt": strip_spdx_header(definition.system_prompt)}
         )
-        for definition in discover_agents(workspace)
+        for definition in (
+            *reserved.values(),
+            *(
+                candidate
+                for candidate in discover_agents(workspace)
+                if candidate.name not in reserved
+            ),
+        )
     ]
 
 
@@ -332,12 +424,6 @@ def resolve_config(
         raise RuntimeError(
             "OpenHands state directory must be outside the target workspace"
         )
-    api_key_env = (
-        env_value(
-            args.api_key_env, env, "SENPAI_OPENHANDS_API_KEY_ENV", DEFAULT_API_KEY_ENV
-        )
-        or DEFAULT_API_KEY_ENV
-    )
     role = env.get("SENPAI_ROLE", "")
     if role not in {"advisor", "student"}:
         raise RuntimeError("SENPAI_ROLE must be advisor or student")
@@ -357,41 +443,147 @@ def resolve_config(
         ) from error
     if timeout_seconds <= 0:
         raise RuntimeError("SENPAI_OPENHANDS_TIMEOUT_SECONDS must be positive")
+
     model = env_value(args.model, env, "SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL)
     if not model:
         model = DEFAULT_MODEL
-    smart_model = env.get("SENPAI_OPENHANDS_SMART_MODEL") or (
-        env.get("SENPAI_OPENHANDS_MODEL") if args.child else model
-    )
-    if not smart_model:
-        smart_model = DEFAULT_MODEL
-    fast_model = env.get("SENPAI_OPENHANDS_FAST_MODEL") or (
-        DEFAULT_FAST_MODEL
-        if smart_model.partition("/")[0].lower() == "anthropic"
-        else smart_model
-    )
-    return RunnerConfig(
-        max_turns=args.max_turns,
-        model=model,
-        api_key_env=api_key_env,
-        api_key=resolve_api_key(env, api_key_env),
-        github_repo=github_repo(env),
-        github_token=github_token(env, required=not args.child),
-        github_trusted_actor=env.get("SENPAI_GITHUB_ACTOR"),
-        command_secrets=command_secrets(env),
-        reasoning_effort=env_value(
+    reasoning_effort = (
+        env_value(
             args.reasoning_effort,
             env,
             "SENPAI_OPENHANDS_REASONING_EFFORT",
             DEFAULT_REASONING_EFFORT,
         )
-        or DEFAULT_REASONING_EFFORT,
-        smart_model=smart_model,
-        fast_model=fast_model,
-        fast_reasoning_effort=env.get(
+        or DEFAULT_REASONING_EFFORT
+    )
+    openhands_reasoning_effort(reasoning_effort, model)
+    api_key_env = (
+        env_value(args.api_key_env, env, "SENPAI_OPENHANDS_API_KEY_ENV")
+        or infer_api_key_env(
+            model,
+            override_env="SENPAI_OPENHANDS_API_KEY_ENV",
+        )
+    )
+
+    smart_default_model = (
+        env.get("SENPAI_OPENHANDS_MODEL") if args.child else model
+    ) or DEFAULT_MODEL
+    smart_model = (
+        env_value(
+            args.smart_model,
+            env,
+            "SENPAI_OPENHANDS_SMART_MODEL",
+            smart_default_model,
+        )
+        or smart_default_model
+    )
+    smart_default_effort = (
+        env.get("SENPAI_OPENHANDS_REASONING_EFFORT") if args.child else reasoning_effort
+    ) or DEFAULT_REASONING_EFFORT
+    smart_reasoning_effort = (
+        env_value(
+            args.smart_reasoning_effort,
+            env,
+            "SENPAI_OPENHANDS_SMART_REASONING_EFFORT",
+            smart_default_effort,
+        )
+        or smart_default_effort
+    )
+    openhands_reasoning_effort(smart_reasoning_effort, smart_model)
+
+    fast_default_model = (
+        DEFAULT_FAST_MODEL
+        if model_provider(smart_model) == "anthropic"
+        else smart_model
+    )
+    fast_model = (
+        env_value(
+            args.fast_model,
+            env,
+            "SENPAI_OPENHANDS_FAST_MODEL",
+            fast_default_model,
+        )
+        or fast_default_model
+    )
+    fast_reasoning_effort = (
+        env_value(
+            args.fast_reasoning_effort,
+            env,
             "SENPAI_OPENHANDS_FAST_REASONING_EFFORT",
             DEFAULT_FAST_REASONING_EFFORT,
-        ),
+        )
+        or DEFAULT_FAST_REASONING_EFFORT
+    )
+    openhands_reasoning_effort(fast_reasoning_effort, fast_model)
+
+    frontier_model = (
+        env_value(
+            args.frontier_model,
+            env,
+            "SENPAI_OPENHANDS_FRONTIER_MODEL",
+            DEFAULT_FRONTIER_MODEL,
+        )
+        or DEFAULT_FRONTIER_MODEL
+    )
+    frontier_reasoning_effort = (
+        env_value(
+            args.frontier_reasoning_effort,
+            env,
+            "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT",
+            DEFAULT_FRONTIER_REASONING_EFFORT,
+        )
+        or DEFAULT_FRONTIER_REASONING_EFFORT
+    )
+    openhands_reasoning_effort(frontier_reasoning_effort, frontier_model)
+
+    smart_api_key_env = profile_api_key_env(
+        smart_model,
+        env,
+        "SENPAI_OPENHANDS_SMART_API_KEY_ENV",
+        inherited_model=model,
+        inherited_api_key_env=api_key_env,
+    )
+    fast_api_key_env = profile_api_key_env(
+        fast_model,
+        env,
+        "SENPAI_OPENHANDS_FAST_API_KEY_ENV",
+        inherited_model=smart_model,
+        inherited_api_key_env=smart_api_key_env,
+    )
+    frontier_api_key_env = profile_api_key_env(
+        frontier_model,
+        env,
+        "SENPAI_OPENHANDS_FRONTIER_API_KEY_ENV",
+        inherited_model=model,
+        inherited_api_key_env=api_key_env,
+    )
+    api_key = resolve_api_key(env, api_key_env)
+    smart_api_key = resolve_api_key(env, smart_api_key_env)
+    fast_api_key = resolve_api_key(env, fast_api_key_env)
+    frontier_api_key = resolve_api_key(env, frontier_api_key_env)
+
+    return RunnerConfig(
+        max_turns=args.max_turns,
+        model=model,
+        api_key_env=api_key_env,
+        api_key=api_key,
+        github_repo=github_repo(env),
+        github_token=github_token(env, required=not args.child),
+        github_trusted_actor=env.get("SENPAI_GITHUB_ACTOR"),
+        command_secrets=command_secrets(env),
+        reasoning_effort=reasoning_effort,
+        smart_model=smart_model,
+        smart_api_key_env=smart_api_key_env,
+        smart_api_key=smart_api_key,
+        smart_reasoning_effort=smart_reasoning_effort,
+        fast_model=fast_model,
+        fast_api_key_env=fast_api_key_env,
+        fast_api_key=fast_api_key,
+        fast_reasoning_effort=fast_reasoning_effort,
+        frontier_model=frontier_model,
+        frontier_api_key_env=frontier_api_key_env,
+        frontier_api_key=frontier_api_key,
+        frontier_reasoning_effort=frontier_reasoning_effort,
         workspace=workspace,
         state_dir=state_dir,
         conversation_id=(
@@ -549,6 +741,19 @@ def local_event_db_path(config: RunnerConfig) -> Path:
     return config.state_dir / f"{config.role}-events.sqlite3"
 
 
+def scrub_model_credentials(
+    environment: MutableMapping[str, str],
+    config: RunnerConfig,
+) -> None:
+    for key_env in {
+        config.api_key_env,
+        config.smart_api_key_env,
+        config.fast_api_key_env,
+        config.frontier_api_key_env,
+    }:
+        environment.pop(key_env, None)
+
+
 def build_main_tools(config: RunnerConfig) -> list[Tool]:
     """Keep native reasoning tools while replacing unsafe control boundaries."""
 
@@ -594,13 +799,19 @@ def delegation_config(config: RunnerConfig) -> DelegationConfig:
         workspace=config.workspace,
         state_dir=config.state_dir,
         smart_model=config.smart_model,
+        smart_reasoning_effort=config.smart_reasoning_effort,
+        smart_api_key_env=config.smart_api_key_env,
+        smart_api_key=config.smart_api_key.get_secret_value(),
         fast_model=config.fast_model,
-        api_key_env=config.api_key_env,
-        api_key=config.api_key.get_secret_value(),
+        fast_reasoning_effort=config.fast_reasoning_effort,
+        fast_api_key_env=config.fast_api_key_env,
+        fast_api_key=config.fast_api_key.get_secret_value(),
+        frontier_model=config.frontier_model,
+        frontier_reasoning_effort=config.frontier_reasoning_effort,
+        frontier_api_key_env=config.frontier_api_key_env,
+        frontier_api_key=config.frontier_api_key.get_secret_value(),
         github_repo=config.github_repo,
         github_trusted_actor=config.github_trusted_actor,
-        smart_reasoning_effort=config.reasoning_effort,
-        fast_reasoning_effort=config.fast_reasoning_effort,
         role_file=config.role_file,
         harness_file=config.harness_file,
         plugin_dir=config.plugin_dir,
@@ -708,6 +919,7 @@ def final_agent_result(conversation: object) -> str:
 
 
 def run_openhands(prompt: str, config: RunnerConfig) -> int:
+    scrub_model_credentials(os.environ, config)
     harness_instructions = read_role_instructions(config.harness_file)
     role_instructions = read_role_instructions(config.role_file)
     register_default_tools(enable_browser=config.enable_browser)
@@ -728,7 +940,11 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "role": config.role,
                 "model": config.model,
                 "smart_model": config.smart_model,
+                "smart_reasoning_effort": config.smart_reasoning_effort,
                 "fast_model": config.fast_model,
+                "fast_reasoning_effort": config.fast_reasoning_effort,
+                "frontier_model": config.frontier_model,
+                "frontier_reasoning_effort": config.frontier_reasoning_effort,
                 "prompt_cache": (
                     prompt_cache_configuration(config.model)
                     or {"provider_default": True}
@@ -778,11 +994,16 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         )
         if config.agent_name:
             definition = find_named_agent(config.agent_name, file_agents)
+            agent = agent_definition_to_factory(
+                definition,
+                work_dir=config.workspace,
+            )(llm)
+            openhands_reasoning_effort(
+                agent.llm.reasoning_effort,
+                agent.llm.model,
+            )
             agent = with_role_and_project_context(
-                agent_definition_to_factory(
-                    definition,
-                    work_dir=config.workspace,
-                )(llm),
+                agent,
                 harness_instructions,
                 role_instructions,
                 project_skills,

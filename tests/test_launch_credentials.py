@@ -34,6 +34,16 @@ def capture_request(monkeypatch, payload):
     return captured
 
 
+def test_openai_preflight_authenticates_against_the_models_endpoint(monkeypatch):
+    captured = capture_request(monkeypatch, {"data": []})
+
+    launch_helpers.preflight_check_openai_api_key("openai-secret")
+
+    request = captured["request"]
+    assert request.full_url == "https://api.openai.com/v1/models"
+    assert request.headers["Authorization"] == "Bearer openai-secret"
+
+
 def test_exa_preflight_runs_one_instant_publication_search(monkeypatch):
     captured = capture_request(
         monkeypatch,

@@ -8,7 +8,7 @@ description: |
   <example>Find the current API behavior in official documentation.</example>
   <example>Survey publications on conservative neural operators for CFD.</example>
 model: inherit
-reasoning_effort: xhigh
+reasoning_effort: inherit
 permission_mode: never_confirm
 tools:
   - terminal

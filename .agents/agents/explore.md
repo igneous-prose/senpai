@@ -8,7 +8,7 @@ description: |
   <example>Trace how training configuration reaches the optimizer and cite every relevant file.</example>
   <example>Search the durable conversation log for the decision about batch size.</example>
 model: inherit
-reasoning_effort: low
+reasoning_effort: inherit
 permission_mode: never_confirm
 tools:
   - terminal

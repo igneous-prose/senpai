@@ -44,7 +44,10 @@ only when its named tool is present in your schema:
   searches, command execution, narrow extraction, and straightforward
   inspection. Select `model=smart` for code review, ambiguous synthesis,
   literature research, subtle failure diagnosis, or decisions where missing a
-  subtlety is costly.
+  subtlety is costly. Select `model=frontier` with `agent=general-purpose` for
+  the most demanding broad research, analysis, planning, or implementation
+  work. The general-purpose child can inspect and edit code, run commands, use
+  task tracking, and delegate bounded foreground tasks.
 - When `delegate_agent` is present, use `agent=explore` to inspect code, data,
   PR artifacts, or conversation history. Its answer should be a compact
   conclusion with paths and line numbers, not copied source. Use `agent=search`

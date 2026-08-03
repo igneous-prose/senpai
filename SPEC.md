@@ -333,7 +333,7 @@ mutation is resolved by reading and verifying desired state before any retry.
 delegate_agent(
   task: str,
   agent: general-purpose | explore | search | bash-runner = general-purpose,
-  model: smart | fast = smart,
+  model: fast | smart | frontier = smart,
   background: bool = false,
   include_context: bool = false,
   search_mode: general-web | research-publications | null = null,
@@ -352,23 +352,30 @@ children at eight.
 deadline is imposed by default; parent conversation and controller supervision
 still provide interruption and process recovery boundaries.
 
-`model=fast` selects `SENPAI_OPENHANDS_FAST_MODEL` (default
-`anthropic/claude-haiku-4-5` for the default Anthropic stack) for mechanical
-search, command execution, and extraction. Without an explicit fast model, a
-non-Anthropic stack uses its smart model rather than sending that provider's
-API key elsewhere. `model=smart` selects the main configured model for review,
-literature research, subtle synthesis, or ambiguous failure diagnosis. The
-file-defined agent may override reasoning effort independently.
+Each tier selects one explicit model-and-effort profile. `model=fast` defaults
+to `anthropic/claude-haiku-4-5` at `low` for mechanical search, command
+execution, and extraction. `model=smart` defaults to
+`anthropic/claude-opus-4-8` at `xhigh` for ordinary review, literature
+research, synthesis, and failure diagnosis. `model=frontier` defaults to
+`openai/gpt-5.6-sol` at `max` for the hardest quality-first work. The provider
+prefix determines the required credential (`ANTHROPIC_API_KEY` or
+`OPENAI_API_KEY`); model-facing calls never select credential names.
+
+Reasoning effort is validated against the selected model and passed through
+unchanged. Invalid combinations fail clearly rather than being clamped or
+translated. The built-in file agents inherit the selected profile's effort.
 
 `explore` searches code, data, PR artifacts, and durable history and returns
 concise conclusions with paths and line numbers. `search` requires exactly one
 mode: `general-web` uses Exa's general index with agent-oriented defaults,
 while `research-publications` uses Exa's publication index and primary papers.
-`general-purpose` handles mixed investigation, editing, tests, and typed Senpai
-operations. `bash-runner` has only the terminal and runs tests, builds, linters,
-formatters, dependency commands, Git inspection, or system checks. It normally
-uses the fast model and returns counts and actionable failures rather than raw
-command output.
+`general-purpose` handles mixed terminal investigation, code editing, task
+tracking, tests, and nested delegation. It is the default frontier agent, so a
+frontier call is generalist unless the caller deliberately selects `explore`,
+`search`, or `bash-runner`. `bash-runner` has only the terminal and runs tests,
+builds, linters, formatters, dependency commands, Git inspection, or system
+checks. It normally uses the fast model and returns counts and actionable
+failures rather than raw command output.
 
 With `include_context=false`, the child receives the merged system prompt and
 task and may search the parent's durable history path. With

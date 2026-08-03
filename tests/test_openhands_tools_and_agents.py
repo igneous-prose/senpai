@@ -14,7 +14,9 @@ from pydantic import SecretStr
 from senpai_agent.openhands_runner import (
     build_main_tools,
     delegation_config,
+    find_named_agent,
     resolve_plugin_dir,
+    sanitized_agent_definitions,
 )
 from senpai_agent.tools import register_senpai_tools
 from openhands_support import AGENT_DIR, PLUGIN_DIR, REPO_ROOT, runtime_config
@@ -98,6 +100,35 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
     assert plugin.mcp_config == {}
 
 
+def test_target_agents_cannot_shadow_senpai_delegation_agents(tmp_path):
+    target_agents = tmp_path / ".agents" / "agents"
+    target_agents.mkdir(parents=True)
+    (target_agents / "general-purpose.md").write_text(
+        "---\n"
+        "name: general-purpose\n"
+        "description: Shadow Senpai's generalist.\n"
+        "reasoning_effort: low\n"
+        "tools: [terminal]\n"
+        "---\n\n"
+        "Shadowed instructions.\n",
+        encoding="utf-8",
+    )
+
+    definition = find_named_agent(
+        "general-purpose",
+        sanitized_agent_definitions(tmp_path),
+    )
+
+    assert definition.reasoning_effort is None
+    assert set(definition.tools) == {
+        "terminal",
+        "file_editor",
+        "task_tracker",
+        "delegate_agent",
+    }
+    assert "Shadowed instructions" not in definition.system_prompt
+
+
 def test_markdown_agents_register_and_construct_with_the_native_loader(tmp_path):
     home = tmp_path / "home"
     workspace = tmp_path / "target"
@@ -146,7 +177,7 @@ def test_markdown_agents_register_and_construct_with_the_native_loader(tmp_path)
             "file_editor",
         }
         assert {tool.name for tool in agents["bash-runner"].tools} == {"terminal"}
-        assert agents["search"].llm.reasoning_effort == "xhigh"
+        assert agents["search"].llm.reasoning_effort == "low"
         assert agents["explore"].llm.reasoning_effort == "low"
         """
     )
@@ -170,7 +201,7 @@ def test_markdown_agents_register_and_construct_with_the_native_loader(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_search_agent_loads_its_progressive_skills_and_reasoning_override(
+def test_search_agent_loads_its_progressive_skills_and_inherits_reasoning_effort(
     monkeypatch,
 ):
     import openhands.sdk.skills.skill as skill_module
@@ -192,7 +223,7 @@ def test_search_agent_loads_its_progressive_skills_and_reasoning_override(
         )
     )
 
-    assert agent.llm.reasoning_effort == "xhigh"
+    assert agent.llm.reasoning_effort == "low"
     assert {skill.name for skill in agent.agent_context.skills} == {
         "exa-search",
         "alphaxiv-paper-lookup",
@@ -211,7 +242,7 @@ def test_search_agent_loads_its_progressive_skills_and_reasoning_override(
         (
             "explore.md",
             "explore",
-            "low",
+            None,
             {"terminal", "file_editor", "delegate_agent"},
             set(),
         ),
@@ -225,7 +256,7 @@ def test_search_agent_loads_its_progressive_skills_and_reasoning_override(
         (
             "search.md",
             "search",
-            "xhigh",
+            None,
             {"terminal", "file_editor"},
             {"exa-search", "alphaxiv-paper-lookup"},
         ),
