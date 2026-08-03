@@ -246,7 +246,8 @@ explicit on every request.
 Senpai sets `reasoning_context="all_turns"` and `reasoning_summary="auto"` so
 supported models can reuse server-side private reasoning and return the most
 detailed available summary. The default main effort is `xhigh`; GPT-5.6 also
-accepts `max` and `ultra`. Automatic OpenAI compaction starts at
+accepts `max` and the `ultra` profile, which uses API `max` effort with
+Responses `reasoning.mode: pro`. Automatic OpenAI compaction starts at
 200,000 rendered tokens. The OpenHands condenser is disabled for that provider
 chain, but its complete local event log remains durable and is used to recover
 the latest response ID after restart.
@@ -357,7 +358,8 @@ Each tier selects one explicit model-and-effort profile. `model=fast` defaults
 to `openai/gpt-5.6-luna` at `high` for mechanical search, command execution,
 and extraction. `model=smart` defaults to `openai/gpt-5.6-sol` at `xhigh` for
 ordinary review, literature research, synthesis, and failure diagnosis.
-`model=frontier` defaults to `openai/gpt-5.6-sol` at `ultra` for the hardest
+`model=frontier` defaults to `openai/gpt-5.6-sol` at the `ultra` profile
+(`max` effort with Responses `reasoning.mode: pro`) for the hardest
 quality-first work. The provider prefix determines the required credential
 (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`); model-facing calls never select
 credential names.

@@ -13,6 +13,7 @@ from senpai_agent.openhands_runner import (
     anthropic_compaction_configuration,
     conversation_prompt_cache_key,
     event_summary,
+    model_runtime_configuration,
     openai_responses_configuration,
     openhands_reasoning_effort,
     parse_runner_args,
@@ -81,7 +82,7 @@ def test_openhands_fork_main_is_consistent_across_install_paths():
 @pytest.mark.parametrize(
     ("effort", "model", "expected"),
     [
-        ("ultra", "openai/gpt-5.6-sol", "ultra"),
+        ("ultra", "openai/gpt-5.6-sol", "max"),
         ("max", "openai/gpt-5.6-sol", "max"),
         ("high", "openai/gpt-5.6", "high"),
         ("xhigh", "anthropic/claude-opus-4-8", "xhigh"),
@@ -156,7 +157,7 @@ def test_openai_response_configuration_is_accepted_by_the_pinned_sdk():
     llm = LLM(
         model="openai/gpt-5.6-sol",
         api_key=SecretStr("test-key"),
-        reasoning_effort="ultra",
+        reasoning_effort="max",
         **configuration,
     )
 
@@ -169,11 +170,79 @@ def test_openai_response_configuration_is_accepted_by_the_pinned_sdk():
         "responses_compact_threshold": 200_000,
     }
     assert llm.uses_responses_api() is True
-    assert llm.reasoning_effort == "ultra"
+    assert llm.reasoning_effort == "max"
     assert llm.responses_store is True
     assert llm.responses_use_previous_response_id is True
     assert llm.responses_compact_threshold == 200_000
     assert openai_responses_configuration("anthropic/claude-opus-4-8") == {}
+
+
+def test_ultra_uses_openai_max_effort_in_pro_mode():
+    configuration = model_runtime_configuration(
+        "openai/gpt-5.6-sol",
+        "ultra",
+    )
+    llm = LLM(
+        model="openai/gpt-5.6-sol",
+        api_key=SecretStr("test-key"),
+        reasoning_effort=openhands_reasoning_effort(
+            "ultra",
+            "openai/gpt-5.6-sol",
+        ),
+        **configuration,
+    )
+    _instructions, _inputs, _tools, call_kwargs, _telemetry = (
+        llm._prepare_responses_params(
+            [Message(role="user", content=[TextContent(text="Investigate")])],
+            tools=None,
+            include=None,
+            store=None,
+            add_security_risk_prediction=False,
+            kwargs={},
+        )
+    )
+
+    assert llm.reasoning_effort == "max"
+    assert call_kwargs["reasoning"] == {
+        "effort": "max",
+        "summary": "auto",
+        "context": "all_turns",
+    }
+    assert call_kwargs["extra_body"] == {
+        "prompt_cache_options": {"mode": "explicit", "ttl": "30m"},
+        "reasoning": {
+            "effort": "max",
+            "mode": "pro",
+            "summary": "auto",
+            "context": "all_turns",
+        },
+    }
+    wire_request = {
+        key: value for key, value in call_kwargs.items() if key != "extra_body"
+    }
+    wire_request.update(call_kwargs["extra_body"])
+    assert wire_request["reasoning"] == {
+        "effort": "max",
+        "mode": "pro",
+        "summary": "auto",
+        "context": "all_turns",
+    }
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("openai/gpt-5.6-sol", "max"),
+        ("anthropic/claude-fable-5", "max"),
+    ],
+)
+def test_pro_mode_is_only_enabled_by_the_openai_ultra_profile(model, effort):
+    extra_body = model_runtime_configuration(model, effort).get(
+        "litellm_extra_body",
+        {},
+    )
+
+    assert "reasoning" not in extra_body
 
 
 def test_anthropic_compaction_configuration_is_accepted_by_the_pinned_sdk():

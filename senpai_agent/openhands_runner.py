@@ -204,7 +204,7 @@ def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
             f"{model!r}; "
             "use an openai/gpt-5.6 model or select a lower effort"
         )
-    return reasoning_effort
+    return "max" if reasoning_effort == "ultra" else reasoning_effort
 
 
 def model_provider(model: str) -> str:
@@ -726,10 +726,13 @@ def conversation_prompt_cache_key(config: RunnerConfig) -> str | None:
     return f"senpai:{config.role}:{agent_kind}"
 
 
-def openai_responses_configuration(model: str) -> dict[str, str | bool | int]:
+def openai_responses_configuration(
+    model: str,
+    reasoning_effort: str | None = None,
+) -> dict[str, object]:
     if model.split("/", 1)[0].lower() != "openai":
         return {}
-    return {
+    configuration: dict[str, object] = {
         "api_mode": "responses",
         # OpenAI defines "auto" as the most detailed summarizer available.
         "reasoning_summary": "auto",
@@ -738,6 +741,39 @@ def openai_responses_configuration(model: str) -> dict[str, str | bool | int]:
         "responses_use_previous_response_id": True,
         "responses_compact_threshold": 200_000,
     }
+    if reasoning_effort == "ultra":
+        openhands_reasoning_effort(reasoning_effort, model)
+        configuration["litellm_extra_body"] = {
+            "reasoning": {
+                "effort": "max",
+                "mode": "pro",
+                "summary": "auto",
+                "context": "all_turns",
+            }
+        }
+    return configuration
+
+
+def model_runtime_configuration(
+    model: str,
+    reasoning_effort: str,
+) -> dict[str, object]:
+    """Merge provider options, including nested LiteLLM request fields."""
+    configuration: dict[str, object] = {}
+    extra_body: dict[str, object] = {}
+    for options in (
+        prompt_cache_configuration(model),
+        openai_responses_configuration(model, reasoning_effort),
+        anthropic_compaction_configuration(model),
+    ):
+        for key, value in options.items():
+            if key == "litellm_extra_body":
+                extra_body.update(value)
+            else:
+                configuration[key] = value
+    if extra_body:
+        configuration["litellm_extra_body"] = extra_body
+    return configuration
 
 
 def anthropic_compaction_configuration(model: str) -> dict[str, int]:
@@ -962,6 +998,9 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 "openhands_reasoning_effort": openhands_reasoning_effort(
                     config.reasoning_effort, config.model
                 ),
+                "reasoning_mode": (
+                    "pro" if config.reasoning_effort == "ultra" else "standard"
+                ),
                 "agent": config.agent_name,
                 "enable_browser": config.enable_browser,
                 "role_file": str(config.role_file) if config.role_file else None,
@@ -997,9 +1036,10 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 config.reasoning_effort, config.model
             ),
             usage_id="senpai",
-            **prompt_cache_configuration(config.model),
-            **openai_responses_configuration(config.model),
-            **anthropic_compaction_configuration(config.model),
+            **model_runtime_configuration(
+                config.model,
+                config.reasoning_effort,
+            ),
         )
         if config.agent_name:
             definition = find_named_agent(config.agent_name, file_agents)

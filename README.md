@@ -240,7 +240,8 @@ Worker and container restarts preserve completed OpenHands events. Recovered liv
 | [Bash Runner](.agents/agents/bash-runner.md) | Tests, builds, linters, dependency commands, Git inspection, and noisy CLI work. It returns counts and actionable failures rather than raw logs. | `fast`. |
 
 The model tier is independent of the agent specialization. With the default
-`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at `ultra` effort
+`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at the `ultra`
+profile, sent to the Responses API as `max` effort with `reasoning.mode: pro`
 with the general-purpose terminal and code-editing toolset. Pair `frontier`
 with `agent=search` when the hard task is external or publication research.
 
