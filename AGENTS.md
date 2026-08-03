@@ -37,8 +37,8 @@ to README.md or SPEC.md as appropriate.
 - `$PROBLEM_DIR/instructions/prompt-advisor.md` - target-specific advisor prompt.
 - `$PROBLEM_DIR/instructions/prompt-student.md` - target-specific student prompt.
 - `system_instructions/SENPAI-HARNESS.md` - shared OpenHands harness contract.
-- `system_instructions/SENPAI-ADVISOR.md` - advisor role workflow.
-- `system_instructions/SENPAI-STUDENT.md` - student role workflow.
+- `system_instructions/ADVISOR.md` - advisor role workflow.
+- `system_instructions/STUDENT.md` - student role workflow.
 
 ## Architecture
 
@@ -67,8 +67,8 @@ The OpenHands base prompt is extended with a stable merged suffix from the
 shared harness file and one rendered role file:
 
 - `system_instructions/SENPAI-HARNESS.md`
-- `system_instructions/SENPAI-ADVISOR.md` or
-  `system_instructions/SENPAI-STUDENT.md`
+- `system_instructions/ADVISOR.md` or
+  `system_instructions/STUDENT.md`
 
 Target `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded through
 OpenHands project context and progressive disclosure. The checked-in root

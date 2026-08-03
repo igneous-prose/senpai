@@ -24,9 +24,9 @@ if [ -z "${GITHUB_TOKEN:-}" ] && [ -n "${SENPAI_GITHUB_TOKEN_FILE:-}" ]; then
 fi
 : "${GITHUB_TOKEN:?GitHub bootstrap token is required}"
 export SENPAI_OPENHANDS_STATE_DIR="$LOGDIR/openhands_state"
-export SENPAI_OPENHANDS_ROLE_FILE="$LOGDIR/SENPAI-ADVISOR.md"
+export SENPAI_OPENHANDS_ROLE_FILE="$LOGDIR/ADVISOR.md"
 envsubst '$PROBLEM_DIR $TARGET_REPO_URL $GH_REPO $ADVISOR_BRANCH $RESEARCH_TAG $GPUS_PER_STUDENT $WANDB_ENTITY $WANDB_PROJECT' \
-    < "$WORKDIR/system_instructions/SENPAI-ADVISOR.md" \
+    < "$WORKDIR/system_instructions/ADVISOR.md" \
     > "$SENPAI_OPENHANDS_ROLE_FILE"
 
 echo "=== Senpai Advisor ==="

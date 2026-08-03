@@ -29,7 +29,7 @@ def test_browser_is_enabled_by_default_and_can_be_disabled():
 
 
 def test_explicit_role_file_is_loaded(tmp_path: Path):
-    role_file = tmp_path / "SENPAI-STUDENT.md"
+    role_file = tmp_path / "STUDENT.md"
     role_file.write_text(HTML_HEADER + "student role", encoding="utf-8")
 
     selected = find_role_file(str(role_file))
@@ -59,7 +59,7 @@ def test_main_agent_context_places_harness_and_role_before_project_skills():
 
 
 def test_student_charter_requires_typed_tools_for_every_training_operation():
-    instructions = (ROOT / "system_instructions" / "SENPAI-STUDENT.md").read_text()
+    instructions = (ROOT / "system_instructions" / "STUDENT.md").read_text()
 
     assert "must use `run_training`" in instructions
     assert "Never launch training through the terminal" in instructions

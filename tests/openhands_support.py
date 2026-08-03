@@ -13,7 +13,7 @@ AGENT_DIR = REPO_ROOT / ".agents" / "agents"
 def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
     harness_file = tmp_path / "SENPAI-HARNESS.md"
     harness_file.write_text("harness instructions", encoding="utf-8")
-    role_file = tmp_path / "SENPAI-ADVISOR.md"
+    role_file = tmp_path / "ADVISOR.md"
     role_file.write_text("advisor role", encoding="utf-8")
     values = {
         "max_turns": 1,

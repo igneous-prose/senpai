@@ -334,7 +334,7 @@ Deep references:
 - [SPEC.md](SPEC.md): canonical runtime, persistence, safety, and acceptance contract.
 - [OpenHands plugin](plugins/senpai/README.md): skills and lifecycle hooks.
 - [Harness instructions](system_instructions/SENPAI-HARNESS.md): shared agent/tool contract.
-- [Advisor instructions](system_instructions/SENPAI-ADVISOR.md) and [student instructions](system_instructions/SENPAI-STUDENT.md): role workflows.
+- [Advisor instructions](system_instructions/ADVISOR.md) and [student instructions](system_instructions/STUDENT.md): role workflows.
 - [OpenHands fork modifications](https://github.com/morganmcg1/software-agent-sdk/blob/main/FORK_MODS.md): provider continuation, compaction, reasoning, and cache changes.
 - [Contributing](CONTRIBUTING.md): development and CLA requirements.
 - [W&B dashboard](https://wandb.ai/wandb-applied-ai-team/senpai-v1): the default project's experiment record.

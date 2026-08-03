@@ -61,7 +61,7 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "github_trusted_actor": None,
         "smart_reasoning_effort": "xhigh",
         "fast_reasoning_effort": "low",
-        "role_file": tmp_path / "SENPAI-ADVISOR.md",
+        "role_file": tmp_path / "ADVISOR.md",
         "harness_file": tmp_path / "SENPAI-HARNESS.md",
         "plugin_dir": tmp_path / "plugin",
         "enable_browser": True,
