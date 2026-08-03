@@ -25,7 +25,6 @@ Read the current baseline and `program.md`, then write one complete assignment:
 Fetch the advisor branch and record its exact remote SHA. Call
 `github_transition` with `operation="create_assignment"` and:
 
-- `repo`: `$GH_REPO`;
 - stable `assignment_id` and initial `revision_id`;
 - `student`;
 - `base_branch`: `$ADVISOR_BRANCH`;

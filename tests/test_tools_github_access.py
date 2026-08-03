@@ -43,7 +43,6 @@ ADVISOR_TRANSITIONS = [
     pytest.param(
         CreateAssignmentTransition(
             operation="create_assignment",
-            repo="acme/widgets",
             assignment_id="assignment-17",
             revision_id="revision-1",
             student="student-one",
@@ -102,7 +101,6 @@ ADVISOR_TRANSITIONS = [
             operation="close_experiment",
             pr_number=17,
             expected_head_sha="a" * 40,
-            repo="acme/widgets",
             assignment_id="assignment-17",
             reason="The hypothesis was falsified.",
         ),

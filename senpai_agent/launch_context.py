@@ -7,6 +7,8 @@
 import re
 from pathlib import Path
 
+from senpai_agent.agent_markdown import read_agent_markdown, strip_spdx_header
+
 INSTRUCTIONS_ROOT = Path(__file__).resolve().parent.parent / "system_instructions"
 RUNTIME_TEMPLATE = INSTRUCTIONS_ROOT / "SENPAI-LAUNCH-RUNTIME.md"
 ISOLATION_TEMPLATE = INSTRUCTIONS_ROOT / "SENPAI-LAUNCH-ISOLATION.md"
@@ -15,7 +17,7 @@ PLACEHOLDER = re.compile(r"{{([A-Z_]+)}}")
 
 
 def _render(path: Path, values: dict[str, str]) -> str:
-    template = path.read_text()
+    template = read_agent_markdown(path)
     missing = sorted(set(PLACEHOLDER.findall(template)) - values.keys())
     if missing:
         raise ValueError(f"Missing {path.name} values: {', '.join(missing)}")
@@ -60,6 +62,10 @@ def render_launch_context(
     ]
     if extra_instructions:
         path = Path(extra_instructions)
-        text = path.read_text() if path.exists() else extra_instructions
+        text = (
+            read_agent_markdown(path)
+            if path.exists()
+            else strip_spdx_header(extra_instructions)
+        )
         sections.append(_render(OPERATOR_TEMPLATE, {"EXTRA_INSTRUCTIONS": text}))
     return "\n\n".join(sections)

@@ -11,8 +11,13 @@ from senpai_agent.openhands_runner import (
     parse_runner_args,
     read_role_instructions,
     resolve_config,
+    sanitized_agent_definitions,
+    sanitized_project_skills,
 )
 from openhands_support import runtime_env
+from test_agent_markdown import HTML_HEADER, PLAIN_HEADER
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_browser_is_enabled_by_default_and_can_be_disabled():
@@ -25,7 +30,7 @@ def test_browser_is_enabled_by_default_and_can_be_disabled():
 
 def test_explicit_role_file_is_loaded(tmp_path: Path):
     role_file = tmp_path / "SENPAI-STUDENT.md"
-    role_file.write_text("student role", encoding="utf-8")
+    role_file.write_text(HTML_HEADER + "student role", encoding="utf-8")
 
     selected = find_role_file(str(role_file))
 
@@ -50,7 +55,42 @@ def test_main_agent_context_places_harness_and_role_before_project_skills():
     )
     assert context.current_datetime is None
     assert context.load_user_skills is True
-    assert context.load_project_skills is True
+    assert context.load_project_skills is False
+
+
+def test_student_charter_requires_typed_tools_for_every_training_operation():
+    instructions = (ROOT / "system_instructions" / "SENPAI-STUDENT.md").read_text()
+
+    assert "must use `run_training`" in instructions
+    assert "Never launch training through the terminal" in instructions
+    assert "`monitor_training`" in instructions
+    assert "`get_training_status`" in instructions
+    assert "`cancel_training`" in instructions
+
+
+def test_project_instructions_and_file_agents_are_sanitized_without_mutation(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "target"
+    agents = workspace / ".agents" / "agents"
+    agents.mkdir(parents=True)
+    instructions = workspace / "AGENTS.md"
+    definition = agents / "review.md"
+    instructions.write_text(HTML_HEADER + "# Project rules\n", encoding="utf-8")
+    definition.write_text(
+        "---\nname: review\ndescription: Review code.\n---\n\n"
+        + PLAIN_HEADER
+        + "Review carefully.\n",
+        encoding="utf-8",
+    )
+
+    skills = sanitized_project_skills(workspace)
+    definitions = sanitized_agent_definitions(workspace)
+
+    assert "SPDX-" not in next(skill.content for skill in skills if skill.name == "agents")
+    assert "SPDX-" not in next(item.system_prompt for item in definitions if item.name == "review")
+    assert instructions.read_text(encoding="utf-8").startswith("<!--\nSPDX-")
+    assert "# SPDX-" in definition.read_text(encoding="utf-8")
 
 
 def test_resolved_config_separates_runtime_credentials_from_command_secrets(

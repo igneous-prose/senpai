@@ -1,4 +1,5 @@
 import time
+from base64 import b64encode
 from pathlib import Path
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from senpai_agent.controller import Controller, TurnResult, _full_prompt
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.state import ConversationStateLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
+from test_agent_markdown import HTML_HEADER
 
 
 CONVERSATION_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -68,9 +70,9 @@ def test_first_turn_combines_programme_role_template_and_runtime_identity(
     workspace = tmp_path / "target"
     instructions = workspace / "instructions"
     instructions.mkdir(parents=True)
-    (workspace / "program.md").write_text("Minimize test error.")
+    (workspace / "program.md").write_text(HTML_HEADER + "Minimize test error.")
     (instructions / "prompt-student.md").write_text(
-        "Work as $STUDENT_NAME on $ADVISOR_BRANCH."
+        HTML_HEADER + "Work as $STUDENT_NAME on $ADVISOR_BRANCH."
     )
 
     prompt = _full_prompt(
@@ -82,12 +84,17 @@ def test_first_turn_combines_programme_role_template_and_runtime_identity(
             "WANDB_ENTITY": "acme",
             "WANDB_PROJECT": "cfd",
             "STUDENT_NAME": "fern",
+            "EXTRA_INSTRUCTIONS_B64": b64encode(
+                (HTML_HEADER + "Use typed tools.").encode()
+            ).decode(),
         },
     )
 
     assert "# Research programme\n\nMinimize test error." in prompt
     assert "# Student task\n\nWork as fern on research." in prompt
+    assert "# Additional launch instructions\n\nUse typed tools." in prompt
     assert "Role: student; repository: acme/widgets" in prompt
+    assert "SPDX-" not in prompt
 
 
 def test_empty_mailbox_does_not_start_a_model_turn():

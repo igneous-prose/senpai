@@ -50,11 +50,12 @@ from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.event import ActionEvent, MessageEvent
 from openhands.sdk.llm import TextContent
 from openhands.sdk.plugin import PluginSource
+from openhands.sdk.skills import Skill, load_project_skills
 from openhands.sdk.subagent import (
     AgentDefinition,
     agent_definition_to_factory,
     discover_agents,
-    register_file_agents,
+    register_agent_if_absent,
 )
 from openhands.tools.preset.default import (
     get_default_condenser,
@@ -65,6 +66,7 @@ from pydantic import SecretStr
 from simple_parsing import ArgumentParser, field
 from simple_parsing.helpers import flag
 
+from senpai_agent.agent_markdown import read_agent_markdown, strip_spdx_header
 from senpai_agent.tools import (
     clear_github_credentials,
     configure_github_credentials,
@@ -255,10 +257,41 @@ def find_harness_file(explicit: str | None = None) -> Path:
 
 
 def read_role_instructions(path: Path) -> str:
-    instructions = path.read_text(encoding="utf-8").strip()
+    instructions = read_agent_markdown(path).strip()
     if not instructions:
         raise RuntimeError(f"OpenHands role file is empty: {path}")
     return instructions
+
+
+def sanitized_project_skills(workspace: Path) -> list[Skill]:
+    """Load project instructions without exposing their SPDX boilerplate."""
+
+    return [
+        skill.model_copy(update={"content": strip_spdx_header(skill.content)})
+        for skill in load_project_skills(workspace)
+    ]
+
+
+def sanitized_agent_definitions(workspace: Path) -> list[AgentDefinition]:
+    """Discover file agents with clean model-visible Markdown bodies."""
+
+    return [
+        definition.model_copy(
+            update={"system_prompt": strip_spdx_header(definition.system_prompt)}
+        )
+        for definition in discover_agents(workspace)
+    ]
+
+
+def register_agent_definitions(
+    definitions: Sequence[AgentDefinition], workspace: Path
+) -> None:
+    for definition in definitions:
+        register_agent_if_absent(
+            name=definition.name,
+            factory_func=agent_definition_to_factory(definition, work_dir=workspace),
+            description=definition,
+        )
 
 
 def resolve_plugin_dir(explicit: str | None = None) -> Path:
@@ -419,8 +452,11 @@ def with_role_and_project_context(
     agent: Agent,
     harness_instructions: str,
     role_instructions: str,
+    project_skills: Sequence[Skill] = (),
 ) -> Agent:
     context = agent.agent_context or AgentContext()
+    skills = {skill.name: skill for skill in context.skills}
+    skills.update({skill.name: skill for skill in project_skills})
     role_suffix = compose_system_instructions(
         harness_instructions,
         role_instructions,
@@ -436,7 +472,8 @@ def with_role_and_project_context(
                 update={
                     "system_message_suffix": system_suffix,
                     "current_datetime": None,
-                    "load_project_skills": True,
+                    "skills": list(skills.values()),
+                    "load_project_skills": False,
                 }
             )
         }
@@ -446,8 +483,10 @@ def with_role_and_project_context(
 def build_main_agent_context(
     harness_instructions: str,
     role_instructions: str,
+    project_skills: Sequence[Skill] = (),
 ) -> AgentContext:
     return AgentContext(
+        skills=list(project_skills),
         system_message_suffix=compose_system_instructions(
             harness_instructions,
             role_instructions,
@@ -455,7 +494,7 @@ def build_main_agent_context(
         current_datetime=None,
         load_public_skills=False,
         load_user_skills=True,
-        load_project_skills=True,
+        load_project_skills=False,
     )
 
 
@@ -673,9 +712,10 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
     role_instructions = read_role_instructions(config.role_file)
     register_default_tools(enable_browser=config.enable_browser)
     register_senpai_tools()
-    file_agents = discover_agents(config.workspace)
-    register_file_agents(config.workspace)
+    file_agents = sanitized_agent_definitions(config.workspace)
+    register_agent_definitions(file_agents, config.workspace)
     available_agents = [definition.name for definition in file_agents]
+    project_skills = sanitized_project_skills(config.workspace)
     os.environ["SENPAI_CONVERSATION_ID"] = config.conversation_id.hex
 
     print(
@@ -745,6 +785,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 )(llm),
                 harness_instructions,
                 role_instructions,
+                project_skills,
             )
             agent = agent.model_copy(
                 update={"tool_concurrency_limit": MAX_PARALLEL_AGENTS}
@@ -771,6 +812,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 agent_context=build_main_agent_context(
                     harness_instructions,
                     role_instructions,
+                    project_skills,
                 ),
                 system_prompt_kwargs={"cli_mode": True},
                 condenser=condenser,

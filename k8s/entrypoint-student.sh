@@ -14,8 +14,11 @@ GH_HISTORY_SCOPE="${GH_HISTORY_SCOPE:-branch}"
 TARGET_REPO_BRANCH="${TARGET_REPO_BRANCH:-}"
 export SENPAI_ROLE="student"
 export TARGET_WORKDIR="$WORKDIR/$PROBLEM_DIR"
-export SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
+SOURCE_SENPAI_PLUGIN="$WORKDIR/plugins/senpai"
+export SENPAI_PLUGIN="$SOURCE_SENPAI_PLUGIN"
 GIT_ASKPASS_FILE="/tmp/senpai-git-askpass"
+LOGDIR="/var/lib/senpai"
+mkdir -p "$LOGDIR"
 if [ -z "${GITHUB_TOKEN:-}" ] && [ -n "${SENPAI_GITHUB_TOKEN_FILE:-}" ]; then
     export GITHUB_TOKEN="$(<"$SENPAI_GITHUB_TOKEN_FILE")"
 fi
@@ -31,7 +34,7 @@ echo "GPUs:         $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/n
 # Senpai runner repo already cloned by the deployment args block
 cd "$WORKDIR"
 git config --global safe.directory "$WORKDIR"
-source "$SENPAI_PLUGIN/scripts/git-guard.sh"
+source "$SOURCE_SENPAI_PLUGIN/scripts/git-guard.sh"
 install_senpai_git_guard "$WORKDIR" "$TARGET_WORKDIR" "$GIT_ASKPASS_FILE"
 
 clone_target_repo() {
@@ -51,6 +54,13 @@ git config --global --unset-all credential.helper 2>/dev/null || true
 
 uv pip install --python "$SENPAI_PYTHON" --no-deps -e .
 
+source "$SOURCE_SENPAI_PLUGIN/scripts/agent-context.sh"
+AGENT_CONTEXT_ROOT="$(mktemp -d /tmp/senpai-agent-context.XXXXXX)"
+export SENPAI_PLUGIN="$(
+    install_senpai_agent_context \
+        "$WORKDIR" "$SOURCE_SENPAI_PLUGIN" "$AGENT_CONTEXT_ROOT"
+)"
+
 # --- Git identity for commits (inside the problem-package repo) ---
 cd "$WORKDIR/$PROBLEM_DIR"
 git config user.name "senpai-$STUDENT_NAME"
@@ -61,11 +71,6 @@ if [ "$GH_HISTORY_SCOPE" != "repo" ]; then
     git remote set-branches origin "$ADVISOR_BRANCH"
     git config remote.origin.tagOpt --no-tags
 fi
-
-# --- Install checked-in agents and skills into OpenHands user scope ---
-mkdir -p "$HOME/.agents/skills"
-cp -a "$WORKDIR/.agents/." "$HOME/.agents/"
-cp -a "$SENPAI_PLUGIN/skills/." "$HOME/.agents/skills/"
 
 echo "=== Agent config installed ==="
 ls \
@@ -81,8 +86,6 @@ ls \
 
 export IS_SANDBOX=1
 
-LOGDIR="/var/lib/senpai"
-mkdir -p "$LOGDIR"
 export SENPAI_OPENHANDS_STATE_DIR="$LOGDIR/openhands_state"
 export SENPAI_OPENHANDS_ROLE_FILE="$LOGDIR/SENPAI-STUDENT.md"
 envsubst '$PROBLEM_DIR $TARGET_REPO_URL $GH_REPO $ADVISOR_BRANCH $RESEARCH_TAG $STUDENT_NAME $GPUS_PER_STUDENT $WANDB_ENTITY $WANDB_PROJECT' \

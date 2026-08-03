@@ -785,7 +785,6 @@ class CloseExperimentTransition(_Transition):
     operation: Literal["close_experiment"]
     pr_number: int = Field(gt=0)
     expected_head_sha: str = Field(min_length=1)
-    repo: str = Field(min_length=3)
     assignment_id: str = Field(min_length=1)
     reason: str = Field(min_length=1)
 
@@ -823,10 +822,6 @@ class PushBranchTransition(_Transition):
 
 class CreateAssignmentTransition(_Transition):
     operation: Literal["create_assignment"]
-    repo: str = Field(
-        min_length=3,
-        description="Target repository in owner/name form.",
-    )
     assignment_id: str = Field(min_length=1)
     revision_id: str = Field(min_length=1)
     student: str = Field(min_length=1)
@@ -933,7 +928,7 @@ class _GitHubTransitionExecutor(
             )
             result = self.workflow.create_assignment(
                 AssignmentRecord(
-                    repo=transition.repo,
+                    repo=self.workflow.repo,
                     assignment_id=transition.assignment_id,
                     revision_id=transition.revision_id,
                     student=transition.student,
@@ -1028,7 +1023,7 @@ class _GitHubTransitionExecutor(
                 expected_head_sha=transition.expected_head_sha,
                 marker=render_disposition_marker(
                     DispositionRecord(
-                        repo=transition.repo,
+                        repo=self.workflow.repo,
                         pr_number=transition.pr_number,
                         assignment_id=transition.assignment_id,
                         head_sha=transition.expected_head_sha,

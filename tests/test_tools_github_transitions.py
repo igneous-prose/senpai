@@ -5,6 +5,7 @@ import pytest
 from senpai_agent.git_workflow import PushResult
 from senpai_agent.github_workflow import MutationResult
 from senpai_agent.tools import (
+    CloseExperimentTransition,
     CreateAssignmentTransition,
     GitHubTransitionAction,
     GitHubTransitionTool,
@@ -34,6 +35,15 @@ class Workflow:
             resource_url=f"https://github.test/pull/{number}",
             state="experiment_merged",
             version="merge-sha",
+        )
+
+    def close_experiment(self, number, **kwargs):
+        self.calls.append(("close_experiment", number, kwargs))
+        return MutationResult(
+            changed=True,
+            resource_url=f"https://github.test/pull/{number}",
+            state="experiment_closed",
+            version=kwargs["expected_head_sha"],
         )
 
 
@@ -141,7 +151,6 @@ def test_create_assignment_uses_the_created_branch_head_for_the_pr(
         GitHubTransitionAction(
             transition=CreateAssignmentTransition(
                 operation="create_assignment",
-                repo="acme/widgets",
                 assignment_id="assignment-18",
                 revision_id="revision-1",
                 student="student-one",
@@ -169,6 +178,27 @@ def test_create_assignment_uses_the_created_branch_head_for_the_pr(
         "title": "Try a lower learning rate",
         "body": "Run one bounded comparison.",
     }
+
+
+def test_close_stamps_the_runtime_repository_without_repeated_input(tmp_path: Path):
+    workflow = Workflow()
+    tool = advisor_tool(workflow, tmp_path)
+
+    observation = tool(
+        GitHubTransitionAction(
+            transition=CloseExperimentTransition(
+                operation="close_experiment",
+                pr_number=17,
+                expected_head_sha="a" * 40,
+                assignment_id="assignment-17",
+                reason="The hypothesis was falsified.",
+            )
+        )
+    )
+
+    assert observation.state == "experiment_closed"
+    _, _, fields = workflow.calls[0]
+    assert '"repo":"acme/widgets"' in fields["marker"]
 
 
 def test_merge_forwards_explicit_acceptance_of_an_advanced_baseline(

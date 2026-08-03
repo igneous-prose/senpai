@@ -56,7 +56,8 @@ changes the baseline for the next decision. Request a specific revision when
 the student must perform a new bounded unit of work. Use
 `send_assignment_feedback` for a clarification, hold, question, or nudge that
 should remain in the current revision and conversation. Close only a clear dead
-end, with a durable reason. Never bypass a failed merge precondition.
+end, with a durable reason. The `merge-winner` skill owns both terminal merge
+and terminal close dispositions. Never bypass a failed transition precondition.
 
 Treat `baseline_advanced` as a mandatory fresh comparison, not an automatic
 rerun. If the newer baseline changes the scientific question, request the

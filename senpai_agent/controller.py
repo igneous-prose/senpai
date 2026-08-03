@@ -17,6 +17,7 @@ from string import Template
 from typing import Literal, Protocol
 from uuid import UUID
 
+from senpai_agent.agent_markdown import read_agent_markdown, strip_spdx_header
 from senpai_agent.advisor import (
     AdvisorEvent,
     AdvisorEventStore,
@@ -403,14 +404,17 @@ def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) ->
     program = workspace / "program.md"
     prompt = (
         "# Research programme\n\n"
-        f"{program.read_text(encoding='utf-8').strip()}\n\n"
+        f"{read_agent_markdown(program).strip()}\n\n"
         f"# {role.title()} task\n\n"
-        f"{Template(instructions.read_text(encoding='utf-8')).safe_substitute(env).strip()}"
+        f"{Template(read_agent_markdown(instructions)).safe_substitute(env).strip()}"
     )
     encoded_extra = env.get("EXTRA_INSTRUCTIONS_B64")
     if encoded_extra:
         extra = b64decode(encoded_extra, validate=True).decode()
-        prompt += f"\n\n# Additional launch instructions\n\n{extra.strip()}"
+        prompt += (
+            "\n\n# Additional launch instructions\n\n"
+            f"{strip_spdx_header(extra).strip()}"
+        )
     identity = (
         f"Role: {role}; repository: {env['GH_REPO']}; "
         f"advisor branch: {env['ADVISOR_BRANCH']}; "

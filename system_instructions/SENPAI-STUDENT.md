@@ -47,18 +47,18 @@ Commit the exact implementation that will run and make the worktree clean before
 launching an expensive experiment. This makes each W&B result reproducible and
 lets the controller safely suspend the conversation while the process runs.
 
-Launch training only with `run_training`, using an argv list rather than a
-shell command. Supply the exact target working directory and an appropriate
-timeout within the launch limit. `run_training` always registers terminal-state
-monitoring for this conversation. Call `monitor_training` only when you can add
-useful primary-metric direction, acceptance/regression gates, or a stale-update
-timeout; it upgrades the default policy. Then finish the turn. The deterministic
-controller polls while training runs and directly resumes this exact student
-conversation when the registered policy emits a signal. Use
-`cancel_training` when that signal or the assignment requires an early stop.
-Use `get_training_status` only for an immediate bounded check; do not kill the
-process, stream epoch logs, sleep in the terminal, or create background polling
-loops.
+Every optimization or GPU execution must use `run_training`. This includes
+smoke/debug runs and wrapper or `make` commands that train or evaluate a model.
+Pass an argv list, the exact target working directory, and a timeout within the
+launch limit. Never launch training through the terminal.
+
+`run_training` automatically registers terminal-state monitoring for this
+conversation. Call `monitor_training` only to add useful primary-metric gates or
+a stale-update timeout, then finish the turn. The deterministic controller polls
+and resumes this exact conversation when the policy emits a signal. Use
+`get_training_status` only for one immediate bounded check and `cancel_training`
+for an early stop. Do not kill the process, stream epoch logs, sleep in the
+terminal, or create background polling loops.
 
 Every real experiment must log the target-required configuration, metrics, and
 artifacts to W&B. Use groups only when the assignment calls for related arms.

@@ -85,14 +85,16 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
     plugin = Plugin.load(PLUGIN_DIR)
 
     assert plugin.manifest.name == "senpai"
-    assert {skill.name for skill in plugin.skills} == {
+    skills = {skill.name: skill for skill in plugin.skills}
+    assert set(skills) == {
         "assign-experiment",
         "bootstrap-target",
         "check-human-issues",
-        "close-experiment",
         "merge-winner",
         "submit-experiment-results",
     }
+    assert "merge_experiment" in skills["merge-winner"].content
+    assert "close_experiment" in skills["merge-winner"].content
     assert plugin.mcp_config == {}
 
 

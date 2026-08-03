@@ -64,4 +64,6 @@ def runtime_env(tmp_path: Path, *, role: str = "advisor") -> dict[str, str]:
 
 def isolate_agent_discovery(monkeypatch, runner) -> None:
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
-    monkeypatch.setattr(runner, "register_file_agents", lambda _: [])
+    monkeypatch.setattr(runner, "sanitized_agent_definitions", lambda _: [])
+    monkeypatch.setattr(runner, "register_agent_definitions", lambda *_: None)
+    monkeypatch.setattr(runner, "sanitized_project_skills", lambda _: [])

@@ -19,6 +19,9 @@ def test_default_fleet_is_four_students_with_one_gpu_each():
 @pytest.mark.parametrize("backend", ["kubernetes", "docker", "aws"])
 def test_launch_context_records_resolved_runtime_facts(backend):
     args = launch_args(
+        tag="foil-run",
+        advisor_branch="research-v2",
+        target_repo_branch="main",
         gpus_per_student=3,
         timeout_minutes=12.5,
         max_epochs=7,
@@ -27,7 +30,7 @@ def test_launch_context_records_resolved_runtime_facts(backend):
     context = launch.build_extra_instructions(
         args,
         args.tag,
-        ["fern"],
+        ["fern", "frieren"],
         backend=backend,
     )
 
@@ -39,6 +42,11 @@ def test_launch_context_records_resolved_runtime_facts(backend):
         "Hard limits for each training run: `12.5` minutes wall-clock\n"
         "  and `7` epochs"
     ) in context
+    assert "research tag `foil-run`" in context
+    assert "advisor branch `research-v2`" in context
+    assert "target base branch `main`" in context
+    assert "fern, frieren" in context
+    assert "{{" not in context
 
 
 @pytest.mark.parametrize("role", ["advisor", "student"])
