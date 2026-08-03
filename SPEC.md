@@ -101,7 +101,7 @@ batches; immediate post-turn polls drain later batches without dropping them.
 While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
 state. It enqueues all newly visible advisor events, and only PR feedback bound
 to the currently running student UUID, in the role's local event store.
-OpenHands 1.39 supports concurrent `send_message`; `AdvisorEventPump` injects at
+OpenHands 1.40 supports concurrent `send_message`; `AdvisorEventPump` injects at
 its state lock boundary without cancelling unrelated work. Successfully
 injected student feedback is acknowledged in `github-feedback.json` only when
 the enclosing student turn succeeds.
@@ -218,7 +218,7 @@ LLM or stored model profile.
 
 The pinned SDK fork is
 [`morganmcg1/software-agent-sdk`](https://github.com/morganmcg1/software-agent-sdk)
-and is based on OpenHands SDK 1.39.1. `pyproject.toml` and `uv.lock` are the
+and is based on OpenHands SDK 1.40.0. `pyproject.toml` and `uv.lock` are the
 authoritative dependency revision; CI verifies the same revision directly.
 
 `prompt_cache_configuration()` sets:
