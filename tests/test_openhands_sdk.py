@@ -81,6 +81,7 @@ def test_openhands_fork_main_is_consistent_across_install_paths():
 @pytest.mark.parametrize(
     ("effort", "model", "expected"),
     [
+        ("ultra", "openai/gpt-5.6-sol", "ultra"),
         ("max", "openai/gpt-5.6-sol", "max"),
         ("high", "openai/gpt-5.6", "high"),
         ("xhigh", "anthropic/claude-opus-4-8", "xhigh"),
@@ -103,7 +104,6 @@ def test_supported_reasoning_effort_is_preserved(
         ("max", "anthropic/claude-opus-4-8"),
         ("max", "openai/gpt-5.4"),
         ("max", "openai/gpt-5.60"),
-        ("ultra", "openai/gpt-5.6-sol"),
         ("extreme", "openai/gpt-5.6-sol"),
     ],
 )
@@ -115,9 +115,10 @@ def test_unsupported_reasoning_effort_fails_instead_of_being_rewritten(
         openhands_reasoning_effort(effort, model)
 
 
-def test_ultra_is_not_a_cli_reasoning_effort_alias():
-    with pytest.raises(SystemExit):
-        parse_runner_args(["--max-turns", "1", "--reasoning-effort", "ultra"])
+def test_ultra_is_preserved_as_a_cli_reasoning_effort():
+    args = parse_runner_args(["--max-turns", "1", "--reasoning-effort", "ultra"])
+
+    assert args.reasoning_effort == "ultra"
 
 
 @pytest.mark.parametrize(
@@ -151,11 +152,11 @@ def test_prompt_cache_configuration_is_provider_specific(model: str, expected):
 
 
 def test_openai_response_configuration_is_accepted_by_the_pinned_sdk():
-    configuration = openai_responses_configuration("openai/gpt-5.4")
+    configuration = openai_responses_configuration("openai/gpt-5.6-sol")
     llm = LLM(
-        model="openai/gpt-5.4",
+        model="openai/gpt-5.6-sol",
         api_key=SecretStr("test-key"),
-        reasoning_effort="xhigh",
+        reasoning_effort="ultra",
         **configuration,
     )
 
@@ -168,6 +169,7 @@ def test_openai_response_configuration_is_accepted_by_the_pinned_sdk():
         "responses_compact_threshold": 200_000,
     }
     assert llm.uses_responses_api() is True
+    assert llm.reasoning_effort == "ultra"
     assert llm.responses_store is True
     assert llm.responses_use_previous_response_id is True
     assert llm.responses_compact_threshold == 200_000

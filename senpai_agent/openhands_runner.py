@@ -73,13 +73,21 @@ from senpai_agent.tools import (
     register_senpai_tools,
 )
 
-DEFAULT_MODEL = "anthropic/claude-opus-4-8"
-DEFAULT_FAST_MODEL = "anthropic/claude-haiku-4-5"
+DEFAULT_MODEL = "openai/gpt-5.6-sol"
+DEFAULT_FAST_MODEL = "openai/gpt-5.6-luna"
 DEFAULT_FRONTIER_MODEL = "openai/gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "xhigh"
-DEFAULT_FAST_REASONING_EFFORT = "low"
-DEFAULT_FRONTIER_REASONING_EFFORT = "max"
-REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "none")
+DEFAULT_FAST_REASONING_EFFORT = "high"
+DEFAULT_FRONTIER_REASONING_EFFORT = "ultra"
+REASONING_EFFORTS = (
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+    "none",
+)
 SENPAI_AGENT_NAMES = ("bash-runner", "general-purpose", "explore", "search")
 SENPAI_AGENT_DIR = Path(__file__).resolve().parents[1] / ".agents" / "agents"
 PROVIDER_API_KEY_ENVS = {
@@ -187,12 +195,13 @@ def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
             f"unsupported reasoning effort {reasoning_effort!r}; "
             f"choose one of: {choices}"
         )
-    supports_max = provider == "openai" and (
+    supports_extended_effort = provider == "openai" and (
         model_name == "gpt-5.6" or model_name.startswith("gpt-5.6-")
     )
-    if reasoning_effort == "max" and not supports_max:
+    if reasoning_effort in {"max", "ultra"} and not supports_extended_effort:
         raise ValueError(
-            f"reasoning effort 'max' is unsupported for model {model!r}; "
+            f"reasoning effort {reasoning_effort!r} is unsupported for model "
+            f"{model!r}; "
             "use an openai/gpt-5.6 model or select a lower effort"
         )
     return reasoning_effort
@@ -493,7 +502,7 @@ def resolve_config(
 
     fast_default_model = (
         DEFAULT_FAST_MODEL
-        if model_provider(smart_model) == "anthropic"
+        if model_provider(smart_model) == model_provider(DEFAULT_FAST_MODEL)
         else smart_model
     )
     fast_model = (

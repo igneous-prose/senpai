@@ -82,16 +82,16 @@ class Args:
     namespace: str = "default"  # Kubernetes namespace for all launch resources
     wandb_entity: str = "wandb-applied-ai-team"  # W&B entity (team or username)
     wandb_project: str = "senpai-v1"  # W&B project name
-    advisor_model: str = "anthropic/claude-opus-4-8"
+    advisor_model: str = "openai/gpt-5.6-sol"
     advisor_reasoning_effort: str = "xhigh"
-    student_model: str = "anthropic/claude-opus-4-8"
+    student_model: str = "openai/gpt-5.6-sol"
     student_reasoning_effort: str = "xhigh"
-    smart_model: str = "anthropic/claude-opus-4-8"
+    smart_model: str = "openai/gpt-5.6-sol"
     smart_reasoning_effort: str = "xhigh"
-    fast_model: str = "anthropic/claude-haiku-4-5"
-    fast_reasoning_effort: str = "low"
+    fast_model: str = "openai/gpt-5.6-luna"
+    fast_reasoning_effort: str = "high"
     frontier_model: str = "openai/gpt-5.6-sol"
-    frontier_reasoning_effort: str = "max"
+    frontier_reasoning_effort: str = "ultra"
     human_issues: bool = (
         True  # allow human GitHub issue triage; disable for isolated launches
     )
@@ -127,7 +127,15 @@ MODEL_PROVIDERS = {
     "anthropic": ("ANTHROPIC_API_KEY", "anthropic-api-key"),
     "openai": ("OPENAI_API_KEY", "openai-api-key"),
 }
-REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max", "none"}
+REASONING_EFFORTS = {
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+    "none",
+}
 
 
 def model_provider(model: str) -> str:
@@ -185,12 +193,12 @@ def validate_model_config(args: Args) -> None:
             choices = ", ".join(sorted(REASONING_EFFORTS))
             sys.exit(f"ERROR: --{name}_reasoning_effort must be one of: {choices}")
         normalized_model = model.lower()
-        supports_max = normalized_model == "openai/gpt-5.6" or (
+        supports_extended_effort = normalized_model == "openai/gpt-5.6" or (
             normalized_model.startswith("openai/gpt-5.6-")
         )
-        if effort == "max" and not supports_max:
+        if effort in {"max", "ultra"} and not supports_extended_effort:
             sys.exit(
-                f"ERROR: --{name}_reasoning_effort=max requires an "
+                f"ERROR: --{name}_reasoning_effort={effort} requires an "
                 "openai/gpt-5.6* model"
             )
 

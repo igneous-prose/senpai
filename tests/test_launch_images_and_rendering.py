@@ -24,8 +24,18 @@ def test_default_config_exposes_every_model_profile_and_effort():
         for profile in ("advisor", "student", "smart", "fast", "frontier")
         for name in (f"{profile}_model", f"{profile}_reasoning_effort")
     } <= set(config)
-    assert config["frontier_model"] == "openai/gpt-5.6-sol"
-    assert config["frontier_reasoning_effort"] == "max"
+    assert {
+        "advisor_model": "openai/gpt-5.6-sol",
+        "advisor_reasoning_effort": "xhigh",
+        "student_model": "openai/gpt-5.6-sol",
+        "student_reasoning_effort": "xhigh",
+        "smart_model": "openai/gpt-5.6-sol",
+        "smart_reasoning_effort": "xhigh",
+        "fast_model": "openai/gpt-5.6-luna",
+        "fast_reasoning_effort": "high",
+        "frontier_model": "openai/gpt-5.6-sol",
+        "frontier_reasoning_effort": "ultra",
+    }.items() <= config.items()
 
 
 @pytest.mark.parametrize(
@@ -175,7 +185,6 @@ def test_start_gate_is_rendered_when_it_is_beneath_the_shared_pvc():
 def test_launch_secret_contains_each_credential_and_both_roles_reference_it():
     expected_values = {
         "github-token": "github",
-        "anthropic-api-key": "anthropic",
         "openai-api-key": "openai",
         "exa-api-key": "exa",
         "wandb-api-key": "wandb",
@@ -239,8 +248,14 @@ def test_role_model_configuration_preserves_the_configured_efforts():
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"advisor_reasoning_effort": "ultra"}, "must be one of"),
-        ({"advisor_reasoning_effort": "max"}, "requires an openai/gpt-5.6"),
+        ({"advisor_reasoning_effort": "extreme"}, "must be one of"),
+        (
+            {
+                "advisor_model": "anthropic/claude-opus-4-8",
+                "advisor_reasoning_effort": "ultra",
+            },
+            "requires an openai/gpt-5.6",
+        ),
         (
             {
                 "advisor_model": "openai/gpt-5.60",

@@ -109,9 +109,9 @@ def test_resolved_config_separates_runtime_credentials_from_command_secrets(
 
     config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
-    assert config.api_key.get_secret_value() == "anthropic-key"
-    assert config.smart_api_key.get_secret_value() == "anthropic-key"
-    assert config.fast_api_key.get_secret_value() == "anthropic-key"
+    assert config.api_key.get_secret_value() == "openai-key"
+    assert config.smart_api_key.get_secret_value() == "openai-key"
+    assert config.fast_api_key.get_secret_value() == "openai-key"
     assert config.frontier_api_key.get_secret_value() == "openai-key"
     assert config.github_token.get_secret_value() == "github-key"
     assert config.command_secrets == {
@@ -123,8 +123,8 @@ def test_resolved_config_separates_runtime_credentials_from_command_secrets(
     assert config.training_max_timeout_seconds == 30
 
     delegated = runner.delegation_config(config)
-    assert delegated.smart_api_key == "anthropic-key"
-    assert delegated.fast_api_key == "anthropic-key"
+    assert delegated.smart_api_key == "openai-key"
+    assert delegated.fast_api_key == "openai-key"
     assert delegated.frontier_api_key == "openai-key"
 
 
@@ -140,25 +140,25 @@ def test_default_model_profiles_are_explicit_and_provider_credentials_are_inferr
         config.model,
         config.api_key_env,
         config.reasoning_effort,
-    ) == ("anthropic/claude-opus-4-8", "ANTHROPIC_API_KEY", "xhigh")
+    ) == ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "xhigh")
     assert (
         config.smart_model,
         config.smart_api_key_env,
         config.smart_reasoning_effort,
-    ) == ("anthropic/claude-opus-4-8", "ANTHROPIC_API_KEY", "xhigh")
+    ) == ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "xhigh")
     assert (
         config.fast_model,
         config.fast_api_key_env,
         config.fast_reasoning_effort,
-    ) == ("anthropic/claude-haiku-4-5", "ANTHROPIC_API_KEY", "low")
+    ) == ("openai/gpt-5.6-luna", "OPENAI_API_KEY", "high")
     assert (
         config.frontier_model,
         config.frontier_api_key_env,
         config.frontier_reasoning_effort,
-    ) == ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "max")
+    ) == ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "ultra")
 
 
-def test_fast_model_defaults_to_the_selected_non_anthropic_provider(tmp_path: Path):
+def test_fast_model_uses_luna_for_an_openai_main_profile(tmp_path: Path):
     env = runtime_env(tmp_path)
     env.update(
         {
@@ -169,10 +169,26 @@ def test_fast_model_defaults_to_the_selected_non_anthropic_provider(tmp_path: Pa
     config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
     assert config.smart_model == "openai/gpt-5.6"
-    assert config.fast_model == "openai/gpt-5.6"
+    assert config.fast_model == "openai/gpt-5.6-luna"
     assert config.api_key_env == "OPENAI_API_KEY"
     assert config.smart_api_key_env == "OPENAI_API_KEY"
     assert config.fast_api_key_env == "OPENAI_API_KEY"
+
+
+def test_fast_model_inherits_a_non_openai_main_profile(tmp_path: Path):
+    env = runtime_env(tmp_path)
+    env.update(
+        {
+            "SENPAI_OPENHANDS_MODEL": "anthropic/claude-opus-4-8",
+        }
+    )
+
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert config.smart_model == "anthropic/claude-opus-4-8"
+    assert config.fast_model == "anthropic/claude-opus-4-8"
+    assert config.smart_api_key_env == "ANTHROPIC_API_KEY"
+    assert config.fast_api_key_env == "ANTHROPIC_API_KEY"
 
 
 def test_all_model_profiles_accept_independent_cli_model_and_effort_settings(
@@ -221,8 +237,14 @@ def test_all_model_profiles_accept_independent_cli_model_and_effort_settings(
 @pytest.mark.parametrize(
     ("updates", "message"),
     [
-        ({"SENPAI_OPENHANDS_REASONING_EFFORT": "max"}, "unsupported for"),
-        ({"SENPAI_OPENHANDS_SMART_REASONING_EFFORT": "ultra"}, "unsupported"),
+        ({"SENPAI_OPENHANDS_REASONING_EFFORT": "extreme"}, "unsupported"),
+        (
+            {
+                "SENPAI_OPENHANDS_MODEL": "anthropic/claude-opus-4-8",
+                "SENPAI_OPENHANDS_REASONING_EFFORT": "ultra",
+            },
+            "unsupported for",
+        ),
         (
             {"SENPAI_OPENHANDS_FRONTIER_MODEL": "anthropic/claude-opus-4-8"},
             "unsupported for",

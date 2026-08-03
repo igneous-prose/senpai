@@ -63,7 +63,7 @@ WANDB_API_KEY=
 |---|---|
 | `GITHUB_TOKEN` | Target-repository Contents, Pull requests, and Issues read/write. A classic token with `repo` scope also works. GitHub CLI authentication is the fallback when this value is absent. |
 | `ANTHROPIC_API_KEY` | Required when an `anthropic/...` model is configured. |
-| `OPENAI_API_KEY` | Required when an `openai/...` model is configured. The default frontier tier uses GPT-5.6 Sol. |
+| `OPENAI_API_KEY` | Required when an `openai/...` model is configured. Every default profile uses GPT-5.6. |
 | `EXA_API_KEY` | General-web and research-publication search. |
 | `WANDB_API_KEY` | Read/write access to the configured W&B entity and project. |
 
@@ -107,17 +107,17 @@ advisor_branch: senpai-research
 wandb_entity: your-team
 wandb_project: your-project
 
-advisor_model: anthropic/claude-opus-4-8
+advisor_model: openai/gpt-5.6-sol
 advisor_reasoning_effort: xhigh
-student_model: anthropic/claude-opus-4-8
+student_model: openai/gpt-5.6-sol
 student_reasoning_effort: xhigh
 
-smart_model: anthropic/claude-opus-4-8
+smart_model: openai/gpt-5.6-sol
 smart_reasoning_effort: xhigh
-fast_model: anthropic/claude-haiku-4-5
-fast_reasoning_effort: low
+fast_model: openai/gpt-5.6-luna
+fast_reasoning_effort: high
 frontier_model: openai/gpt-5.6-sol
-frontier_reasoning_effort: max
+frontier_reasoning_effort: ultra
 
 pvc_claim_name: your-existing-pvc
 pvc_mount_path: /mnt/data
@@ -240,7 +240,7 @@ Worker and container restarts preserve completed OpenHands events. Recovered liv
 | [Bash Runner](.agents/agents/bash-runner.md) | Tests, builds, linters, dependency commands, Git inspection, and noisy CLI work. It returns counts and actionable failures rather than raw logs. | `fast`. |
 
 The model tier is independent of the agent specialization. With the default
-`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at `max` effort
+`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at `ultra` effort
 with the general-purpose terminal and code-editing toolset. Pair `frontier`
 with `agent=search` when the hard task is external or publication research.
 
