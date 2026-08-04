@@ -5,15 +5,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import signal
 import stat
 import sys
-import threading
+import time
 import uuid
 from collections.abc import Iterator, Mapping, MutableMapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,7 +29,9 @@ from senpai_agent.advisor import (
 from senpai_agent.delegation import (
     MAX_PARALLEL_AGENTS,
     DelegationConfig,
+    cancel_pending_descendants,
     configure_delegation,
+    record_delegated_task_result,
 )
 from senpai_agent.secrets import (
     GITHUB_TOKEN_ENV_NAMES,
@@ -46,6 +49,7 @@ from senpai_agent.weave_monitoring import (
 WEAVE_PROJECT = initialize_weave_monitoring()
 
 from openhands.sdk import LLM, Agent, AgentContext, LocalConversation, Tool
+from openhands.sdk.agent.parallel_executor import ParallelToolExecutor
 from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.event import ActionEvent, MessageEvent
 from openhands.sdk.llm import TextContent
@@ -179,6 +183,11 @@ class RunnerConfig:
     training_max_timeout_seconds: int = 1800
     timeout_seconds: float = 3600
     child: bool = False
+    delegation_root_state_dir: Path | None = None
+    delegation_tree_id: str | None = None
+    delegation_depth: int = 0
+    delegation_deadline_epoch: float | None = None
+    delegation_task_id: str | None = None
 
 
 def parse_runner_args(argv: Sequence[str] | None = None) -> RunnerArgs:
@@ -452,6 +461,28 @@ def resolve_config(
         ) from error
     if timeout_seconds <= 0:
         raise RuntimeError("SENPAI_OPENHANDS_TIMEOUT_SECONDS must be positive")
+    delegation_root_value = env.get("SENPAI_DELEGATION_ROOT_STATE_DIR")
+    delegation_root_state_dir = (
+        Path(delegation_root_value).expanduser().resolve()
+        if delegation_root_value
+        else None
+    )
+    delegation_tree_id = env.get("SENPAI_DELEGATION_TREE_ID") or None
+    try:
+        delegation_depth = int(env.get("SENPAI_DELEGATION_DEPTH", "0"))
+    except ValueError as error:
+        raise RuntimeError("SENPAI_DELEGATION_DEPTH must be an integer") from error
+    if not 0 <= delegation_depth <= 2:
+        raise RuntimeError("SENPAI_DELEGATION_DEPTH must be between 0 and 2")
+    deadline_value = env.get("SENPAI_DELEGATION_DEADLINE_EPOCH")
+    try:
+        delegation_deadline_epoch = (
+            float(deadline_value) if deadline_value else None
+        )
+    except ValueError as error:
+        raise RuntimeError(
+            "SENPAI_DELEGATION_DEADLINE_EPOCH must be numeric"
+        ) from error
 
     model = env_value(args.model, env, "SENPAI_OPENHANDS_MODEL", DEFAULT_MODEL)
     if not model:
@@ -636,6 +667,11 @@ def resolve_config(
         training_max_timeout_seconds=training_max_timeout_seconds,
         timeout_seconds=timeout_seconds,
         child=args.child,
+        delegation_root_state_dir=delegation_root_state_dir,
+        delegation_tree_id=delegation_tree_id,
+        delegation_depth=delegation_depth,
+        delegation_deadline_epoch=delegation_deadline_epoch,
+        delegation_task_id=env.get("SENPAI_DELEGATION_TASK_ID") or None,
     )
 
 
@@ -697,6 +733,14 @@ def build_main_agent_context(
         load_user_skills=True,
         load_project_skills=False,
     )
+
+
+def with_tool_concurrency(agent: Agent, limit: int) -> Agent:
+    """Keep the serialized field and runtime executor on the same limit."""
+
+    updated = agent.model_copy(update={"tool_concurrency_limit": limit})
+    updated._parallel_executor = ParallelToolExecutor(max_workers=limit)
+    return updated
 
 
 def prompt_cache_configuration(model: str) -> dict[str, object]:
@@ -823,10 +867,14 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
             Tool(name="github_transition", params={"role": config.role}),
         )
     )
-    tools.append(
-        Tool(
-            name="delegate_agent",
-            params={"event_db_path": str(local_event_db_path(config))},
+    delegation_params = {"event_db_path": str(local_event_db_path(config))}
+    tools.extend(
+        Tool(name=name, params=delegation_params)
+        for name in (
+            "spawn_agents",
+            "await_agents",
+            "agent_status",
+            "cancel_agents",
         )
     )
     if config.role == "student" and not config.child:
@@ -838,7 +886,11 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
     return tools
 
 
-def delegation_config(config: RunnerConfig) -> DelegationConfig:
+def delegation_config(
+    config: RunnerConfig,
+    *,
+    deadline_epoch: float | None = None,
+) -> DelegationConfig:
     return DelegationConfig(
         python_executable=Path(sys.executable),
         workspace=config.workspace,
@@ -863,7 +915,12 @@ def delegation_config(config: RunnerConfig) -> DelegationConfig:
         enable_browser=config.enable_browser,
         command_secrets=config.command_secrets,
         role=config.role,
-        background_allowed=not config.child,
+        root_state_dir=config.delegation_root_state_dir,
+        tree_id=config.delegation_tree_id,
+        depth=config.delegation_depth,
+        deadline_epoch=deadline_epoch or config.delegation_deadline_epoch,
+        agent_name=config.agent_name,
+        current_task_id=config.delegation_task_id,
     )
 
 
@@ -885,27 +942,38 @@ def graceful_interrupts(conversation: object) -> Iterator[None]:
             signal.signal(signum, handler)
 
 
-@contextmanager
-def turn_deadline(
+async def arun_conversation(
     conversation: object,
     timeout_seconds: float,
-) -> Iterator[None]:
-    def interrupt() -> None:
+) -> None:
+    """Run the async OpenHands path so timeout cancellation reaches tools."""
+
+    task = asyncio.create_task(conversation.arun())
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
+    except TimeoutError:
         print(
             f"OPENHANDS_TIMEOUT seconds={timeout_seconds:g}",
             file=sys.stderr,
             flush=True,
         )
         conversation.interrupt()
+        if not task.done():
+            task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
-    timer = threading.Timer(timeout_seconds, interrupt)
-    timer.daemon = True
-    timer.start()
-    try:
-        yield
-    finally:
-        timer.cancel()
-        timer.join()
+
+def run_conversation(conversation: object, timeout_seconds: float) -> None:
+    if timeout_seconds <= 0:
+        print(
+            f"OPENHANDS_TIMEOUT seconds={max(timeout_seconds, 0):g}",
+            file=sys.stderr,
+            flush=True,
+        )
+        conversation.interrupt()
+        return
+    asyncio.run(arun_conversation(conversation, timeout_seconds))
 
 
 def event_summary(event: object) -> dict[str, object]:
@@ -964,6 +1032,14 @@ def final_agent_result(conversation: object) -> str:
 
 
 def run_openhands(prompt: str, config: RunnerConfig) -> int:
+    started_at = time.time()
+    run_deadline = min(
+        started_at + config.timeout_seconds,
+        config.delegation_deadline_epoch or float("inf"),
+    )
+    run_timeout = run_deadline - started_at
+    if run_timeout <= 0:
+        raise TimeoutError("the inherited OpenHands deadline has expired")
     scrub_model_credentials(os.environ, config)
     harness_instructions = read_role_instructions(config.harness_file)
     role_instructions = read_role_instructions(config.role_file)
@@ -1025,9 +1101,10 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             config.github_token,
             trusted_actor=config.github_trusted_actor,
         )
-    configure_delegation(delegation_config(config))
+    configure_delegation(delegation_config(config, deadline_epoch=run_deadline))
     scrub_github_credentials(os.environ)
     conversation = None
+    cleanup_error: BaseException | None = None
     try:
         llm = LLM(
             model=config.model,
@@ -1057,9 +1134,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                 role_instructions,
                 project_skills,
             )
-            agent = agent.model_copy(
-                update={"tool_concurrency_limit": MAX_PARALLEL_AGENTS}
-            )
+            agent = with_tool_concurrency(agent, MAX_PARALLEL_AGENTS)
             if (
                 llm.responses_use_previous_response_id
                 or llm.uses_anthropic_compaction()
@@ -1108,13 +1183,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         finally:
             clear_github_credentials()
             configure_delegation(None)
-        with (
-            graceful_interrupts(conversation),
-            turn_deadline(
-                conversation,
-                config.timeout_seconds,
-            ),
-        ):
+        with graceful_interrupts(conversation):
             if not config.child:
                 with (
                     AdvisorEventStore(local_event_db_path(config)) as event_store,
@@ -1128,9 +1197,9 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                         ),
                     ),
                 ):
-                    conversation.run()
+                    run_conversation(conversation, run_deadline - time.time())
             else:
-                conversation.run()
+                run_conversation(conversation, run_deadline - time.time())
         status = conversation.state.execution_status
         child_result = (
             final_agent_result(conversation)
@@ -1138,10 +1207,54 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             else None
         )
     finally:
+        primary_exception = sys.exc_info()[1]
+        primary_error = primary_exception is not None
+        if config.child and config.delegation_task_id and conversation is not None:
+            registry_value = os.environ.get("SENPAI_DELEGATION_REGISTRY_PATH")
+            if registry_value:
+                try:
+                    if primary_exception is not None:
+                        record_delegated_task_result(
+                            config.delegation_task_id,
+                            error=(
+                                f"{type(primary_exception).__name__}: "
+                                f"{primary_exception}"
+                            ),
+                        )
+                    detached = cancel_pending_descendants(
+                        Path(registry_value),
+                        str(config.conversation_id),
+                    )
+                    if detached:
+                        cleanup_error = RuntimeError(
+                            "child agent exited with uncollected descendants; it must "
+                            "await or cancel every spawned task first: "
+                            f"{', '.join(detached)}"
+                        )
+                        record_delegated_task_result(
+                            config.delegation_task_id,
+                            error=f"RuntimeError: {cleanup_error}",
+                        )
+                except BaseException as error:  # noqa: BLE001
+                    if cleanup_error is None:
+                        cleanup_error = error
         clear_github_credentials()
         configure_delegation(None)
         if conversation is not None:
             conversation.close()
+        if cleanup_error is not None and not primary_error:
+            raise cleanup_error
+
+    if config.child and config.delegation_task_id:
+        record_delegated_task_result(
+            config.delegation_task_id,
+            result=child_result,
+            error=(
+                None
+                if child_result is not None
+                else f"child execution ended with status {status.value}"
+            ),
+        )
 
     print(
         "OPENHANDS_RESULT "
@@ -1160,13 +1273,21 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     try:
-        args = parse_runner_args(argv)
-        prompt = sys.stdin.read()
-        if not prompt:
-            raise RuntimeError("OpenHands runner requires a prompt on stdin")
-        config = resolve_config(args)
-        os.environ.pop(config.api_key_env, None)
-        return run_openhands(prompt, config)
+        try:
+            args = parse_runner_args(argv)
+            prompt = sys.stdin.read()
+            if not prompt:
+                raise RuntimeError("OpenHands runner requires a prompt on stdin")
+            config = resolve_config(args)
+            os.environ.pop(config.api_key_env, None)
+            return run_openhands(prompt, config)
+        except BaseException as error:  # noqa: BLE001
+            if task_id := os.environ.get("SENPAI_DELEGATION_TASK_ID"):
+                record_delegated_task_result(
+                    task_id,
+                    error=f"{type(error).__name__}: {error}",
+                )
+            raise
     finally:
         finish_weave_monitoring()
 

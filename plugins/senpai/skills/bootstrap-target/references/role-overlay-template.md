@@ -45,7 +45,9 @@ Survey the current state:
 - Check W&B for runs under this research tag and group.
 - List existing PRs and labels for `$ADVISOR_BRANCH`.
 - Review <target-specific docs, records, benchmark rules, or baseline files>.
-- Assign work to every idle student.
+- Research and synthesize the strongest next hypotheses from that evidence.
+- Assign the best well-founded experiments after that synthesis; do not assign
+  work merely to eliminate idleness.
 
 ## Hypothesis Design
 

@@ -230,11 +230,13 @@ Worker and container restarts preserve completed OpenHands events. Recovered liv
 
 ## Subagents
 
-`delegate_agent` is the single delegation interface. Every child runs in a fresh OpenHands conversation and separate process group. A parent may launch up to eight independent children concurrently.
+`spawn_agents` launches a batch and immediately returns stable task IDs;
+`await_agents` collects them with an `all`, `first`, or `quorum` join. Every
+child runs in a fresh OpenHands conversation and separate process group.
 
 | Agent | Best for | Recommended tier |
 |---|---|---|
-| [General Purpose](.agents/agents/general-purpose.md) | Bounded work combining terminal investigation, code editing, task tracking, tests, and nested foreground delegation. | `smart` for ordinary implementation or review; `frontier` for the hardest generalist work. |
+| [General Purpose](.agents/agents/general-purpose.md) | Bounded work combining terminal investigation, code editing, task tracking, tests, and one controlled level of leaf delegation. | `smart` for ordinary implementation or review; `frontier` for the hardest generalist work. |
 | [Explore](.agents/agents/explore.md) | Read-only search across code, data, experiment artifacts, papers, or durable conversation history. It returns conclusions with paths and line numbers rather than dumping source. | `fast` for mechanical exploration; `smart` when relationships are subtle. |
 | [Search](.agents/agents/search.md) | External research through Exa in `general-web` or `research-publications` mode, with primary-source links. | `smart`. |
 | [Bash Runner](.agents/agents/bash-runner.md) | Tests, builds, linters, dependency commands, Git inspection, and noisy CLI work. It returns counts and actionable failures rather than raw logs. | `fast`. |
@@ -245,7 +247,28 @@ profile, sent to the Responses API as `max` effort with `reasoning.mode: pro`
 with the general-purpose terminal and code-editing toolset. Pair `frontier`
 with `agent=search` when the hard task is external or publication research.
 
-`background=false` waits for the compact result. `background=true` lets the parent continue and delivers the result later through its durable local event store. `include_context=false` sends only the system prompt and task; the child can still search the supplied parent-history directory. `include_context=true` also copies the model-visible parent history.
+A root spawn batch and its descendants form one delegation tree, which may
+create at most eight children total. A role runs at most eight active tasks
+concurrently across all trees. Root tasks count toward the tree total, so leave
+slots when a General Purpose child needs helpers. Recursion is limited to two
+child edges: the root may spawn any agent, and a depth-one General Purpose
+child may spawn leaf helpers; Explore, Search, Bash Runner, and all depth-two
+children cannot delegate. The tree shares one absolute root-turn deadline, and
+a nested child must await or cancel all of its helpers before returning.
+Individual tasks are capped at five minutes for `fast`, ten for `smart`, and
+twenty-five for `frontier`, shortened when the root deadline is nearer.
+
+An await call is capped at five minutes and does not cancel unfinished work.
+`agent_status` provides a non-blocking snapshot; with no task IDs, it returns
+up to eight direct tasks that are active or have an uncollected terminal result.
+`cancel_agents` records terminal cancellation. Atomic records keyed by the
+required batch key and each optional task key (or stable list index) make replay
+return the original task IDs instead of spawning duplicates.
+`include_context=false` sends only the system prompt and task; the child can
+still search the supplied parent-history directory. `include_context=true`
+also copies the model-visible parent history. The root advisor or student may
+leave useful tasks running and receives their terminal results as durable
+events; nested children may not detach descendants.
 
 Children share the parent workspace, so their process and conversation are isolated but their filesystem is not. They receive only their declared tools and never receive GitHub credentials, GitHub workflow tools, or training tools.
 
@@ -314,7 +337,7 @@ controller
 The controller owns cadence, durable events, conversation selection, GitHub transitions, process supervision, and monitoring. OpenHands owns research judgment, code changes, and evidence interpretation.
 
 - The advisor keeps one durable conversation UUID under `/var/lib/senpai/<tag>/advisor/openhands_state`.
-- A student uses one UUID per assignment revision; feedback, monitor events, and background results resume that exact conversation.
+- A student uses one UUID per assignment revision; feedback, monitor events, and child-task results resume that exact conversation.
 - The complete OpenHands event log remains locally searchable. Senpai does not prune conversation directories; operators own retention.
 - Student state may be ephemeral because the branch, PR, typed result, W&B runs, and Weave trace are the durable handoff.
 - Project `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded progressively instead of being inlined into every prompt.

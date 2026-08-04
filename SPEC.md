@@ -329,30 +329,81 @@ returns before this ref lookup.
 Definitive HTTP failures fail clearly. An ambiguous transport failure after a
 mutation is resolved by reading and verifying desired state before any retry.
 
-### `delegate_agent`
+### Subagent lifecycle
 
 ```text
-delegate_agent(
-  task: str,
-  agent: general-purpose | explore | search | bash-runner = general-purpose,
-  model: fast | smart | frontier = smart,
-  background: bool = false,
-  include_context: bool = false,
-  search_mode: general-web | research-publications | null = null,
-) -> {task_id, status, result?}
+spawn_agents(
+  batch_key: str,
+  tasks: [{
+    key: str | null = null,
+    task: str,
+    agent: general-purpose | explore | search | bash-runner = general-purpose,
+    model: fast | smart | frontier = smart,
+    include_context: bool = false,
+    search_mode: general-web | research-publications | null = null,
+  }],
+) -> {tasks: [{task_id, key, status, agent, model, result?, error?}]}
+
+await_agents(
+  task_ids: [str],
+  join: all | first | quorum = all,
+  quorum: int | null = null,
+  timeout_seconds: float,
+) -> {join, satisfied, timed_out, tasks: [{task_id, key, status, agent, model, result?, error?}]}
+
+agent_status(
+  task_ids: [str] | null = null,
+) -> {tasks: [{task_id, key, status, agent, model, result?, error?}]}
+
+cancel_agents(
+  task_ids: [str],
+) -> {tasks: [{task_id, key, status, agent, model, result?, error?}]}
 ```
 
-This is the only model-facing subagent mechanism. Every call launches the
-selected Markdown-defined agent in its own process group and fresh OpenHands
-conversation. The parent can emit eight independent calls in one response;
-OpenHands' parallel tool executor and the delegation semaphore both cap active
-children at eight.
+Task status is `queued`, `running`, `finished`, `failed`, or `cancelled`.
 
-`background=false` waits and returns the compact report inline.
-`background=true` returns a task ID immediately, then reports `agent_result` or
-`agent_error` through the local durable event store. No child-specific runtime
-deadline is imposed by default; parent conversation and controller supervision
-still provide interruption and process recovery boundaries.
+Spawning and collection are deliberately separate. `spawn_agents` starts one
+batch of Markdown-defined agents in separate process groups and fresh
+OpenHands conversations, then returns stable task IDs without waiting for a
+model result. `batch_key` is required and stable within the caller
+conversation. A task `key` is optional; when omitted, its stable list index is
+used. Replaying the same batch and specification returns the same task records;
+it never launches duplicate children. Reusing a batch key with a different
+task specification fails clearly.
+
+`await_agents` is the only blocking delegation operation. `all` waits for every
+selected task to reach a terminal state, `first` waits for any one, and
+`quorum` waits for the requested number. Its timeout is required and capped at
+300 seconds; expiry returns `satisfied=false` plus the current records without
+cancelling unfinished work. `agent_status` is a non-blocking snapshot. With no
+task IDs, it returns up to eight direct tasks that are active or have an
+uncollected terminal result; explicit task IDs can retrieve older history.
+`cancel_agents` terminates selected pending or running process groups and
+durably records their cancelled outcome. Completed results remain collectable
+through status or a later await. All three operations accept only task IDs
+owned by the calling conversation.
+
+Root advisor and student conversations may continue unrelated work or finish a
+turn while tasks remain active. A terminal child result or error is persisted
+and resumes the exact root conversation. A nested child must await or cancel
+all of its descendants before returning; it cannot detach background work.
+
+One root spawn batch and all descendants form a delegation tree. The tree may
+admit at most eight tasks over its lifetime, a single spawn batch is limited to
+eight, and the role registry allows at most eight active tasks concurrently
+across all trees. Root tasks consume that lifetime budget, so callers must
+leave capacity when a General Purpose child needs helpers. A later sequential
+root batch forms a new tree. The root is depth zero. It may spawn any registered
+agent at depth one, and a depth-one General Purpose agent may spawn leaf helpers
+at depth two. Explore, Search, Bash Runner, and every depth-two agent are leaves.
+This makes chains such as Explore -> Explore impossible without constraining a
+later research phase to the first batch's lifetime budget.
+
+The tree inherits one absolute root-turn deadline. Each task also has a tier
+runtime cap: 300 seconds for `fast`, 600 for `smart`, and 1,500 for `frontier`.
+The effective deadline is the earlier of that cap and the inherited root
+deadline. Reaching it interrupts the complete process group and records a
+terminal timeout; no descendant survives the tree deadline.
 
 Each tier selects one explicit model-and-effort profile. `model=fast` defaults
 to `openai/gpt-5.6-luna` at `high` for mechanical search, command execution,
@@ -373,12 +424,12 @@ concise conclusions with paths and line numbers. `search` requires exactly one
 mode: `general-web` uses Exa's general index with agent-oriented defaults,
 while `research-publications` uses Exa's publication index and primary papers.
 `general-purpose` handles mixed terminal investigation, code editing, task
-tracking, tests, and nested delegation. It is the default frontier agent, so a
-frontier call is generalist unless the caller deliberately selects `explore`,
-`search`, or `bash-runner`. `bash-runner` has only the terminal and runs tests,
-builds, linters, formatters, dependency commands, Git inspection, or system
-checks. It normally uses the fast model and returns counts and actionable
-failures rather than raw command output.
+tracking, tests, and one controlled level of leaf delegation. It is the default
+frontier agent, so a frontier task is generalist unless the caller deliberately
+selects `explore`, `search`, or `bash-runner`. `bash-runner` has only the
+terminal and runs tests, builds, linters, formatters, dependency commands, Git
+inspection, or system checks. It normally uses the fast model and returns
+counts and actionable failures rather than raw command output.
 
 With `include_context=false`, the child receives the merged system prompt and
 task and may search the parent's durable history path. With
@@ -386,19 +437,17 @@ task and may search the parent's durable history path. With
 history, including progressively disclosed skill content.
 
 Each child receives only the tools and progressively disclosed skills declared
-by its Markdown definition. Bash Runner is terminal-only. General-purpose and
-Explore children can also delegate foreground work; Search and Bash Runner
-cannot. Children receive neither GitHub credentials nor GitHub read/write
-tools; the parent prepares any large PR Markdown artifact and owns every typed
-GitHub operation. They do not receive training tools. Background nesting is
-rejected because a child may exit before a grandchild's durable result can be
-consumed.
+by its Markdown definition. Bash Runner is terminal-only. Explore, Search, and
+Bash Runner have no delegation tools. A depth-one General Purpose child can use
+the lifecycle tools for depth-two leaf work, subject to the same tree budget
+and deadline. Children receive neither GitHub credentials nor GitHub
+read/write tools; the parent prepares any large PR Markdown artifact and owns
+every typed GitHub operation. They do not receive training tools.
 
-When `review_ready` arrives during other advisor work, the role policy asks the
-advisor to launch a smart, full-context, background general-purpose review and
-continue unrelated work. Every background result records its parent
-conversation UUID, allowing the controller to resume the exact student
-conversation when a result arrives after its turn.
+When `review_ready` arrives during other advisor work, the advisor can spawn a
+smart, full-context General Purpose review and continue unrelated work. Every
+terminal record includes its root conversation identity, allowing the
+controller to resume the exact advisor or student conversation after its turn.
 
 ### Training and monitoring
 

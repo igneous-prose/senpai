@@ -29,7 +29,12 @@ from openhands.tools.terminal import (
 )
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from senpai_agent.delegation import DelegateAgentTool
+from senpai_agent.delegation import (
+    AgentStatusTool,
+    AwaitAgentsTool,
+    CancelAgentsTool,
+    SpawnAgentsTool,
+)
 from senpai_agent.git_workflow import (
     create_assignment_branch,
     push_assignment_branch,
@@ -1250,6 +1255,9 @@ def register_senpai_tools() -> None:
     register_tool("senpai_training", TrainingToolSet)
     register_tool("get_prs", GetPRsTool)
     register_tool("github_transition", GitHubTransitionTool)
-    register_tool("delegate_agent", DelegateAgentTool)
+    register_tool("spawn_agents", SpawnAgentsTool)
+    register_tool("await_agents", AwaitAgentsTool)
+    register_tool("agent_status", AgentStatusTool)
+    register_tool("cancel_agents", CancelAgentsTool)
     register_tool("senpai_terminal", SenpaiTerminalTool)
     _TOOLS_REGISTERED = True

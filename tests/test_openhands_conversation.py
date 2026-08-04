@@ -42,7 +42,7 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
                 "SENPAI_CONVERSATION_ID"
             ]
 
-        def run(self):
+        async def arun(self):
             pass
 
         def close(self):
@@ -84,7 +84,7 @@ def test_child_requests_ephemeral_storage_and_emits_its_terminal_report(
         def send_message(self, _prompt):
             pass
 
-        def run(self):
+        async def arun(self):
             self.state.view.events.append(
                 runner.MessageEvent(
                     source="agent",
@@ -150,7 +150,7 @@ def test_student_requests_persistent_storage_for_monitor_wake(
         def send_message(self, _prompt):
             pass
 
-        def run(self):
+        async def arun(self):
             pass
 
         def close(self):
@@ -185,7 +185,7 @@ def test_github_tokens_never_reach_the_agent_environment(
         def send_message(self, _prompt):
             observed.append(runner.os.environ.get("GITHUB_TOKEN"))
 
-        def run(self):
+        async def arun(self):
             observed.append(runner.os.environ.get("GITHUB_TOKEN"))
 
         def close(self):
@@ -218,7 +218,7 @@ def test_nonfinished_conversation_returns_failure(tmp_path, monkeypatch, status)
         def send_message(self, _prompt):
             pass
 
-        def run(self):
+        async def arun(self):
             pass
 
         def close(self):
@@ -248,7 +248,7 @@ def test_conversation_and_credentials_are_cleaned_up_after_failures(
             if failure_stage == "send_message":
                 raise RuntimeError("initialization failed")
 
-        def run(self):
+        async def arun(self):
             if failure_stage == "run":
                 raise RuntimeError("execution failed")
 
@@ -270,6 +270,7 @@ def test_conversation_and_credentials_are_cleaned_up_after_failures(
 
 def test_turn_deadline_requests_conversation_interrupt(tmp_path, monkeypatch):
     interrupted = threading.Event()
+    cancelled = threading.Event()
 
     class FakeConversation:
         def __init__(self, **kwargs):
@@ -281,9 +282,11 @@ def test_turn_deadline_requests_conversation_interrupt(tmp_path, monkeypatch):
         def send_message(self, _prompt):
             pass
 
-        def run(self):
-            assert interrupted.wait(1)
-            self.state.execution_status = ConversationExecutionStatus.ERROR
+        async def arun(self):
+            try:
+                await runner.asyncio.Event().wait()
+            finally:
+                cancelled.set()
 
         def interrupt(self):
             interrupted.set()
@@ -295,13 +298,14 @@ def test_turn_deadline_requests_conversation_interrupt(tmp_path, monkeypatch):
     isolate_agent_discovery(monkeypatch, runner)
 
     assert (
-        run_openhands(
-            "task",
-            runtime_config(tmp_path, timeout_seconds=0.01),
-        )
+            run_openhands(
+                "task",
+                runtime_config(tmp_path, timeout_seconds=0.2),
+            )
         == 1
     )
     assert interrupted.is_set()
+    assert cancelled.is_set()
 
 
 def test_signal_interrupts_the_conversation_and_restores_handlers(monkeypatch):

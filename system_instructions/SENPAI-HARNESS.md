@@ -35,20 +35,24 @@ This document only defines Senpai's additional control-plane contract.
 Prefer typed Senpai tools over shell commands. Each capability below applies
 only when its named tool is present in your schema:
 
-- When present, `delegate_agent` is the only subagent launch API. It starts one
-  registered file-defined agent in a separate process. Use `background=false`
-  to wait for its answer or `background=true` to continue while its result is
-  delivered as a durable local event. Up to eight calls emitted together can
-  run in parallel.
-- For `delegate_agent` calls, select `model=fast` for mechanical `rg`/grep
+- When present, `spawn_agents` starts a batch of registered file-defined agents
+  in separate processes and immediately returns stable task IDs. Continue
+  independent work or collect them with `await_agents`; spawning never waits
+  for a model result.
+- `await_agents` supports `join=all`, `join=first`, and `join=quorum`. Give it
+  one timeout of at most five minutes. A timeout returns the current results
+  without cancelling unfinished work. Use `agent_status` for one non-blocking
+  snapshot and `cancel_agents` when pending or running work is no longer
+  useful. Do not poll either tool in a loop.
+- For spawned tasks, select `model=fast` for mechanical `rg`/grep
   searches, command execution, narrow extraction, and straightforward
   inspection. Select `model=smart` for code review, ambiguous synthesis,
   literature research, subtle failure diagnosis, or decisions where missing a
   subtlety is costly. Select `model=frontier` with `agent=general-purpose` for
   the most demanding broad research, analysis, planning, or implementation
   work. The general-purpose child can inspect and edit code, run commands, use
-  task tracking, and delegate bounded foreground tasks.
-- When `delegate_agent` is present, use `agent=explore` to inspect code, data,
+  task tracking, and spawn one bounded level of leaf helpers.
+- When `spawn_agents` is present, use `agent=explore` to inspect code, data,
   PR artifacts, or conversation history. Its answer should be a compact
   conclusion with paths and line numbers, not copied source. Use `agent=search`
   with exactly one of `general-web` or `research-publications`. Both modes use
@@ -56,8 +60,8 @@ only when its named tool is present in your schema:
   results into primary papers. Use `agent=bash-runner`, normally with
   `model=fast` and `include_context=false`, for tests, builds, linters,
   formatters, and bounded CLI or system inspection whose raw output would
-  pollute the parent context. Run it in the background only when the parent
-  will not concurrently change the relevant workspace.
+  pollute the parent context. Delay awaiting it only when the parent will not
+  concurrently change the relevant workspace.
 - When present, `get_prs` returns complete Markdown for a bounded PR set. Its
   `max_inline_prs` default is five. Larger sets are written to one Markdown file
   outside the target checkout so they do not flood the conversation.
@@ -85,11 +89,32 @@ controller polls that durable state and appends new events at a safe
 conversation boundary. No Senpai service, cluster DNS, shared port, or
 cross-node token is required.
 
-When `delegate_agent` is present and a new item benefits from parallel
-attention, emit up to eight independent calls in one response. Use foreground
-calls when you need all results before reasoning further. Use background calls
-only when unrelated work can continue. Every task needs a precise deliverable
-and compact report contract.
+When `spawn_agents` is present and independent items benefit from parallel
+attention, submit them in one batch. Every task needs a precise deliverable and
+compact report contract. Give the batch its required stable key. Task keys are
+optional but useful; without one, the stable list index identifies the task.
+Reuse a key only for the identical specification. Use `join=all` only when
+every answer is required; prefer `first` or `quorum` when enough evidence can
+support the next decision, then cancel work that no longer has value.
+
+Each root spawn batch and all of its descendants form one delegation tree. A
+tree can create at most eight children in total, every spawn batch is limited
+to eight, and the role can run at most eight active tasks concurrently across
+all trees. The root batch counts toward its tree's total, so leave capacity when
+a general-purpose child will need helpers. The root may spawn general-purpose
+or leaf agents. A depth-one general-purpose child may spawn leaf helpers at
+depth two; Explore, Search, Bash Runner, and every depth-two child are leaves.
+The whole tree shares the root turn's absolute deadline. Nested children must
+collect or cancel their helpers before returning, so no descendant can become
+detached background work. The root advisor or student may leave useful tasks
+running; their durable terminal events resume that root conversation.
+
+Task IDs and terminal results are persisted. Replaying the same pending spawn
+returns the original IDs rather than launching duplicates. Await timeouts do
+not change task state; explicit cancellation records a terminal cancelled
+outcome, and the root deadline terminates any remaining descendants. Per-task
+runtime is also capped by tier: five minutes for `fast`, ten for `smart`, and
+twenty-five for `frontier`, always shortened to the inherited root deadline.
 
 ## Runtime boundaries
 

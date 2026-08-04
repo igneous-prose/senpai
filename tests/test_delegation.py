@@ -1,17 +1,23 @@
 import json
 import os
+import subprocess
 import sys
 import time
 import uuid
 from pathlib import Path
 
 import pytest
+import psutil
 from openhands.sdk.llm import Message, TextContent
 
+from senpai_agent.advisor import AdvisorEventStore
 from senpai_agent.delegation import (
+    AgentTask,
     DelegationConfig,
+    DelegationRegistry,
     DelegationRequest,
     OpenHandsChildProcess,
+    record_delegated_task_result,
     render_child_prompt,
     run_child_process,
 )
@@ -73,7 +79,6 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": True,
         "command_secrets": {"EXA_API_KEY": "exa-secret"},
         "role": "advisor",
-        "background_allowed": True,
     }
     values.update(updates)
     return DelegationConfig(**values)
@@ -229,17 +234,13 @@ def test_child_process_never_receives_the_github_write_token(
     config = delegation_config(tmp_path)
     monkeypatch.setenv("GITHUB_TOKEN", "ambient-write-token")
 
-    def fake_run(argv, *, input_text, env, timeout_seconds, **kwargs):
-        assert "GITHUB_TOKEN" not in env
-        assert "GH_TOKEN" not in env
-        assert "SENPAI_GITHUB_TOKEN_FILE" not in env
-        assert "ambient-write-token" not in repr(env)
-        assert not list(config.state_dir.rglob(".github-token-*"))
-        return 'OPENHANDS_RESULT {"status":"finished","result":"done"}'
+    environment = OpenHandsChildProcess(config, request).environment
 
-    monkeypatch.setattr("senpai_agent.delegation.run_child_process", fake_run)
-
-    assert OpenHandsChildProcess(config, request).run("inspect", None) == "done"
+    assert "GITHUB_TOKEN" not in environment
+    assert "GH_TOKEN" not in environment
+    assert "SENPAI_GITHUB_TOKEN_FILE" not in environment
+    assert "ambient-write-token" not in repr(environment)
+    assert not list(config.state_dir.rglob(".github-token-*"))
 
 
 def test_child_result_parser_uses_only_terminal_result_record():
@@ -252,3 +253,97 @@ def test_child_result_parser_uses_only_terminal_result_record():
 
     with pytest.raises(RuntimeError, match="terminal result"):
         OpenHandsChildProcess.parse_result('OPENHANDS_EVENT {"text":"not enough"}')
+
+
+def test_child_monitor_invokes_a_failing_completion_callback_once(tmp_path: Path):
+    class CompletedProcess:
+        returncode = 0
+
+        def wait(self, timeout):
+            return 0
+
+    runner = OpenHandsChildProcess(delegation_config(tmp_path), delegation_request())
+    runner.output_path.parent.mkdir(parents=True)
+    runner.output_path.write_text(
+        'OPENHANDS_RESULT {"status":"finished","result":"done"}\n'
+    )
+    process = CompletedProcess()
+    runner._process = process
+    calls = []
+
+    def fail(result, error):
+        calls.append((result, error))
+        raise RuntimeError("callback failed")
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        runner._monitor(process, 1, fail)
+
+    assert calls == [("done", None)]
+    assert runner._process is None
+
+
+def test_late_result_event_is_acknowledged_when_await_collected_first(tmp_path: Path):
+    registry_path = tmp_path / "state" / "delegation" / "tasks.sqlite3"
+    event_path = tmp_path / "events.sqlite3"
+    registry = DelegationRegistry(registry_path)
+    rows, _created = registry.reserve(
+        operation_key="conversation:batch",
+        tree_id="tree",
+        parent_conversation_id="conversation",
+        parent_task_id=None,
+        depth=1,
+        specs=[AgentTask(key="task", task="Inspect")],
+        deadlines=[time.time() + 60],
+    )
+    reserved_id = rows[0]["task_id"]
+    registry.mark_running(reserved_id, None)
+    registry.finish(reserved_id, result="done")
+    registry.mark_collected([reserved_id])
+
+    record_delegated_task_result(
+        reserved_id,
+        result="done",
+        env={
+            "SENPAI_DELEGATION_REGISTRY_PATH": str(registry_path),
+            "SENPAI_DELEGATION_EVENT_DB_PATH": str(event_path),
+        },
+    )
+
+    with AdvisorEventStore(event_path) as events:
+        assert events.pending() == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group cancellation")
+def test_child_interrupt_kills_stubborn_descendant_after_leader_exits(tmp_path: Path):
+    child_pid_path = tmp_path / "child-pid"
+    code = (
+        "import pathlib,subprocess,sys,time;"
+        "child=subprocess.Popen([sys.executable,'-c',"
+        "'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)']);"
+        f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid));"
+        "time.sleep(60)"
+    )
+    process = subprocess.Popen(
+        (sys.executable, "-c", code),
+        start_new_session=True,
+    )
+    runner = OpenHandsChildProcess(delegation_config(tmp_path), delegation_request())
+    runner._process = process
+    deadline = time.monotonic() + 2
+    while not child_pid_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    child_pid = int(child_pid_path.read_text())
+
+    runner.interrupt()
+
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            child = psutil.Process(child_pid)
+            if child.status() == psutil.STATUS_ZOMBIE:
+                break
+        except psutil.NoSuchProcess:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("stubborn descendant survived process-group cancellation")
