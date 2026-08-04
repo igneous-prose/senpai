@@ -5,10 +5,12 @@ from uuid import UUID
 
 import pytest
 
+import senpai_agent.controller as controller_module
 from senpai_agent.controller import Controller, TurnResult, _full_prompt
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.state import ConversationStateLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
+from senpai_agent.workspace import WorkspaceDivergence
 from test_agent_markdown import HTML_HEADER
 
 
@@ -161,6 +163,82 @@ def test_level_trigger_is_quiet_while_visible_and_wakes_after_reappearing():
         (event.dedupe_key,),
         (event.dedupe_key,),
     ]
+
+
+def test_still_actionable_event_is_redelivered_after_one_poll_interval(
+    monkeypatch,
+):
+    event = review_event()
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+
+    class PersistentMailbox(Mailbox):
+        def __init__(self):
+            super().__init__([])
+
+        def poll(self):
+            self.calls += 1
+            return (event,)
+
+    mailbox = PersistentMailbox()
+    turns = Turns()
+
+    controller_module.Controller(
+        role="advisor",
+        mailbox=mailbox,
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=30,
+        jitter_seconds=0,
+    ).run(max_cycles=3)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({event.dedupe_key}),
+        frozenset({event.dedupe_key}),
+        frozenset({event.dedupe_key}),
+    ]
+
+
+def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():
+    event = review_event()
+    mailbox = Mailbox([(event,), (event,)])
+    turns = Turns([RuntimeError("transport failed"), RuntimeError("still failed")])
+
+    with pytest.raises(RuntimeError, match="turn-failure limit"):
+        controller(
+            mailbox,
+            turns,
+            max_consecutive_turn_failures=2,
+        ).run(max_cycles=2)
+
+    assert len(turns.calls) == 2
+
+
+def test_preserved_workspace_divergence_is_delivered_to_the_existing_turn():
+    event = review_event()
+    conflict = WorkspaceDivergence(
+        head_ref="student/candidate",
+        expected_head="a" * 40,
+        local_head="b" * 40,
+    )
+    turns = Turns()
+
+    def reconcile(_events):
+        raise conflict
+
+    controller(
+        Mailbox([(event,), ()]),
+        turns,
+        role="student",
+        reconcile=reconcile,
+    ).run(max_cycles=1)
+
+    assert turns.calls[0][2] == frozenset(
+        {event.dedupe_key, conflict.event.dedupe_key}
+    )
+    assert "do not reset or discard local work" in turns.calls[0][0]
 
 
 def test_successful_turn_acknowledges_and_suppresses_mid_turn_feedback():

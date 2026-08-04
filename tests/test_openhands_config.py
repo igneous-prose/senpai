@@ -121,11 +121,28 @@ def test_resolved_config_separates_runtime_credentials_from_command_secrets(
     assert "ANTHROPIC_API_KEY" not in config.command_secrets
     assert "OPENAI_API_KEY" not in config.command_secrets
     assert config.training_max_timeout_seconds == 30
+    assert config.llm_timeout_seconds == 900
+    assert config.llm_num_retries == 1
 
     delegated = runner.delegation_config(config)
     assert delegated.smart_api_key == "openai-key"
     assert delegated.fast_api_key == "openai-key"
     assert delegated.frontier_api_key == "openai-key"
+
+
+@pytest.mark.parametrize(
+    ("updates", "message"),
+    [
+        ({"SENPAI_LLM_TIMEOUT_SECONDS": "zero"}, "must be numeric"),
+        ({"SENPAI_LLM_NUM_RETRIES": "0"}, "must be positive"),
+    ],
+)
+def test_runtime_stall_bounds_are_validated(tmp_path, updates, message):
+    env = runtime_env(tmp_path)
+    env.update(updates)
+
+    with pytest.raises(RuntimeError, match=message):
+        resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
 
 def test_default_model_profiles_are_explicit_and_provider_credentials_are_inferred(

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from openhands.tools.terminal import TerminalAction, TerminalObservation
 
-from senpai_agent.tools import SenpaiTerminalExecutor
+from senpai_agent.tools import SenpaiTerminalExecutor, SenpaiTerminalTool
 
 
 class FakeTerminal:
@@ -61,6 +61,33 @@ def test_terminal_executor_delegates_only_after_policy_approval(
     assert delegate.closed is True
 
 
+def test_terminal_executor_returns_long_foreground_calls_for_continuation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    from senpai_agent import hooks
+
+    monkeypatch.setattr(
+        hooks,
+        "terminal_policy",
+        lambda *_args: SimpleNamespace(allowed=True, reason=""),
+    )
+    delegate = FakeTerminal()
+    executor = SenpaiTerminalExecutor(
+        delegate,
+        role="student",
+        workspace=tmp_path,
+        foreground_timeout_seconds=600,
+    )
+    action = TerminalAction(command="swift test", timeout=1800)
+
+    executor(action)
+
+    delegated = delegate.calls[0][0]
+    assert action.timeout == 1800
+    assert delegated.timeout == 600
+
+
 @pytest.mark.parametrize("policy_error", [False, True])
 def test_terminal_executor_fails_closed_without_invoking_the_terminal(
     monkeypatch: pytest.MonkeyPatch,
@@ -90,3 +117,27 @@ def test_terminal_executor_fails_closed_without_invoking_the_terminal(
     assert observation.exit_code is None
     assert "denied" in observation.text.lower()
     assert delegate.calls == []
+
+
+def test_terminal_tool_bounds_silent_commands(monkeypatch, tmp_path):
+    captured = {}
+    native = SimpleNamespace(
+        executor=FakeTerminal(),
+        set_executor=lambda executor: (captured.setdefault("executor", executor),)[0],
+    )
+
+    def create(_conv_state, **kwargs):
+        captured.update(kwargs)
+        return [native]
+
+    monkeypatch.setattr("senpai_agent.tools.TerminalTool.create", create)
+    monkeypatch.setenv("SENPAI_TERMINAL_NO_CHANGE_TIMEOUT_SECONDS", "600")
+    conv_state = SimpleNamespace(
+        workspace=SimpleNamespace(working_dir=str(tmp_path))
+    )
+
+    SenpaiTerminalTool.create(conv_state, role="student")
+
+    assert captured["no_change_timeout_seconds"] == 600
+    assert isinstance(captured["executor"], SenpaiTerminalExecutor)
+    assert captured["executor"].foreground_timeout_seconds == 600

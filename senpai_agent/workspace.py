@@ -9,6 +9,41 @@ from pathlib import Path
 from senpai_agent.mailbox import ControllerEvent
 
 
+class WorkspaceDivergence(RuntimeError):
+    """An assignment branch has divergent local history worth preserving."""
+
+    def __init__(
+        self,
+        *,
+        head_ref: str,
+        expected_head: str,
+        local_head: str,
+        current_branch: str | None = None,
+    ):
+        self.event = ControllerEvent(
+            kind="workspace_diverged",
+            dedupe_key=(
+                f"workspace_diverged:{head_ref}:{expected_head}:{local_head}"
+            ),
+            payload={
+                "head_ref": head_ref,
+                "expected_remote_head": expected_head,
+                "preserved_local_head": local_head,
+                "current_branch": current_branch,
+                "instructions": (
+                    "The local assignment branch has divergent history, such as a "
+                    "rebase or unpushed experiment. Senpai preserved every local "
+                    "commit and dirty file without changing the checkout. Inspect and "
+                    "reconcile it explicitly; do not reset or discard local work."
+                ),
+            },
+        )
+        super().__init__(
+            f"preserved diverged assignment branch {head_ref}: "
+            f"local {local_head}, remote {expected_head}"
+        )
+
+
 class StudentWorkspaceReconciler:
     """Check out an assignment without discarding local student commits."""
 
@@ -58,8 +93,11 @@ class StudentWorkspaceReconciler:
             timeout=30,
         ).returncode
         if ancestor != 0:
-            raise RuntimeError(
-                f"local branch {head_ref} diverged from assignment head {fetched_head}"
+            raise WorkspaceDivergence(
+                head_ref=head_ref,
+                expected_head=fetched_head,
+                local_head=local_head,
+                current_branch=self._git("branch", "--show-current") or None,
             )
         subprocess.run(
             ["git", "checkout", head_ref],

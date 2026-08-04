@@ -50,7 +50,7 @@ WEAVE_PROJECT = initialize_weave_monitoring()
 
 from openhands.sdk import LLM, Agent, AgentContext, LocalConversation, Tool
 from openhands.sdk.agent.parallel_executor import ParallelToolExecutor
-from openhands.sdk.conversation import ConversationExecutionStatus
+from openhands.sdk.conversation import ConversationExecutionStatus, ConversationState
 from openhands.sdk.event import ActionEvent, MessageEvent
 from openhands.sdk.llm import TextContent
 from openhands.sdk.plugin import PluginSource
@@ -182,6 +182,8 @@ class RunnerConfig:
     plugin_dir: Path
     training_max_timeout_seconds: int = 1800
     timeout_seconds: float = 3600
+    llm_timeout_seconds: int = 900
+    llm_num_retries: int = 1
     child: bool = False
     delegation_root_state_dir: Path | None = None
     delegation_tree_id: str | None = None
@@ -461,6 +463,13 @@ def resolve_config(
         ) from error
     if timeout_seconds <= 0:
         raise RuntimeError("SENPAI_OPENHANDS_TIMEOUT_SECONDS must be positive")
+    try:
+        llm_timeout_seconds = int(env.get("SENPAI_LLM_TIMEOUT_SECONDS", "900"))
+        llm_num_retries = int(env.get("SENPAI_LLM_NUM_RETRIES", "1"))
+    except ValueError as error:
+        raise RuntimeError("Senpai LLM timeout settings must be numeric") from error
+    if llm_timeout_seconds <= 0 or llm_num_retries <= 0:
+        raise RuntimeError("Senpai LLM timeout and attempts must be positive")
     delegation_root_value = env.get("SENPAI_DELEGATION_ROOT_STATE_DIR")
     delegation_root_state_dir = (
         Path(delegation_root_value).expanduser().resolve()
@@ -666,6 +675,8 @@ def resolve_config(
         ),
         training_max_timeout_seconds=training_max_timeout_seconds,
         timeout_seconds=timeout_seconds,
+        llm_timeout_seconds=llm_timeout_seconds,
+        llm_num_retries=llm_num_retries,
         child=args.child,
         delegation_root_state_dir=delegation_root_state_dir,
         delegation_tree_id=delegation_tree_id,
@@ -823,7 +834,7 @@ def model_runtime_configuration(
 def anthropic_compaction_configuration(model: str) -> dict[str, int]:
     if model.split("/", 1)[0].lower() != "anthropic":
         return {}
-    return {"anthropic_compact_threshold": 200_000}
+    return {"anthropic_compact_threshold": 100_000}
 
 
 def local_event_db_path(config: RunnerConfig) -> Path:
@@ -928,10 +939,13 @@ def delegation_config(
 
 @contextmanager
 def graceful_interrupts(conversation: object) -> Iterator[None]:
+    interrupted_by: list[int] = []
+
     def interrupt(signum: int, _frame: object) -> None:
         print(f"OPENHANDS_INTERRUPT signal={signum}", file=sys.stderr, flush=True)
+        if not interrupted_by:
+            interrupted_by.append(signum)
         conversation.interrupt()
-        raise SystemExit(128 + signum)
 
     previous_handlers = {
         signum: signal.signal(signum, interrupt)
@@ -942,6 +956,8 @@ def graceful_interrupts(conversation: object) -> Iterator[None]:
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
+    if interrupted_by:
+        raise SystemExit(128 + interrupted_by[0])
 
 
 async def arun_conversation(
@@ -1014,6 +1030,30 @@ def print_event(event: object) -> None:
         "OPENHANDS_EVENT " + json.dumps(event_summary(event), sort_keys=True),
         flush=True,
     )
+
+
+def reject_recovered_actions(conversation: object) -> int:
+    """Pair crash-orphaned actions so resuming cannot replay them implicitly."""
+
+    state = getattr(conversation, "state", None)
+    active_branch = getattr(state, "active_branch", None)
+    if active_branch is None:
+        return 0
+    pending = ConversationState.get_unmatched_actions(active_branch())
+    if not pending:
+        return 0
+    conversation.reject_pending_actions(
+        reason=(
+            "Senpai restarted before this action completed. Inspect the preserved "
+            "workspace and rerun it explicitly only if it is still needed."
+        )
+    )
+    print(
+        f"OPENHANDS_RECOVERED_ACTIONS rejected={len(pending)}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return len(pending)
 
 
 def final_agent_result(conversation: object) -> str:
@@ -1111,6 +1151,8 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
         llm = LLM(
             model=config.model,
             api_key=config.api_key,
+            timeout=config.llm_timeout_seconds,
+            num_retries=config.llm_num_retries,
             reasoning_effort=openhands_reasoning_effort(
                 config.reasoning_effort, config.model
             ),
@@ -1179,6 +1221,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             delete_on_close=config.child,
             prompt_cache_key=conversation_prompt_cache_key(config),
         )
+        reject_recovered_actions(conversation)
         try:
             # send_message performs OpenHands' lazy tool initialization.
             conversation.send_message(prompt)

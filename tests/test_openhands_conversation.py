@@ -9,7 +9,12 @@ from openhands.sdk.conversation import ConversationExecutionStatus
 from openhands.sdk.llm import Message, TextContent
 
 import senpai_agent.openhands_runner as runner
-from senpai_agent.openhands_runner import graceful_interrupts, main, run_openhands
+from senpai_agent.openhands_runner import (
+    graceful_interrupts,
+    main,
+    reject_recovered_actions,
+    run_openhands,
+)
 from openhands_support import (
     PLUGIN_DIR,
     isolate_agent_discovery,
@@ -30,6 +35,8 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
             self.id = kwargs["conversation_id"]
             captured["secrets"] = kwargs["secrets"]
             captured["delete_on_close"] = kwargs["delete_on_close"]
+            captured["llm_timeout"] = agent.llm.timeout
+            captured["llm_num_retries"] = agent.llm.num_retries
             self.state = SimpleNamespace(
                 execution_status=ConversationExecutionStatus.FINISHED
             )
@@ -62,6 +69,8 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
     assert captured["secrets"] == {"WANDB_API_KEY": "wandb-key"}
     assert captured["conversation_id_env"] == config.conversation_id.hex
     assert captured["delete_on_close"] is False
+    assert captured["llm_timeout"] == 900
+    assert captured["llm_num_retries"] == 1
     assert captured["closed"] is True
 
 
@@ -321,15 +330,36 @@ def test_signal_interrupts_the_conversation_and_restores_handlers(monkeypatch):
     conversation = SimpleNamespace(interrupt=lambda: calls.append("interrupt"))
     monkeypatch.setattr(runner.signal, "signal", fake_signal)
 
-    with graceful_interrupts(conversation), pytest.raises(SystemExit) as raised:
-        installed[signal.SIGTERM](signal.SIGTERM, None)
+    with pytest.raises(SystemExit) as raised:
+        with graceful_interrupts(conversation):
+            installed[signal.SIGTERM](signal.SIGTERM, None)
+            calls.append("handler-returned")
 
     assert raised.value.code == 128 + signal.SIGTERM
     assert "interrupt" in calls
+    assert "handler-returned" in calls
     assert calls[-2:] == [
         (signal.SIGTERM, previous[signal.SIGTERM]),
         (signal.SIGINT, previous[signal.SIGINT]),
     ]
+
+
+def test_recovered_actions_are_rejected_before_the_conversation_resumes(
+    monkeypatch,
+):
+    rejected = []
+    conversation = SimpleNamespace(
+        state=SimpleNamespace(active_branch=lambda: ["persisted action"]),
+        reject_pending_actions=lambda reason: rejected.append(reason),
+    )
+    monkeypatch.setattr(
+        runner.ConversationState,
+        "get_unmatched_actions",
+        lambda _events: [object()],
+    )
+
+    assert reject_recovered_actions(conversation) == 1
+    assert "rerun it explicitly" in rejected[0]
 
 
 def test_main_removes_the_model_key_and_flushes_weave_after_failure(monkeypatch):

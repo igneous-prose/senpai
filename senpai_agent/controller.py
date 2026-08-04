@@ -43,7 +43,7 @@ from senpai_agent.state import (
     StudentConversationSelector,
 )
 from senpai_agent.supervisor import LEASE_ENV, ProgressLease
-from senpai_agent.workspace import StudentWorkspaceReconciler
+from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergence
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +168,8 @@ class Controller:
         progress: ProgressLease | None = None,
         operation_timeout_seconds: float = 300,
         turn_timeout_seconds: float = 3660,
+        max_consecutive_turn_failures: int = 2,
+        event_reminder_seconds: float | None = None,
         start_gate_path: Path | None = None,
         launch_gate_path: Path | None = None,
         start_gate_poll_seconds: float = 30,
@@ -181,6 +183,8 @@ class Controller:
             raise ValueError("start-gate polling interval must be positive")
         if operation_timeout_seconds <= 0 or turn_timeout_seconds <= 0:
             raise ValueError("controller phase timeouts must be positive")
+        if max_consecutive_turn_failures <= 0:
+            raise ValueError("maximum consecutive turn failures must be positive")
         self.role = role
         self.mailbox = mailbox
         self.turns = turns
@@ -190,6 +194,7 @@ class Controller:
         self.progress = progress
         self.operation_timeout_seconds = operation_timeout_seconds
         self.turn_timeout_seconds = turn_timeout_seconds
+        self.max_consecutive_turn_failures = max_consecutive_turn_failures
         self.start_gate_paths = tuple(
             path for path in (start_gate_path, launch_gate_path) if path is not None
         )
@@ -200,8 +205,15 @@ class Controller:
         self.sleep = sleep
         self.poll_interval_seconds = poll_interval_seconds
         self.jitter_seconds = jitter_seconds
+        self.event_reminder_seconds = (
+            max(poll_interval_seconds, 1)
+            if event_reminder_seconds is None
+            else event_reminder_seconds
+        )
+        if self.event_reminder_seconds <= 0:
+            raise ValueError("event reminder interval must be positive")
         self._started: set[UUID] = set()
-        self._visible: set[str] = set()
+        self._visible: dict[str, float] = {}
 
     def run(self, *, max_cycles: int | None = None) -> None:
         self._wait_for_start_gates()
@@ -220,7 +232,15 @@ class Controller:
                     try:
                         if self.reconcile is not None:
                             self._publish_progress("reconcile")
-                            self.reconcile(batch_events)
+                            try:
+                                self.reconcile(batch_events)
+                            except WorkspaceDivergence as conflict:
+                                print(
+                                    f"SENPAI_WORKSPACE_DIVERGENCE {conflict}",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                                batch_events = (*batch_events, conflict.event)
                         continuing = self._has_started(conversation_id)
                         refresh_system_context = (
                             continuing
@@ -248,14 +268,18 @@ class Controller:
                         )
                     except Exception as error:  # noqa: BLE001
                         turn_failures += 1
-                        self._visible.difference_update(
-                            event.dedupe_key for event in batch_events
-                        )
+                        for event in batch_events:
+                            self._visible.pop(event.dedupe_key, None)
                         print(
                             f"SENPAI_TURN_EXCEPTION {type(error).__name__}: {error}",
                             file=sys.stderr,
                             flush=True,
                         )
+                        if turn_failures >= self.max_consecutive_turn_failures:
+                            raise RuntimeError(
+                                "controller exceeded its consecutive turn-failure "
+                                f"limit ({self.max_consecutive_turn_failures})"
+                            ) from error
                         turn_failed = True
                         continue
                     if result.exit_code == 0:
@@ -267,12 +291,13 @@ class Controller:
                         self.mailbox.acknowledge(
                             tuple(dict.fromkeys(acknowledged))
                         )
-                        self._visible.update(result.delivered_event_keys)
+                        delivered_at = time.monotonic()
+                        for key in acknowledged:
+                            self._visible[key] = delivered_at
                         continue
                     turn_failures += 1
-                    self._visible.difference_update(
-                        event.dedupe_key for event in batch_events
-                    )
+                    for event in batch_events:
+                        self._visible.pop(event.dedupe_key, None)
                     print(
                         "SENPAI_TURN_ERROR "
                         f"exit_code={result.exit_code} "
@@ -280,6 +305,11 @@ class Controller:
                         file=sys.stderr,
                         flush=True,
                     )
+                    if turn_failures >= self.max_consecutive_turn_failures:
+                        raise RuntimeError(
+                            "controller exceeded its consecutive turn-failure "
+                            f"limit ({self.max_consecutive_turn_failures})"
+                        )
                     turn_failed = True
                 if turn_failed:
                     delay = min(
@@ -363,10 +393,20 @@ class Controller:
         self,
         events: Sequence[ControllerEvent],
     ) -> tuple[ControllerEvent, ...]:
-        current = {event.dedupe_key for event in events}
-        new = tuple(event for event in events if event.dedupe_key not in self._visible)
+        now = time.monotonic()
+        current: dict[str, float] = {}
+        new: list[ControllerEvent] = []
+        for event in events:
+            delivered_at = self._visible.get(event.dedupe_key)
+            if (
+                delivered_at is None
+                or now - delivered_at >= self.event_reminder_seconds
+            ):
+                new.append(event)
+                delivered_at = now
+            current[event.dedupe_key] = delivered_at
         self._visible = current
-        return new
+        return tuple(new)
 
     def _prompt(
         self,
@@ -559,6 +599,22 @@ def controller_main(
             env.get("SENPAI_CONTROLLER_OPERATION_TIMEOUT_SECONDS", "300")
         ),
         turn_timeout_seconds=runner_config.timeout_seconds + 60,
+        max_consecutive_turn_failures=int(
+            env.get("SENPAI_CONTROLLER_MAX_CONSECUTIVE_TURN_FAILURES", "2")
+        ),
+        event_reminder_seconds=float(
+            env.get(
+                "SENPAI_EVENT_REMINDER_SECONDS",
+                str(
+                    _role_interval(
+                        env,
+                        role,
+                        "POLL_INTERVAL_S",
+                        600,
+                    )
+                ),
+            )
+        ),
         start_gate_path=(
             Path(env["SENPAI_START_GATE_PATH"])
             if env.get("SENPAI_START_GATE_PATH")

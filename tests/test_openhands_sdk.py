@@ -255,7 +255,7 @@ def test_anthropic_compaction_configuration_is_accepted_by_the_pinned_sdk():
         **configuration,
     )
 
-    assert configuration == {"anthropic_compact_threshold": 200_000}
+    assert configuration == {"anthropic_compact_threshold": 100_000}
     assert llm.uses_anthropic_compaction() is True
     assert anthropic_compaction_configuration("openai/gpt-5.6") == {}
 

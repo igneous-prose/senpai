@@ -341,6 +341,9 @@ The controller owns cadence, durable events, conversation selection, GitHub tran
 
 - The advisor keeps one durable conversation UUID under `/var/lib/senpai/<tag>/advisor/openhands_state`.
 - A student uses one UUID per assignment revision; feedback, monitor events, and child-task results resume that exact conversation.
+- Still-actionable GitHub state is re-delivered after one role poll interval. A successful research-only turn therefore remains quiet for one cadence, then receives another bounded reminder until the advisor or student changes that state.
+- Each model request gets one bounded 15-minute attempt. Foreground terminal calls return control within ten minutes for explicit continuation, the whole turn retains its one-hour hard lease, and two consecutive failed turns exit to the supervisor for a clean worker restart.
+- On restart, an incomplete persisted tool action is rejected rather than replayed implicitly. A checked-out assignment branch that was deliberately rebased or extended locally is preserved and surfaced to its existing student conversation for explicit reconciliation.
 - The complete OpenHands event log remains locally searchable. Senpai does not prune conversation directories; operators own retention.
 - Student state may be ephemeral because the branch, PR, typed result, W&B runs, and Weave trace are the durable handoff.
 - Project `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded progressively instead of being inlined into every prompt.

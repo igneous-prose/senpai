@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from senpai_agent.mailbox import ControllerEvent
-from senpai_agent.workspace import StudentWorkspaceReconciler
+from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergence
 
 
 def git(*arguments: str, cwd: Path | None = None) -> str:
@@ -82,3 +82,49 @@ def test_reconciliation_rejects_a_remote_head_newer_than_the_assignment(
         StudentWorkspaceReconciler(workspace)((assignment_event(assigned_head),))
 
     assert git("rev-parse", "HEAD", cwd=workspace) == assigned_head
+
+
+def test_reconciliation_surfaces_and_preserves_a_diverged_active_branch(
+    tmp_path: Path,
+):
+    _remote, seed, workspace, _assigned_head = assigned_workspace(tmp_path)
+    (workspace / "program.py").write_text("rebased experiment\n")
+    git("commit", "-am", "local experiment", cwd=workspace)
+    local_head = git("rev-parse", "HEAD", cwd=workspace)
+    (workspace / "notes.txt").write_text("dirty measurements\n")
+
+    git("checkout", "--orphan", "replacement", cwd=seed)
+    git("rm", "-f", "program.py", cwd=seed)
+    (seed / "program.py").write_text("new advisor base\n")
+    git("add", "program.py", cwd=seed)
+    git("commit", "-m", "replace assignment base", cwd=seed)
+    git("push", "--force", "origin", "HEAD:student/candidate", cwd=seed)
+    expected_head = git("rev-parse", "HEAD", cwd=seed)
+
+    with pytest.raises(WorkspaceDivergence) as raised:
+        StudentWorkspaceReconciler(workspace)((assignment_event(expected_head),))
+
+    assert raised.value.event.kind == "workspace_diverged"
+    assert raised.value.event.payload["preserved_local_head"] == local_head
+    assert git("rev-parse", "HEAD", cwd=workspace) == local_head
+    assert (workspace / "notes.txt").read_text() == "dirty measurements\n"
+
+
+def test_reconciliation_surfaces_divergence_when_assignment_is_not_checked_out(
+    tmp_path: Path,
+):
+    _remote, seed, workspace, _assigned_head = assigned_workspace(tmp_path)
+    git("checkout", "-b", "other-work", cwd=workspace)
+    git("checkout", "--orphan", "replacement", cwd=seed)
+    git("rm", "-f", "program.py", cwd=seed)
+    (seed / "program.py").write_text("new advisor base\n")
+    git("add", "program.py", cwd=seed)
+    git("commit", "-m", "replace assignment base", cwd=seed)
+    git("push", "--force", "origin", "HEAD:student/candidate", cwd=seed)
+    expected_head = git("rev-parse", "HEAD", cwd=seed)
+
+    with pytest.raises(WorkspaceDivergence) as raised:
+        StudentWorkspaceReconciler(workspace)((assignment_event(expected_head),))
+
+    assert raised.value.event.payload["current_branch"] == "other-work"
+    assert git("branch", "--show-current", cwd=workspace) == "other-work"

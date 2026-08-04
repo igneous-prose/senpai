@@ -1166,10 +1166,14 @@ class SenpaiTerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
         *,
         role: str,
         workspace: Path,
+        foreground_timeout_seconds: int = 600,
     ):
+        if foreground_timeout_seconds <= 0:
+            raise ValueError("terminal foreground timeout must be positive")
         self.delegate = delegate
         self.role = role
         self.workspace = Path(workspace)
+        self.foreground_timeout_seconds = foreground_timeout_seconds
 
     @property
     def is_pooled(self) -> bool:
@@ -1195,6 +1199,13 @@ class SenpaiTerminalExecutor(ToolExecutor[TerminalAction, TerminalObservation]):
             return _terminal_denial(
                 action,
                 (f"Policy evaluation failed closed ({type(error).__name__})."),
+            )
+        if (
+            action.timeout is not None
+            and action.timeout > self.foreground_timeout_seconds
+        ):
+            action = action.model_copy(
+                update={"timeout": float(self.foreground_timeout_seconds)}
             )
         return self.delegate(action, conversation)
 
@@ -1230,7 +1241,23 @@ class SenpaiTerminalTool(ToolDefinition[TerminalAction, TerminalObservation]):
         role = role or os.environ.get("SENPAI_ROLE")
         if role not in {"advisor", "student"}:
             raise ValueError("role must be advisor or student")
-        native = TerminalTool.create(conv_state)[0]
+        try:
+            no_change_timeout = int(
+                os.environ.get("SENPAI_TERMINAL_NO_CHANGE_TIMEOUT_SECONDS", "600")
+            )
+            foreground_timeout = int(
+                os.environ.get("SENPAI_TERMINAL_FOREGROUND_TIMEOUT_SECONDS", "600")
+            )
+        except ValueError as error:
+            raise RuntimeError(
+                "Senpai terminal timeout settings must be integers"
+            ) from error
+        if min(no_change_timeout, foreground_timeout) <= 0:
+            raise RuntimeError("Senpai terminal timeout settings must be positive")
+        native = TerminalTool.create(
+            conv_state,
+            no_change_timeout_seconds=no_change_timeout,
+        )[0]
         if native.executor is None:
             raise RuntimeError("native terminal tool has no executor")
         return [
@@ -1239,6 +1266,7 @@ class SenpaiTerminalTool(ToolDefinition[TerminalAction, TerminalObservation]):
                     native.executor,
                     role=role,
                     workspace=Path(conv_state.workspace.working_dir),
+                    foreground_timeout_seconds=foreground_timeout,
                 )
             )
         ]
