@@ -264,6 +264,9 @@ up to eight direct tasks that are active or have an uncollected terminal result.
 `cancel_agents` records terminal cancellation. Atomic records keyed by the
 required batch key and each optional task key (or stable list index) make replay
 return the original task IDs instead of spawning duplicates.
+The deprecated `delegate_agent` name remains visible on root advisor and
+student agents only so persisted conversations can resume; it never launches
+work and directs callers to `spawn_agents` and `await_agents`.
 `include_context=false` sends only the system prompt and task; the child can
 still search the supplied parent-history directory. `include_context=true`
 also copies the model-visible parent history. The root advisor or student may

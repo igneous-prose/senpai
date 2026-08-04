@@ -33,6 +33,7 @@ from senpai_agent.delegation import (
     AgentStatusTool,
     AwaitAgentsTool,
     CancelAgentsTool,
+    DelegateAgentTool,
     SpawnAgentsTool,
 )
 from senpai_agent.git_workflow import (
@@ -1259,5 +1260,6 @@ def register_senpai_tools() -> None:
     register_tool("await_agents", AwaitAgentsTool)
     register_tool("agent_status", AgentStatusTool)
     register_tool("cancel_agents", CancelAgentsTool)
+    register_tool("delegate_agent", DelegateAgentTool)
     register_tool("senpai_terminal", SenpaiTerminalTool)
     _TOOLS_REGISTERED = True

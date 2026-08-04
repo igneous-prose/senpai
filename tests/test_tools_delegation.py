@@ -22,6 +22,8 @@ from senpai_agent.delegation import (
     DelegationConfig,
     DelegationRegistry,
     DelegationRequest,
+    DelegateAgentAction,
+    DelegateAgentTool,
     SpawnAgentsAction,
     SpawnAgentsTool,
     cancel_pending_descendants,
@@ -136,6 +138,39 @@ def tools(tmp_path: Path, factory, sink=None, **config_updates):
     status = AgentStatusTool.create(**params)[0]
     cancel = CancelAgentsTool.create(**params)[0]
     return spawn, await_tool, status, cancel
+
+
+def test_deprecated_delegate_agent_never_constructs_or_launches_a_runner(
+    tmp_path,
+    monkeypatch,
+):
+    def forbidden_factory():
+        raise AssertionError("legacy delegate_agent reached the runner factory")
+
+    monkeypatch.setattr(
+        "senpai_agent.delegation.configured_child_runner_factory",
+        forbidden_factory,
+    )
+    tool = DelegateAgentTool.create(
+        event_db_path=tmp_path / "events.sqlite3"
+    )[0]
+
+    observation = tool(
+        DelegateAgentAction(
+            task="Launch an Explore child",
+            agent="explore",
+            model="fast",
+            background=True,
+        ),
+        parent_conversation(),
+    )
+
+    assert observation.status == "finished"
+    assert observation.task_id == "deprecated"
+    assert "cannot launch" in (observation.result or "")
+    assert "spawn_agents" in (observation.result or "")
+    assert "await_agents" in (observation.result or "")
+    assert not (tmp_path / "events.sqlite3").exists()
 
 
 def test_spawn_is_nonblocking_and_await_first_collects_the_first_result(tmp_path):

@@ -868,6 +868,8 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
         )
     )
     delegation_params = {"event_db_path": str(local_event_db_path(config))}
+    if not config.child:
+        tools.append(Tool(name="delegate_agent", params=delegation_params))
     tools.extend(
         Tool(name=name, params=delegation_params)
         for name in (

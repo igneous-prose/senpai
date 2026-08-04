@@ -5,7 +5,7 @@ import sys
 import textwrap
 
 import pytest
-from openhands.sdk import LLM
+from openhands.sdk import Agent, LLM, Tool
 from openhands.sdk.plugin import Plugin
 from openhands.sdk.subagent import AgentDefinition, agent_definition_to_factory
 from openhands.tools.preset.default import register_default_tools
@@ -22,6 +22,24 @@ from senpai_agent.tools import register_senpai_tools
 from openhands_support import AGENT_DIR, PLUGIN_DIR, REPO_ROOT, runtime_config
 
 
+def test_runtime_agent_keeps_the_persisted_delegate_tool_compatible():
+    llm = LLM(
+        model="anthropic/claude-opus-4-8",
+        api_key=SecretStr("test-key"),
+    )
+    persisted = Agent(llm=llm, tools=[Tool(name="delegate_agent")])
+    runtime = Agent(
+        llm=llm,
+        tools=[
+            Tool(name="delegate_agent"),
+            Tool(name="spawn_agents"),
+            Tool(name="await_agents"),
+        ],
+    )
+
+    assert runtime.verify(persisted) is runtime
+
+
 def test_child_mode_keeps_bounded_delegation_lifecycle_tools(tmp_path):
     config = runtime_config(tmp_path, child=True)
     names = {tool.name for tool in build_main_tools(config)}
@@ -33,6 +51,7 @@ def test_child_mode_keeps_bounded_delegation_lifecycle_tools(tmp_path):
         "agent_status",
         "cancel_agents",
     } <= names
+    assert "delegate_agent" not in names
     assert "senpai_training" not in names
     assert delegation_config(config).depth == 0
 
@@ -46,6 +65,7 @@ def test_child_mode_keeps_bounded_delegation_lifecycle_tools(tmp_path):
                 "senpai_terminal",
                 "get_prs",
                 "github_transition",
+                "delegate_agent",
                 "spawn_agents",
                 "await_agents",
                 "agent_status",
@@ -58,6 +78,7 @@ def test_child_mode_keeps_bounded_delegation_lifecycle_tools(tmp_path):
                 "senpai_terminal",
                 "get_prs",
                 "github_transition",
+                "delegate_agent",
                 "spawn_agents",
                 "await_agents",
                 "agent_status",
@@ -82,7 +103,13 @@ def test_main_tools_replace_unsafe_defaults_with_role_scoped_boundaries(
     delegation_params = {
         "event_db_path": str(config.state_dir / f"{role}-events.sqlite3")
     }
-    for name in ("spawn_agents", "await_agents", "agent_status", "cancel_agents"):
+    for name in (
+        "delegate_agent",
+        "spawn_agents",
+        "await_agents",
+        "agent_status",
+        "cancel_agents",
+    ):
         assert by_name[name].params == delegation_params
     assert by_name["get_prs"].params == {
         "state_dir": str(config.state_dir / "github")
