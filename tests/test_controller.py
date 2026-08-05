@@ -1,6 +1,7 @@
 import time
 from base64 import b64encode
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -66,6 +67,18 @@ def review_event(number=17):
     )
 
 
+def baseline_event(current_sha="def"):
+    return ControllerEvent(
+        kind="baseline_advanced",
+        dedupe_key=f"baseline_advanced:17:abc:{current_sha}",
+        payload={
+            "number": 17,
+            "assigned_base_sha": "abc",
+            "current_base_sha": current_sha,
+        },
+    )
+
+
 def test_first_turn_combines_programme_role_template_and_runtime_identity(
     tmp_path: Path,
 ):
@@ -126,6 +139,45 @@ def test_successful_turn_repolls_immediately_and_continues_without_full_brief():
     assert "programme" in turns.calls[0][0]
     assert "programme" not in turns.calls[1][0]
     assert mailbox.calls == 3
+
+
+def test_post_turn_poll_at_reminder_boundary_only_delivers_new_state(
+    monkeypatch,
+):
+    original = review_event(17)
+    changed = review_event(18)
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+
+    class PostTurnMailbox(Mailbox):
+        def poll(self):
+            self.calls += 1
+            if self.calls == 1:
+                return (original,)
+            if self.calls == 2:
+                clock[0] = 30
+            return (original, changed)
+
+    mailbox = PostTurnMailbox([])
+    turns = Turns()
+
+    controller_module.Controller(
+        role="advisor",
+        mailbox=mailbox,
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        sleep=lambda _seconds: None,
+        poll_interval_seconds=30,
+        jitter_seconds=0,
+        event_reminder_seconds=30,
+    ).run(max_cycles=2)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({original.dedupe_key}),
+        frozenset({changed.dedupe_key}),
+        frozenset({original.dedupe_key}),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -192,6 +244,7 @@ def test_still_actionable_event_is_redelivered_after_one_poll_interval(
         sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
         poll_interval_seconds=30,
         jitter_seconds=0,
+        event_reminder_seconds=30,
     ).run(max_cycles=3)
 
     assert [call[2] for call in turns.calls] == [
@@ -199,6 +252,160 @@ def test_still_actionable_event_is_redelivered_after_one_poll_interval(
         frozenset({event.dedupe_key}),
         frozenset({event.dedupe_key}),
     ]
+
+
+def test_fast_poll_defaults_to_ten_minute_level_trigger_reminders(monkeypatch):
+    event = review_event()
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+
+    class PersistentMailbox(Mailbox):
+        def __init__(self):
+            super().__init__([])
+
+        def poll(self):
+            self.calls += 1
+            return (event,)
+
+    turns = Turns()
+    controller_module.Controller(
+        role="advisor",
+        mailbox=PersistentMailbox(),
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=30,
+        jitter_seconds=0,
+    ).run(max_cycles=21)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({event.dedupe_key}),
+        frozenset({event.dedupe_key}),
+    ]
+
+
+def test_unchanged_baseline_advance_does_not_repeat_on_reminder_cadence(
+    monkeypatch,
+):
+    event = baseline_event()
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+
+    class PersistentMailbox(Mailbox):
+        def poll(self):
+            self.calls += 1
+            return (event,)
+
+    turns = Turns()
+    controller_module.Controller(
+        role="advisor",
+        mailbox=PersistentMailbox([]),
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+        event_reminder_seconds=600,
+    ).run(max_cycles=3)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({event.dedupe_key}),
+    ]
+
+
+def test_changed_baseline_sha_wakes_immediately():
+    first = baseline_event("def")
+    changed = baseline_event("fed")
+    turns = Turns()
+
+    controller(Mailbox([(first,), (changed,), ()]), turns).run(max_cycles=1)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({first.dedupe_key}),
+        frozenset({changed.dedupe_key}),
+    ]
+
+
+def test_baseline_advance_wakes_again_after_disappearing():
+    event = baseline_event()
+    turns = Turns()
+
+    controller(
+        Mailbox([(event,), (event,), (), (event,), ()]),
+        turns,
+    ).run(max_cycles=3)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({event.dedupe_key}),
+        frozenset({event.dedupe_key}),
+    ]
+
+
+def test_controller_main_does_not_derive_reminders_from_fast_polling(
+    monkeypatch,
+    tmp_path: Path,
+):
+    import senpai_agent.openhands_runner as runner_module
+    import senpai_agent.tools as tools_module
+    import senpai_agent.weave_monitoring as weave_module
+
+    config = SimpleNamespace(
+        github_token="token",
+        github_repo="acme/widgets",
+        github_trusted_actor=None,
+        state_dir=tmp_path,
+        workspace=tmp_path,
+        training_max_timeout_seconds=1800,
+        conversation_id=CONVERSATION_ID,
+        timeout_seconds=3600,
+        harness_file=tmp_path / "harness.md",
+        role_file=tmp_path / "role.md",
+    )
+    monkeypatch.setattr(runner_module, "parse_runner_args", lambda _argv: object())
+    monkeypatch.setattr(
+        runner_module,
+        "resolve_config",
+        lambda _args, _env: config,
+    )
+    monkeypatch.setattr(runner_module, "scrub_model_credentials", lambda *_: None)
+    monkeypatch.setattr(runner_module, "read_role_instructions", lambda _: "")
+    monkeypatch.setattr(tools_module, "close_training_runtimes", lambda: None)
+    monkeypatch.setattr(weave_module, "finish_weave_monitoring", lambda: None)
+    monkeypatch.setattr(
+        controller_module,
+        "GitHubMailbox",
+        lambda **_kwargs: Mailbox([]),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "compose_system_instructions",
+        lambda *_: "",
+    )
+    monkeypatch.setattr(controller_module, "_full_prompt", lambda *_: "programme")
+
+    created = []
+
+    class CapturingController(Controller):
+        def run(self, *, max_cycles=None):
+            created.append(self)
+
+    monkeypatch.setattr(controller_module, "Controller", CapturingController)
+
+    assert (
+        controller_module.controller_main(
+            ["advisor"],
+            {
+                "SENPAI_ROLE": "advisor",
+                "ADVISOR_BRANCH": "main",
+                "SENPAI_POLL_INTERVAL_S": "30",
+            },
+        )
+        == 0
+    )
+    assert created[0].poll_interval_seconds == 30
+    assert created[0].event_reminder_seconds == 600
 
 
 def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():

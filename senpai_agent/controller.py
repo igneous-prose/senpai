@@ -46,6 +46,9 @@ from senpai_agent.supervisor import LEASE_ENV, ProgressLease
 from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergence
 
 
+_EDGE_TRIGGERED_EVENT_KINDS = frozenset({"baseline_advanced"})
+
+
 @dataclass(frozen=True, slots=True)
 class TurnResult:
     exit_code: int
@@ -206,7 +209,7 @@ class Controller:
         self.poll_interval_seconds = poll_interval_seconds
         self.jitter_seconds = jitter_seconds
         self.event_reminder_seconds = (
-            max(poll_interval_seconds, 1)
+            max(poll_interval_seconds, 600)
             if event_reminder_seconds is None
             else event_reminder_seconds
         )
@@ -327,7 +330,10 @@ class Controller:
                 # that appeared while OpenHands was reasoning.
                 try:
                     self._publish_progress("poll")
-                    events = self._new_events(self.mailbox.poll())
+                    events = self._new_events(
+                        self.mailbox.poll(),
+                        allow_reminders=False,
+                    )
                 except Exception as error:  # noqa: BLE001
                     print(
                         f"SENPAI_POST_TURN_POLL_ERROR {type(error).__name__}: {error}",
@@ -399,16 +405,21 @@ class Controller:
     def _new_events(
         self,
         events: Sequence[ControllerEvent],
+        *,
+        allow_reminders: bool = True,
     ) -> tuple[ControllerEvent, ...]:
         now = time.monotonic()
         current: dict[str, float] = {}
         new: list[ControllerEvent] = []
         for event in events:
             delivered_at = self._visible.get(event.dedupe_key)
-            if (
-                delivered_at is None
-                or now - delivered_at >= self.event_reminder_seconds
-            ):
+            reminder_due = (
+                allow_reminders
+                and event.kind not in _EDGE_TRIGGERED_EVENT_KINDS
+                and delivered_at is not None
+                and now - delivered_at >= self.event_reminder_seconds
+            )
+            if delivered_at is None or reminder_due:
                 new.append(event)
                 delivered_at = now
             current[event.dedupe_key] = delivered_at
@@ -609,18 +620,10 @@ def controller_main(
         max_consecutive_turn_failures=int(
             env.get("SENPAI_CONTROLLER_MAX_CONSECUTIVE_TURN_FAILURES", "2")
         ),
-        event_reminder_seconds=float(
-            env.get(
-                "SENPAI_EVENT_REMINDER_SECONDS",
-                str(
-                    _role_interval(
-                        env,
-                        role,
-                        "POLL_INTERVAL_S",
-                        600,
-                    )
-                ),
-            )
+        event_reminder_seconds=(
+            float(env["SENPAI_EVENT_REMINDER_SECONDS"])
+            if "SENPAI_EVENT_REMINDER_SECONDS" in env
+            else None
         ),
         start_gate_path=(
             Path(env["SENPAI_START_GATE_PATH"])
