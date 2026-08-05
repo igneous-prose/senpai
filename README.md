@@ -261,8 +261,8 @@ child edges: the root may spawn any agent, and a depth-one General Purpose
 child may spawn leaf helpers; Explore, Search, Bash Runner, and all depth-two
 children cannot delegate. The tree shares one absolute root-turn deadline, and
 a nested child must await or cancel all of its helpers before returning.
-Individual tasks are capped at five minutes for `fast`, ten for `smart`, and
-twenty-five for `frontier`, shortened when the root deadline is nearer.
+Individual tasks are capped at ten minutes for `fast`, thirty for `smart`, and
+one hour for `frontier`, shortened when the root deadline is nearer.
 
 An await call is capped at five minutes and does not cancel unfinished work.
 `agent_status` provides a non-blocking snapshot; with no task IDs, it returns

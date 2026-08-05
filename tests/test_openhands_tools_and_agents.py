@@ -372,8 +372,8 @@ def test_harness_states_bounded_delegation_tree_contract():
         "at most eight children in total",
         "depth-one general-purpose child",
         "Explore, Search, Bash Runner, and every depth-two child are leaves",
-        "five minutes for `fast`",
-        "ten for `smart`",
-        "twenty-five for `frontier`",
+        "ten minutes for `fast`",
+        "thirty for `smart`",
+        "one hour for `frontier`",
     ):
         assert required in normalized

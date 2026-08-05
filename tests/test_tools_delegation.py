@@ -24,11 +24,20 @@ from senpai_agent.delegation import (
     DelegationRequest,
     DelegateAgentAction,
     DelegateAgentTool,
+    MODEL_TIER_TIMEOUT_SECONDS,
     SpawnAgentsAction,
     SpawnAgentsTool,
     cancel_pending_descendants,
     configure_delegation,
 )
+
+
+def test_model_tier_runtime_limits():
+    assert MODEL_TIER_TIMEOUT_SECONDS == {
+        "fast": 600,
+        "smart": 1800,
+        "frontier": 3600,
+    }
 
 
 class EventSink:

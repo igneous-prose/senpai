@@ -113,8 +113,8 @@ Task IDs and terminal results are persisted. Replaying the same pending spawn
 returns the original IDs rather than launching duplicates. Await timeouts do
 not change task state; explicit cancellation records a terminal cancelled
 outcome, and the root deadline terminates any remaining descendants. Per-task
-runtime is also capped by tier: five minutes for `fast`, ten for `smart`, and
-twenty-five for `frontier`, always shortened to the inherited root deadline.
+runtime is also capped by tier: ten minutes for `fast`, thirty for `smart`, and
+one hour for `frontier`, always shortened to the inherited root deadline.
 
 ## Runtime boundaries
 
