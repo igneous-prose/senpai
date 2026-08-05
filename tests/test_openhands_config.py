@@ -175,6 +175,40 @@ def test_default_model_profiles_are_explicit_and_provider_credentials_are_inferr
     ) == ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "ultra")
 
 
+def test_wandb_gateway_configuration_is_explicit_and_uses_max_glm_reasoning(
+    tmp_path: Path,
+):
+    env = runtime_env(tmp_path)
+    env.update(
+        {
+            "WANDB_API_KEY": "wandb-key",
+            "WANDB_ENTITY": "research-team",
+            "WANDB_PROJECT": "mlxfast",
+            "SENPAI_OPENHANDS_MODEL": "wandb/zai-org/GLM-5.2",
+            "SENPAI_OPENHANDS_REASONING_EFFORT": "max",
+            "SENPAI_OPENHANDS_SMART_MODEL": "wandb/zai-org/GLM-5.2",
+            "SENPAI_OPENHANDS_SMART_REASONING_EFFORT": "max",
+            "SENPAI_OPENHANDS_FAST_MODEL": "wandb/zai-org/GLM-5.2",
+            "SENPAI_OPENHANDS_FAST_REASONING_EFFORT": "max",
+            "SENPAI_OPENHANDS_FRONTIER_MODEL": "wandb/zai-org/GLM-5.2",
+            "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": "max",
+        }
+    )
+
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert config.wandb_entity == "research-team"
+    assert config.wandb_project == "mlxfast"
+    assert config.model == config.smart_model == config.fast_model
+    assert config.model == config.frontier_model == "wandb/zai-org/GLM-5.2"
+    assert config.api_key_env == "WANDB_API_KEY"
+    assert config.api_key.get_secret_value() == "wandb-key"
+    assert config.reasoning_effort == "max"
+    assert config.smart_reasoning_effort == "max"
+    assert config.fast_reasoning_effort == "max"
+    assert config.frontier_reasoning_effort == "max"
+
+
 def test_fast_model_uses_luna_for_an_openai_main_profile(tmp_path: Path):
     env = runtime_env(tmp_path)
     env.update(

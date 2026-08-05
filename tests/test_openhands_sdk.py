@@ -86,6 +86,8 @@ def test_openhands_fork_main_is_consistent_across_install_paths():
         ("max", "openai/gpt-5.6-sol", "max"),
         ("high", "openai/gpt-5.6", "high"),
         ("xhigh", "anthropic/claude-opus-4-8", "xhigh"),
+        ("high", "wandb/zai-org/GLM-5.2", "high"),
+        ("max", "wandb/zai-org/GLM-5.2", "max"),
     ],
 )
 def test_supported_reasoning_effort_is_preserved(
@@ -105,6 +107,7 @@ def test_supported_reasoning_effort_is_preserved(
         ("max", "anthropic/claude-opus-4-8"),
         ("max", "openai/gpt-5.4"),
         ("max", "openai/gpt-5.60"),
+        ("medium", "wandb/zai-org/GLM-5.2"),
         ("extreme", "openai/gpt-5.6-sol"),
     ],
 )
@@ -227,6 +230,60 @@ def test_ultra_uses_openai_max_effort_in_pro_mode():
         "summary": "auto",
         "context": "all_turns",
     }
+
+
+def test_wandb_gateway_uses_chat_thinking_and_project_routing():
+    configuration = model_runtime_configuration(
+        "wandb/zai-org/GLM-5.2",
+        "max",
+        wandb_entity="research-team",
+        wandb_project="mlxfast",
+    )
+    llm = LLM(
+        model="wandb/zai-org/GLM-5.2",
+        api_key=SecretStr("test-key"),
+        reasoning_effort="max",
+        **configuration,
+    )
+    _messages, _tools, _mocked, call_kwargs, _telemetry = (
+        llm._prepare_completion_params(
+            [Message(role="user", content=[TextContent(text="Investigate")])],
+            tools=None,
+            add_security_risk_prediction=False,
+            kwargs={},
+        )
+    )
+
+    assert configuration == {
+        "api_mode": "chat",
+        "base_url": "https://api.inference.wandb.ai/v1",
+        "extra_headers": {"OpenAI-Project": "research-team/mlxfast"},
+        "capability_overrides": {
+            "supports_reasoning_effort": False,
+            "supports_responses_api": False,
+        },
+        "max_input_tokens": 262_144,
+        "max_output_tokens": 16_384,
+        "litellm_extra_body": {
+            "chat_template_kwargs": {
+                "enable_thinking": True,
+                "reasoning_effort": "max",
+            },
+        },
+    }
+    assert call_kwargs["extra_headers"]["OpenAI-Project"] == (
+        "research-team/mlxfast"
+    )
+    assert call_kwargs["extra_body"] == {
+        "chat_template_kwargs": {
+            "enable_thinking": True,
+            "reasoning_effort": "max",
+        },
+    }
+    assert call_kwargs["max_completion_tokens"] == 16_384
+    assert "reasoning_effort" not in call_kwargs
+    assert llm._provider_info.name == "wandb"
+    assert llm._provider_info.api_base == "https://api.inference.wandb.ai/v1"
 
 
 @pytest.mark.parametrize(

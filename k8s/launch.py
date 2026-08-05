@@ -37,6 +37,7 @@ from launch_helpers import (
     preflight_check_target_repo_access,
     preflight_check_target_repo_branch,
     preflight_check_wandb_api_key,
+    preflight_check_wandb_inference,
     render_configmap,
     render_launch_secret,
     render_template,
@@ -126,6 +127,7 @@ class Args:
 MODEL_PROVIDERS = {
     "anthropic": ("ANTHROPIC_API_KEY", "anthropic-api-key"),
     "openai": ("OPENAI_API_KEY", "openai-api-key"),
+    "wandb": ("WANDB_API_KEY", "wandb-api-key"),
 }
 REASONING_EFFORTS = {
     "low",
@@ -193,13 +195,20 @@ def validate_model_config(args: Args) -> None:
             choices = ", ".join(sorted(REASONING_EFFORTS))
             sys.exit(f"ERROR: --{name}_reasoning_effort must be one of: {choices}")
         normalized_model = model.lower()
+        if normalized_model == "wandb/zai-org/glm-5.2":
+            if effort not in {"high", "max"}:
+                sys.exit(
+                    f"ERROR: --{name}_reasoning_effort={effort} is "
+                    f"unsupported for {model}"
+                )
+            continue
         supports_extended_effort = normalized_model == "openai/gpt-5.6" or (
             normalized_model.startswith("openai/gpt-5.6-")
         )
         if effort in {"max", "ultra"} and not supports_extended_effort:
             sys.exit(
-                f"ERROR: --{name}_reasoning_effort={effort} requires an "
-                "openai/gpt-5.6* model"
+                f"ERROR: --{name}_reasoning_effort={effort} is unsupported for "
+                f"{model}"
             )
 
 
@@ -224,11 +233,12 @@ def role_model_config(args: Args, role: str) -> dict[str, str]:
 
 def model_provider_env(args: Args, role: str, secret_name: str) -> str:
     lines = []
-    for index, provider in enumerate(sorted(configured_model_providers(args, role))):
+    providers = sorted(configured_model_providers(args, role) - {"wandb"})
+    for index, provider in enumerate(providers):
         env_name, secret_key = MODEL_PROVIDERS[provider]
         lines.extend(
             (
-                f"{'name' if index == 0 else '        - name'}: {env_name}",
+                f"{'- name' if index == 0 else '        - name'}: {env_name}",
                 "          valueFrom:",
                 "            secretKeyRef:",
                 f"              name: {secret_name}",
@@ -509,6 +519,12 @@ def main():
             preflight_check_anthropic_api_key(anthropic_api_key)
         if openai_api_key := provider_api_keys.get("openai"):
             preflight_check_openai_api_key(openai_api_key)
+        if "wandb" in model_providers:
+            preflight_check_wandb_inference(
+                wandb_api_key,
+                args.wandb_entity,
+                args.wandb_project,
+            )
         preflight_check_exa_api_key(exa_api_key)
         preflight_check_wandb_api_key(wandb_api_key)
         if args.preflight_only:

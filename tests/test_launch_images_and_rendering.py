@@ -245,6 +245,33 @@ def test_role_model_configuration_preserves_the_configured_efforts():
         assert config["SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT"] == "max"
 
 
+def test_wandb_gateway_is_rendered_for_every_role():
+    model = "wandb/zai-org/GLM-5.2"
+    args = launch_args(
+        advisor_model=model,
+        advisor_reasoning_effort="max",
+        student_model=model,
+        student_reasoning_effort="max",
+        smart_model=model,
+        smart_reasoning_effort="max",
+        fast_model=model,
+        fast_reasoning_effort="max",
+        frontier_model=model,
+        frontier_reasoning_effort="max",
+        wandb_entity="research-team",
+        wandb_project="mlxfast",
+    )
+
+    for role in ("advisor", "student"):
+        configmap, _deployment, _secret = render_role(role, args)
+        config = yaml.safe_load(configmap)["data"]
+        assert config["SENPAI_OPENHANDS_MODEL"] == model
+        assert config["WANDB_ENTITY"] == "research-team"
+        assert config["WANDB_PROJECT"] == "mlxfast"
+
+    launch.validate_model_config(args)
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -254,14 +281,14 @@ def test_role_model_configuration_preserves_the_configured_efforts():
                 "advisor_model": "anthropic/claude-opus-4-8",
                 "advisor_reasoning_effort": "ultra",
             },
-            "requires an openai/gpt-5.6",
+            "unsupported for",
         ),
         (
             {
                 "advisor_model": "openai/gpt-5.60",
                 "advisor_reasoning_effort": "max",
             },
-            "requires an openai/gpt-5.6",
+            "unsupported for",
         ),
     ],
 )
@@ -275,6 +302,7 @@ def test_launch_rejects_unsupported_reasoning_effort(overrides, message):
     [
         ("anthropic/claude-opus-4-8", "ANTHROPIC_API_KEY", "anthropic-api-key"),
         ("openai/gpt-5.6-sol", "OPENAI_API_KEY", "openai-api-key"),
+        ("wandb/zai-org/GLM-5.2", "WANDB_API_KEY", "wandb-api-key"),
     ],
 )
 def test_roles_mount_only_the_provider_used_by_their_models(
@@ -293,9 +321,11 @@ def test_roles_mount_only_the_provider_used_by_their_models(
     environment = yaml.safe_load(deployment)["spec"]["template"]["spec"][
         "containers"
     ][0]["env"]
+    environment_names = [item["name"] for item in environment]
 
     assert secret_keys == {"github-token", secret_key, "exa-api-key", "wandb-api-key"}
-    assert {item["name"] for item in environment} == {
+    assert len(environment_names) == len(set(environment_names))
+    assert set(environment_names) == {
         "GITHUB_TOKEN",
         provider_env,
         "EXA_API_KEY",

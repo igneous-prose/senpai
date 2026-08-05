@@ -646,6 +646,25 @@ def preflight_check_wandb_api_key(api_key: str) -> None:
     print("  OK — W&B API key authenticated")
 
 
+def preflight_check_wandb_inference(
+    api_key: str,
+    entity: str,
+    project: str,
+) -> None:
+    """Verify W&B Inference auth and project-pool routing."""
+    req = urllib.request.Request(
+        "https://api.inference.wandb.ai/v1/models",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "OpenAI-Project": f"{entity}/{project}",
+            "User-Agent": "senpai-launch-preflight",
+        },
+    )
+    response = _preflight_http("W&B Inference API key", req, api_key, timeout=10)
+    if not isinstance(response, dict) or not isinstance(response.get("data"), list):
+        sys.exit("ERROR: W&B Inference check returned an invalid models response")
+
+
 def preflight_check_target_repo_access(target_repo_url: str, token: str) -> None:
     """Verify the token can write repository contents without changing a ref."""
     slug = target_repo_slug(target_repo_url)

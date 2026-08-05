@@ -98,6 +98,7 @@ def bypass_external_preflight(monkeypatch):
         "preflight_check_openai_api_key",
         "preflight_check_exa_api_key",
         "preflight_check_wandb_api_key",
+        "preflight_check_wandb_inference",
         "ensure_advisor_branch",
         "ensure_target_repo_labels",
     ):
@@ -107,6 +108,50 @@ def bypass_external_preflight(monkeypatch):
         "preflight_check_target_repo_branch",
         lambda *_args: "main",
     )
+
+
+def test_wandb_gateway_uses_the_wandb_key_for_openai_compatible_inference(
+    monkeypatch,
+):
+    model = "wandb/zai-org/GLM-5.2"
+    args = launch_args(
+        advisor_model=model,
+        advisor_reasoning_effort="max",
+        student_model=model,
+        student_reasoning_effort="max",
+        smart_model=model,
+        smart_reasoning_effort="max",
+        fast_model=model,
+        fast_reasoning_effort="max",
+        frontier_model=model,
+        frontier_reasoning_effort="max",
+        wandb_entity="research-team",
+        wandb_project="mlxfast",
+    )
+    monkeypatch.setattr(launch.sp, "parse", lambda *_args, **_kwargs: args)
+    bypass_external_preflight(monkeypatch)
+    monkeypatch.setattr(launch, "resolve_wandb_api_key", lambda _path: "wandb-key")
+    monkeypatch.setattr(
+        launch,
+        "resolve_openai_api_key",
+        lambda _path: pytest.fail("W&B inference must not resolve an OpenAI key"),
+    )
+    checked = []
+    monkeypatch.setattr(
+        launch,
+        "preflight_check_wandb_inference",
+        lambda key, entity, project: checked.append((key, entity, project)),
+    )
+    monkeypatch.setattr(launch, "kubectl_apply", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        launch,
+        "existing_student_names",
+        lambda *_args, **_kwargs: [],
+    )
+
+    launch.main()
+
+    assert checked == [("wandb-key", "research-team", "mlxfast")]
 
 
 @pytest.mark.parametrize(

@@ -83,6 +83,7 @@ DEFAULT_FRONTIER_MODEL = "openai/gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "xhigh"
 DEFAULT_FAST_REASONING_EFFORT = "high"
 DEFAULT_FRONTIER_REASONING_EFFORT = "ultra"
+WANDB_INFERENCE_BASE_URL = "https://api.inference.wandb.ai/v1"
 REASONING_EFFORTS = (
     "low",
     "medium",
@@ -97,6 +98,7 @@ SENPAI_AGENT_DIR = Path(__file__).resolve().parents[1] / ".agents" / "agents"
 PROVIDER_API_KEY_ENVS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
+    "wandb": "WANDB_API_KEY",
 }
 COMMAND_SECRET_ENV_NAMES = (
     "WANDB_API_KEY",
@@ -180,6 +182,8 @@ class RunnerConfig:
     harness_file: Path
     role_file: Path
     plugin_dir: Path
+    wandb_entity: str | None = None
+    wandb_project: str | None = None
     training_max_timeout_seconds: int = 1800
     timeout_seconds: float = 3600
     llm_timeout_seconds: int = 900
@@ -206,6 +210,13 @@ def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
             f"unsupported reasoning effort {reasoning_effort!r}; "
             f"choose one of: {choices}"
         )
+    if provider == "wandb" and model_name == "zai-org/glm-5.2":
+        if reasoning_effort not in {"high", "max"}:
+            raise ValueError(
+                f"reasoning effort {reasoning_effort!r} is unsupported for "
+                f"model {model!r}; use 'high' or 'max'"
+            )
+        return reasoning_effort
     supports_extended_effort = provider == "openai" and (
         model_name == "gpt-5.6" or model_name.startswith("gpt-5.6-")
     )
@@ -470,6 +481,8 @@ def resolve_config(
         raise RuntimeError("Senpai LLM timeout settings must be numeric") from error
     if llm_timeout_seconds <= 0 or llm_num_retries <= 0:
         raise RuntimeError("Senpai LLM timeout and attempts must be positive")
+    wandb_entity = env.get("WANDB_ENTITY", "").strip() or None
+    wandb_project = env.get("WANDB_PROJECT", "").strip() or None
     delegation_root_value = env.get("SENPAI_DELEGATION_ROOT_STATE_DIR")
     delegation_root_state_dir = (
         Path(delegation_root_value).expanduser().resolve()
@@ -610,6 +623,13 @@ def resolve_config(
     smart_api_key = resolve_api_key(env, smart_api_key_env)
     fast_api_key = resolve_api_key(env, fast_api_key_env)
     frontier_api_key = resolve_api_key(env, frontier_api_key_env)
+    models = (model, smart_model, fast_model, frontier_model)
+    if any(model_provider(profile) == "wandb" for profile in models) and not (
+        wandb_entity and wandb_project
+    ):
+        raise RuntimeError(
+            "WANDB_ENTITY and WANDB_PROJECT are required for W&B Inference"
+        )
 
     return RunnerConfig(
         max_turns=args.max_turns,
@@ -673,6 +693,8 @@ def resolve_config(
         plugin_dir=resolve_plugin_dir(
             env_value(args.plugin_dir, env, "SENPAI_PLUGIN"),
         ),
+        wandb_entity=wandb_entity,
+        wandb_project=wandb_project,
         training_max_timeout_seconds=training_max_timeout_seconds,
         timeout_seconds=timeout_seconds,
         llm_timeout_seconds=llm_timeout_seconds,
@@ -812,8 +834,38 @@ def openai_responses_configuration(
 def model_runtime_configuration(
     model: str,
     reasoning_effort: str,
+    *,
+    wandb_entity: str | None = None,
+    wandb_project: str | None = None,
 ) -> dict[str, object]:
     """Merge provider options, including nested LiteLLM request fields."""
+    if model_provider(model) == "wandb":
+        if not (wandb_entity and wandb_project):
+            raise ValueError(
+                "wandb_entity and wandb_project are required for W&B Inference"
+            )
+        configuration: dict[str, object] = {
+            "api_mode": "chat",
+            "base_url": WANDB_INFERENCE_BASE_URL,
+            "extra_headers": {
+                "OpenAI-Project": f"{wandb_entity}/{wandb_project}"
+            },
+            "capability_overrides": {
+                "supports_reasoning_effort": False,
+                "supports_responses_api": False,
+            },
+            "max_input_tokens": 262_144,
+            "max_output_tokens": 16_384,
+        }
+        if model.lower() == "wandb/zai-org/glm-5.2":
+            configuration["litellm_extra_body"] = {
+                "chat_template_kwargs": {
+                    "enable_thinking": True,
+                    "reasoning_effort": reasoning_effort,
+                },
+            }
+        return configuration
+
     configuration: dict[str, object] = {}
     extra_body: dict[str, object] = {}
     for options in (
@@ -1160,6 +1212,8 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             **model_runtime_configuration(
                 config.model,
                 config.reasoning_effort,
+                wandb_entity=config.wandb_entity,
+                wandb_project=config.wandb_project,
             ),
         )
         if config.agent_name:

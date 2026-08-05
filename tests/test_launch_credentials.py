@@ -108,6 +108,21 @@ def test_wandb_preflight_redacts_credentials_from_graphql_errors(monkeypatch):
     assert "<redacted>" in message
 
 
+def test_wandb_inference_preflight_routes_to_the_requested_project(monkeypatch):
+    captured = capture_request(monkeypatch, {"data": []})
+
+    launch_helpers.preflight_check_wandb_inference(
+        "wandb-secret",
+        "research-team",
+        "mlxfast",
+    )
+
+    request = captured["request"]
+    assert request.full_url == "https://api.inference.wandb.ai/v1/models"
+    assert request.headers["Authorization"] == "Bearer wandb-secret"
+    assert request.headers["Openai-project"] == "research-team/mlxfast"
+
+
 def test_repo_access_uses_an_impossible_ref_write_probe(monkeypatch):
     captured = {}
 
