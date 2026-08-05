@@ -34,8 +34,7 @@ class SupervisorConfig:
     check_interval_seconds: float = 5
     terminate_grace_seconds: float = 60
     initial_backoff_seconds: float = 1
-    max_backoff_seconds: float = 60
-    stable_after_seconds: float = 600
+    max_backoff_seconds: float = 300
 
     def __post_init__(self) -> None:
         if (
@@ -45,7 +44,6 @@ class SupervisorConfig:
                 self.terminate_grace_seconds,
                 self.initial_backoff_seconds,
                 self.max_backoff_seconds,
-                self.stable_after_seconds,
             )
             <= 0
         ):
@@ -57,6 +55,7 @@ class WorkerLease:
     pid: int
     phase: str
     deadline: float
+    completed_turns: int = 0
 
     @classmethod
     def read(cls, path: Path) -> WorkerLease:
@@ -65,8 +64,9 @@ class WorkerLease:
             pid=int(value["pid"]),
             phase=str(value["phase"]),
             deadline=float(value["deadline"]),
+            completed_turns=int(value.get("completed_turns", 0)),
         )
-        if lease.pid <= 0 or not lease.phase:
+        if lease.pid <= 0 or not lease.phase or lease.completed_turns < 0:
             raise ValueError("invalid controller lease")
         return lease
 
@@ -76,10 +76,19 @@ class ProgressLease:
 
     def __init__(self, path: Path):
         self.path = path.resolve()
+        self.completed_turns = 0
 
-    def update(self, phase: str, timeout_seconds: float) -> None:
+    def update(
+        self,
+        phase: str,
+        timeout_seconds: float,
+        *,
+        completed_turn: bool = False,
+    ) -> None:
         if not phase or timeout_seconds <= 0:
             raise ValueError("progress phase and timeout must be positive")
+        if completed_turn:
+            self.completed_turns += 1
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
         temporary.write_text(
@@ -88,6 +97,7 @@ class ProgressLease:
                     "pid": os.getpid(),
                     "phase": phase,
                     "deadline": time.monotonic() + timeout_seconds,
+                    "completed_turns": self.completed_turns,
                 },
                 sort_keys=True,
             ),
@@ -142,25 +152,32 @@ class WorkerSupervisor:
             started = time.monotonic()
             descendants: dict[int, float] = {}
             try:
-                reason = self._wait_for_worker(process, descendants, stop, started)
+                reason, made_progress = self._wait_for_worker(
+                    process,
+                    descendants,
+                    stop,
+                    started,
+                )
             finally:
                 self._terminate_worker(process, descendants)
             if stop.is_set():
                 return 0
 
             runtime = time.monotonic() - started
-            failures = (
-                0 if runtime >= self.config.stable_after_seconds else failures + 1
+            failures = 1 if made_progress else failures + 1
+            exponential_delay = min(
+                self.config.max_backoff_seconds,
+                self.config.initial_backoff_seconds * (2 ** min(failures - 1, 16)),
             )
             delay = min(
                 self.config.max_backoff_seconds,
-                self.config.initial_backoff_seconds * (2 ** min(failures - 1, 8)),
+                exponential_delay * random.uniform(0.8, 1.2),
             )
-            delay *= random.uniform(0.8, 1.2)
             print(
                 "SENPAI_CONTROLLER_RESTART "
                 f"reason={reason} runtime_seconds={runtime:.1f} "
-                f"backoff_seconds={delay:.1f}",
+                f"completed_turn={str(made_progress).lower()} "
+                f"restart_failures={failures} backoff_seconds={delay:.1f}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -189,22 +206,29 @@ class WorkerSupervisor:
         descendants: dict[int, float],
         stop: threading.Event,
         started: float,
-    ) -> str:
+    ) -> tuple[str, bool]:
+        made_progress = False
         while not stop.is_set():
             self._remember_descendants(process, descendants)
-            exit_code = process.poll()
-            if exit_code is not None:
-                return f"exit:{exit_code}"
-
             lease = self._read_lease()
             now = time.monotonic()
             if lease is not None and lease.pid == process.pid:
+                made_progress = made_progress or lease.completed_turns > 0
                 if now > lease.deadline:
-                    return f"overdue:{lease.phase}"
+                    return f"overdue:{lease.phase}", made_progress
             elif now - started > self.config.startup_timeout_seconds:
-                return "startup-timeout"
+                return "startup-timeout", made_progress
+
+            exit_code = process.poll()
+            if exit_code is not None:
+                final_lease = self._read_lease()
+                if final_lease is not None and final_lease.pid == process.pid:
+                    made_progress = (
+                        made_progress or final_lease.completed_turns > 0
+                    )
+                return f"exit:{exit_code}", made_progress
             stop.wait(self.config.check_interval_seconds)
-        return "shutdown"
+        return "shutdown", made_progress
 
     def _read_lease(self) -> WorkerLease | None:
         try:

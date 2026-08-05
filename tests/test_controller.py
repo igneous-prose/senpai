@@ -400,6 +400,38 @@ def test_turn_lease_uses_the_configured_hard_deadline(tmp_path: Path):
     assert before + 456 <= observed[0].deadline <= after + 456
 
 
+def test_only_an_acknowledged_turn_advances_supervisor_progress(tmp_path: Path):
+    lease_path = tmp_path / "controller-lease.json"
+    event = review_event()
+    mailbox = Mailbox([(event,), (event,), ()])
+
+    controller(
+        mailbox,
+        Turns([TurnResult(exit_code=19), TurnResult(exit_code=0)]),
+        progress=ProgressLease(lease_path),
+    ).run(max_cycles=2)
+
+    assert mailbox.acknowledged == [(event.dedupe_key,)]
+    assert WorkerLease.read(lease_path).completed_turns == 1
+
+
+def test_failed_acknowledgement_does_not_advance_supervisor_progress(tmp_path: Path):
+    lease_path = tmp_path / "controller-lease.json"
+
+    class FailingAcknowledgeMailbox(Mailbox):
+        def acknowledge(self, _dedupe_keys):
+            raise RuntimeError("durable acknowledgement failed")
+
+    with pytest.raises(RuntimeError, match="durable acknowledgement failed"):
+        controller(
+            FailingAcknowledgeMailbox([(review_event(),)]),
+            Turns(),
+            progress=ProgressLease(lease_path),
+        ).run(max_cycles=1)
+
+    assert WorkerLease.read(lease_path).completed_turns == 0
+
+
 def test_changed_system_context_is_injected_once_into_the_existing_conversation(
     tmp_path: Path,
 ):

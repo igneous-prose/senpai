@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -8,7 +9,8 @@ from pathlib import Path
 
 from pydantic import SecretStr
 
-from senpai_agent.supervisor import SupervisorConfig, WorkerSupervisor
+import senpai_agent.supervisor as supervisor_module
+from senpai_agent.supervisor import SupervisorConfig, WorkerLease, WorkerSupervisor
 
 
 def wait_for(path: Path, timeout: float = 5) -> None:
@@ -30,8 +32,19 @@ def run_supervisor(
     return thread, results
 
 
+def restart_backoffs(stderr: str) -> list[float]:
+    return [
+        float(match.group(1))
+        for match in re.finditer(r"backoff_seconds=([0-9.]+)", stderr)
+    ]
+
+
 def test_supervisor_default_termination_grace_is_sixty_seconds():
     assert SupervisorConfig().terminate_grace_seconds == 60
+
+
+def test_supervisor_caps_repeated_restart_backoff_at_five_minutes():
+    assert SupervisorConfig().max_backoff_seconds == 300
 
 
 def test_restarted_workers_receive_github_token_without_environment_exposure(
@@ -164,6 +177,164 @@ while True:
     assert not thread.is_alive()
     assert results == [0]
     assert int((tmp_path / "starts").read_text()) >= 2
+
+
+def test_worker_uptime_without_a_completed_turn_does_not_reset_restart_backoff(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+):
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        """
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+state = Path(sys.argv[1])
+count_path = state / "starts"
+count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+count_path.write_text(str(count))
+lease = Path(os.environ["SENPAI_CONTROLLER_LEASE_PATH"])
+lease.write_text(json.dumps({
+    "pid": os.getpid(),
+    "phase": "sleep",
+    "deadline": 1e100,
+}))
+time.sleep(0.03)
+if count < 3:
+    raise SystemExit(19)
+(state / "ready").write_text("ready")
+while True:
+    time.sleep(1)
+""".strip()
+    )
+    class AcceleratedClock:
+        @staticmethod
+        def monotonic():
+            return time.monotonic() * 100_000
+
+    monkeypatch.setattr(supervisor_module, "time", AcceleratedClock())
+    monkeypatch.setattr(supervisor_module.random, "uniform", lambda _a, _b: 1.2)
+    stop = threading.Event()
+    supervisor = WorkerSupervisor(
+        command=(sys.executable, str(worker), str(tmp_path)),
+        lease_path=tmp_path / "controller-lease.json",
+        config=SupervisorConfig(
+            startup_timeout_seconds=1_000_000_000,
+            check_interval_seconds=0.005,
+            terminate_grace_seconds=0.05,
+            initial_backoff_seconds=0.2,
+            max_backoff_seconds=0.4,
+        ),
+    )
+
+    thread, results = run_supervisor(supervisor, stop)
+    wait_for(tmp_path / "ready")
+    stop.set()
+    thread.join(5)
+
+    assert results == [0]
+    assert restart_backoffs(capsys.readouterr().err) == [0.2, 0.4]
+
+
+def test_worker_exit_samples_its_final_completed_turn(tmp_path: Path, monkeypatch):
+    supervisor = WorkerSupervisor(
+        command=("worker",),
+        lease_path=tmp_path / "controller-lease.json",
+    )
+    leases = iter(
+        (
+            WorkerLease(
+                pid=123,
+                phase="openhands-turn",
+                deadline=time.monotonic() + 30,
+            ),
+            WorkerLease(
+                pid=123,
+                phase="turn-complete",
+                deadline=time.monotonic() + 30,
+                completed_turns=1,
+            ),
+        )
+    )
+    monkeypatch.setattr(supervisor, "_read_lease", lambda: next(leases))
+    monkeypatch.setattr(supervisor, "_remember_descendants", lambda *_args: None)
+
+    class ExitedProcess:
+        pid = 123
+
+        @staticmethod
+        def poll():
+            return 19
+
+    reason, made_progress = supervisor._wait_for_worker(
+        ExitedProcess(),
+        {},
+        threading.Event(),
+        time.monotonic(),
+    )
+
+    assert reason == "exit:19"
+    assert made_progress is True
+
+
+def test_completed_turn_resets_restart_backoff(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+):
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        """
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+state = Path(sys.argv[1])
+count_path = state / "starts"
+count = int(count_path.read_text()) + 1 if count_path.exists() else 1
+count_path.write_text(str(count))
+lease = Path(os.environ["SENPAI_CONTROLLER_LEASE_PATH"])
+lease.write_text(json.dumps({
+    "pid": os.getpid(),
+    "phase": "poll",
+    "deadline": time.monotonic() + 30,
+    "completed_turns": 1 if count == 2 else 0,
+}))
+time.sleep(0.03)
+if count < 4:
+    raise SystemExit(19)
+(state / "ready").write_text("ready")
+while True:
+    time.sleep(1)
+""".strip()
+    )
+    monkeypatch.setattr(supervisor_module.random, "uniform", lambda _a, _b: 1.0)
+    stop = threading.Event()
+    supervisor = WorkerSupervisor(
+        command=(sys.executable, str(worker), str(tmp_path)),
+        lease_path=tmp_path / "controller-lease.json",
+        config=SupervisorConfig(
+            startup_timeout_seconds=1,
+            check_interval_seconds=0.005,
+            terminate_grace_seconds=0.05,
+            initial_backoff_seconds=0.1,
+            max_backoff_seconds=0.4,
+        ),
+    )
+
+    thread, results = run_supervisor(supervisor, stop)
+    wait_for(tmp_path / "ready")
+    stop.set()
+    thread.join(5)
+
+    assert results == [0]
+    assert restart_backoffs(capsys.readouterr().err) == [0.1, 0.1, 0.2]
 
 
 def test_health_command_reports_live_and_expired_worker_leases(tmp_path: Path):

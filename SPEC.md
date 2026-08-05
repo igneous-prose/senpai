@@ -59,8 +59,11 @@ Python controller worker
   sleep/backoff/jitter
 ```
 
-The worker publishes an atomic lease containing its PID, current phase, and
-hard deadline. The supervisor is independent of OpenHands and Kubernetes.
+The worker publishes an atomic lease containing its PID, current phase, hard
+deadline, and completed-turn counter. The supervisor resets bounded restart
+backoff only after a turn is successfully acknowledged; process uptime and
+idle sleep do not count as progress. The supervisor is independent of
+OpenHands and Kubernetes.
 Kubernetes liveness and Docker health checks inspect the same lease, while the
 supervisor provides the same recovery on a plain host.
 

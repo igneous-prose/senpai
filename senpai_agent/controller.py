@@ -291,6 +291,10 @@ class Controller:
                         self.mailbox.acknowledge(
                             tuple(dict.fromkeys(acknowledged))
                         )
+                        self._publish_progress(
+                            "turn-complete",
+                            completed_turn=True,
+                        )
                         delivered_at = time.monotonic()
                         for key in acknowledged:
                             self._visible[key] = delivered_at
@@ -361,11 +365,14 @@ class Controller:
         self,
         phase: str,
         timeout_seconds: float | None = None,
+        *,
+        completed_turn: bool = False,
     ) -> None:
         if self.progress is not None:
             self.progress.update(
                 phase,
                 timeout_seconds or self.operation_timeout_seconds,
+                completed_turn=completed_turn,
             )
 
     def _sleep(self, phase: str, seconds: float) -> None:
