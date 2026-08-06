@@ -28,58 +28,122 @@ conclusion. Then choose one disposition:
 
 ```json
 {
-  "transition": {
-    "operation": "merge_experiment",
+  "assignment": {
     "pr_number": 123,
-    "expected_head_sha": "CURRENT_PR_HEAD_SHA",
     "assignment_id": "assignment-id",
-    "merge_method": "squash"
-  }
+    "revision_id": "current-revision-id",
+    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
+  },
+  "expected_current_base_sha": "CURRENT_BASE_SHA",
+  "merge_method": "squash"
 }
 ```
 
-The transition refuses drafts, missing or foreign results, stale heads,
-blocking labels, unknown mergeability, and conflicts. It compares the
+Call `merge_experiment`. It refuses drafts, missing or foreign results, stale
+heads, blocking labels, unknown mergeability, and conflicts. It compares the
 assignment's base SHA with the live base branch immediately before merging. If
-the baseline advanced, reassess the result. Request a rerun when the conclusion
-no longer holds; otherwise retry with the event's exact `current_base_sha` as
-`accepted_base_sha`. Never invent that value or call `gh pr merge`.
+the research base changed, reassess the exact terminal result against the
+event's `current_base_sha`.
+
+If the conclusion still holds, record that decision before merging:
+
+```json
+{
+  "assignment": {
+    "pr_number": 123,
+    "assignment_id": "assignment-id",
+    "revision_id": "current-revision-id",
+    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
+  },
+  "expected_current_base_sha": "CURRENT_BASE_SHA",
+  "reason": "Why this exact result remains valid against the current research base."
+}
+```
+
+Call `accept_result_on_current_base` with that payload. Its durable acceptance
+is bound to the assignment, revision, result head, canonical structured result,
+and exact current base SHA. If any of them changes, reassess. If the conclusion
+no longer holds, request a new revision instead. Never invent a SHA or call
+`gh pr merge`.
 
 ## Close a non-winner
 
 ```json
 {
-  "transition": {
-    "operation": "close_experiment",
+  "assignment": {
     "pr_number": 123,
-    "expected_head_sha": "CURRENT_PR_HEAD_SHA",
     "assignment_id": "assignment-id",
-    "reason": "Concise durable scientific disposition."
-  }
+    "revision_id": "current-revision-id",
+    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
+  },
+  "reason": "Concise durable scientific disposition."
 }
 ```
 
-Distinguish a useful negative from an invalid or incomplete run. Do not edit
-labels, write disposition markers, or close the PR with `gh`.
+Call `close_experiment`. Distinguish a useful negative from an invalid or
+incomplete run. Do not edit labels, write disposition markers, or close the PR
+with `gh`.
 
 ## Request a revision
 
 ```json
 {
-  "transition": {
-    "operation": "request_revision",
+  "assignment": {
     "pr_number": 123,
     "assignment_id": "assignment-id",
-    "expected_head_sha": "CURRENT_PR_HEAD_SHA",
-    "revision_id": "new-revision-id",
-    "comment": "Exact missing evidence and the bounded next run required."
-  }
+    "revision_id": "current-revision-id",
+    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
+  },
+  "new_revision_id": "new-revision-id",
+  "required_base_sha": "CURRENT_BASE_SHA",
+  "comment": "Exact missing evidence and the bounded next run required."
 }
 ```
 
-Use a new stable revision ID. State one concrete change or experiment and its
-acceptance evidence; do not close an experiment that can still answer the
-assigned question with one bounded correction.
+Call `request_assignment_revision`. Use a new stable revision ID and the exact
+research base SHA the next revision must use. State one concrete change or
+experiment and its acceptance evidence; do not close an experiment that can
+still answer the assigned question with one bounded correction.
+
+## Continue the current revision
+
+Use `send_assignment_feedback` for guidance that does not change the required
+evidence or research base:
+
+```json
+{
+  "assignment": {
+    "pr_number": 123,
+    "assignment_id": "assignment-id",
+    "revision_id": "current-revision-id",
+    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
+  },
+  "feedback_id": "stable-guidance-id",
+  "comment": "Actionable clarification, question, hold, or nudge."
+}
+```
+
+Use a new `feedback_id` only for distinct guidance. Exact replay is a no-op.
+
+## Repair routing state
+
+If a controller event reports inconsistent workflow labels, call
+`repair_assignment_routing` with the intended state rather than editing labels:
+
+```json
+{
+  "assignment": {
+    "pr_number": 123,
+    "assignment_id": "assignment-id",
+    "revision_id": "current-revision-id",
+    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
+  },
+  "working_state": "review",
+  "blockers": []
+}
+```
+
+`blockers` may contain `blocked`, `hold`, or `needs-rebase`.
 
 ## Record the outcome
 
@@ -89,14 +153,12 @@ change and publish it only through:
 
 ```json
 {
-  "transition": {
-    "operation": "push_branch",
-    "branch": "advisor-branch",
-    "expected_remote_sha": "REMOTE_SHA_BEFORE_PUSH",
-    "expected_head_sha": "LOCAL_COMMIT_SHA"
-  }
+  "remote_branch_sha_before_push": "REMOTE_SHA_BEFORE_PUSH",
+  "local_commit_sha": "LOCAL_COMMIT_SHA"
 }
 ```
+
+Call `publish_advisor_branch`; it publishes only the configured advisor branch.
 
 Review multiple candidates strongest-first and refresh the baseline between
 each decision.

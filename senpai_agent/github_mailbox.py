@@ -20,8 +20,14 @@ from senpai_agent.github_http import GitHubReader, GitHubReadError
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.models import (
     AssignmentRecord,
+    ExperimentResult,
+    ResearchBaseAcceptanceRecord,
+    ResultMarkerError,
+    experiment_result_digest,
     parse_assignment_feedback_markers,
     parse_assignment_markers,
+    parse_research_base_acceptance_markers,
+    parse_result_markers,
 )
 
 
@@ -205,58 +211,156 @@ class GitHubMailbox:
                         },
                     )
                 )
-        if active_assignments:
-            try:
-                current_base_sha = self._advisor_head_sha()
-            except (GitHubReadError, TypeError) as error:
-                print(
-                    "SENPAI_BASELINE_WATCH_ERROR "
-                    f"{type(error).__name__}: {error}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-            else:
-                for pull, assignment in active_assignments:
-                    if assignment.base_sha == current_base_sha:
-                        continue
-                    number = int(pull["number"])
-                    events.append(
-                        ControllerEvent(
-                            kind="baseline_advanced",
-                            dedupe_key=(
-                                f"baseline_advanced:{number}:"
-                                f"{assignment.base_sha}:{current_base_sha}"
-                            ),
-                            payload={
-                                **_pull_payload(pull),
-                                "assignment_id": assignment.assignment_id,
-                                "revision_id": assignment.revision_id,
-                                "student": assignment.student,
-                                "base_ref": assignment.base_ref,
-                                "assigned_base_sha": assignment.base_sha,
-                                "current_base_sha": current_base_sha,
-                                "compare_url": (
-                                    f"{str(pull['html_url']).rsplit('/pull/', 1)[0]}"
-                                    f"/compare/{assignment.base_sha}..."
-                                    f"{current_base_sha}"
-                                ),
-                            },
-                        )
+        current_bases: dict[str, str] = {}
+        failed_bases: set[str] = set()
+        for pull, assignment in active_assignments:
+            if assignment.base_ref in failed_bases:
+                continue
+            if assignment.base_ref not in current_bases:
+                try:
+                    current_bases[assignment.base_ref] = self._branch_head_sha(
+                        assignment.base_ref
                     )
+                except (GitHubReadError, TypeError) as error:
+                    failed_bases.add(assignment.base_ref)
+                    print(
+                        "SENPAI_RESEARCH_BASE_WATCH_ERROR "
+                        f"base_ref={assignment.base_ref!r} "
+                        f"{type(error).__name__}: {error}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    continue
+            current_base_sha = current_bases[assignment.base_ref]
+            if assignment.base_sha == current_base_sha:
+                continue
+            number = int(pull["number"])
+            head_sha = str(_object(pull["head"])["sha"])
+            if (
+                "status:review" in _label_names(pull)
+                and self._has_research_base_acceptance(
+                    pull,
+                    assignment=assignment,
+                    head_sha=head_sha,
+                    current_base_sha=current_base_sha,
+                )
+            ):
+                continue
+            events.append(
+                ControllerEvent(
+                    kind="research_base_changed",
+                    dedupe_key=(
+                        f"research_base_changed:{number}:"
+                        f"{assignment.assignment_id}:{assignment.revision_id}:"
+                        f"{head_sha}:{assignment.base_sha}:{current_base_sha}"
+                    ),
+                    payload={
+                        **_pull_payload(pull),
+                        "assignment_id": assignment.assignment_id,
+                        "revision_id": assignment.revision_id,
+                        "student": assignment.student,
+                        "base_ref": assignment.base_ref,
+                        "required_base_sha": assignment.base_sha,
+                        "current_base_sha": current_base_sha,
+                        "compare_url": (
+                            f"{str(pull['html_url']).rsplit('/pull/', 1)[0]}"
+                            f"/compare/{assignment.base_sha}..."
+                            f"{current_base_sha}"
+                        ),
+                    },
+                )
+            )
         events.extend(self._human_issue_events(issues))
         return tuple(events)
 
-    def _advisor_head_sha(self) -> str:
+    def _branch_head_sha(self, branch: str) -> str:
         ref = self._github.get(
             f"/repos/{self.repo}/git/ref/heads/"
-            f"{quote(self.advisor_branch, safe='')}"
+            f"{quote(branch, safe='')}"
         )
         if not isinstance(ref, dict):
-            raise TypeError("GitHub advisor branch ref is not an object")
+            raise TypeError("GitHub research-base ref is not an object")
         target = ref.get("object")
         if not isinstance(target, dict) or not isinstance(target.get("sha"), str):
-            raise TypeError("GitHub advisor branch ref has no target SHA")
+            raise TypeError("GitHub research-base ref has no target SHA")
         return target["sha"]
+
+    def _has_research_base_acceptance(
+        self,
+        pull: Mapping[str, object],
+        *,
+        assignment: AssignmentRecord,
+        head_sha: str,
+        current_base_sha: str,
+    ) -> bool:
+        comments_url = pull.get("comments_url")
+        if not comments_url:
+            return False
+        try:
+            actor = self._github.actor()
+            comments = self._github.objects(f"{comments_url}?per_page=100")
+        except (GitHubReadError, TypeError) as error:
+            print(
+                "SENPAI_RESEARCH_BASE_ACCEPTANCE_READ_ERROR "
+                f"pr={pull['number']} {type(error).__name__}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        result_digests: list[str] = []
+        for comment in comments:
+            try:
+                author = str(_object(comment["user"])["login"])
+            except (KeyError, TypeError):
+                continue
+            if author.casefold() != actor.casefold():
+                continue
+            for line in str(comment.get("body") or "").splitlines():
+                try:
+                    results = parse_result_markers(line)
+                except ResultMarkerError:
+                    continue
+                result_digests.extend(
+                    experiment_result_digest(result)
+                    for result in results
+                    if _result_matches_assignment(
+                        result,
+                        repo=self.repo,
+                        pr_number=int(pull["number"]),
+                        assignment=assignment,
+                        head_sha=head_sha,
+                    )
+                )
+        distinct_result_digests = set(result_digests)
+        if len(distinct_result_digests) != 1:
+            return False
+        expected = ResearchBaseAcceptanceRecord(
+            repo=self.repo,
+            pr_number=int(pull["number"]),
+            assignment_id=assignment.assignment_id,
+            revision_id=assignment.revision_id,
+            result_head_sha=head_sha,
+            result_digest=next(iter(distinct_result_digests)),
+            evaluated_base_sha=assignment.base_sha,
+            base_ref=assignment.base_ref,
+            accepted_base_sha=current_base_sha,
+        )
+        for comment in comments:
+            try:
+                author = str(_object(comment["user"])["login"])
+            except (KeyError, TypeError):
+                continue
+            if author.casefold() != actor.casefold():
+                continue
+            try:
+                acceptances = parse_research_base_acceptance_markers(
+                    str(comment.get("body") or "")
+                )
+            except ValueError:
+                continue
+            if expected in acceptances:
+                return True
+        return False
 
     def _student_events(
         self,
@@ -582,7 +686,11 @@ class GitHubMailbox:
             messages = []
             for item in (issue, *self._issue_comments(issue)):
                 user = _object(item["user"])
-                if user.get("type") != "User":
+                if (
+                    user.get("type") != "User"
+                    or item.get("author_association")
+                    not in _TRUSTED_HUMAN_ASSOCIATIONS
+                ):
                     continue
                 messages.append(
                     {
@@ -743,6 +851,26 @@ def _pull_payload(pull: Mapping[str, object]) -> dict[str, object]:
         "labels": sorted(_label_names(pull)),
         "updated_at": str(pull["updated_at"]),
     }
+
+
+def _result_matches_assignment(
+    result: ExperimentResult,
+    *,
+    repo: str,
+    pr_number: int,
+    assignment: AssignmentRecord,
+    head_sha: str,
+) -> bool:
+    key = result.assignment
+    return (
+        key.repo == repo
+        and key.pr_number == pr_number
+        and key.assignment_id == assignment.assignment_id
+        and key.revision_id == assignment.revision_id
+        and key.student == assignment.student
+        and key.expected_head_sha == head_sha
+        and result.commit_sha == head_sha
+    )
 
 
 def _label_names(value: Mapping[str, object]) -> set[str]:

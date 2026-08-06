@@ -125,9 +125,9 @@ could materially change the implementation.
 
 ## Reporting
 
-Submit results through `github_transition` using the structured result contract
-from `program.md`. Include the exact command, W&B run IDs, baseline comparison,
-metric table, known caveats, and suggested follow-ups.
+Submit results through `submit_experiment_result` using the structured result
+contract from `program.md`. Include the exact command, W&B run IDs, baseline
+comparison, metric table, known caveats, and suggested follow-ups.
 
 Negative results are useful. If an idea fails, explain whether it diverged,
 missed the target, had bad gradients, needed retuning, or appears genuinely

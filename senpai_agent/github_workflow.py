@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from threading import Lock
+from threading import RLock
 from typing import Annotated, Literal, Protocol
 from urllib import request
 from urllib.error import HTTPError, URLError
@@ -28,15 +29,22 @@ from senpai_agent.models import (
     AssignmentRecord,
     Contract,
     ExperimentResult,
+    ResearchBaseAcceptanceRecord,
     ResultMarkerError,
     RevisionRecord,
+    experiment_result_digest,
     parse_assignment_markers,
+    parse_research_base_acceptance_markers,
     parse_result_markers,
     render_assignment_feedback_marker,
     render_assignment_marker,
+    render_research_base_acceptance_marker,
     render_result_comment,
     render_revision_marker,
 )
+
+
+_TRUSTED_HUMAN_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
 class GitHubWorkflowError(RuntimeError):
@@ -77,8 +85,8 @@ class StaleAssignmentRevisionError(WorkflowPreconditionError):
     """The requested operation belongs to another assignment revision."""
 
 
-class StaleBaselineError(WorkflowPreconditionError):
-    """The assignment predates the branch that would receive its merge."""
+class StaleResearchBaseError(WorkflowPreconditionError):
+    """The result was not reviewed against the live research base."""
 
 
 class ReconciliationError(GitHubWorkflowError):
@@ -129,6 +137,12 @@ class PullRequestSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmitResultPreflight:
+    snapshot: PullRequestSnapshot
+    assignment: AssignmentRecord
+
+
+@dataclass(frozen=True, slots=True)
 class MutationResult:
     changed: bool
     resource_url: str
@@ -142,6 +156,8 @@ class _IssueComment:
     body: str
     url: str
     author: str
+    author_type: str
+    author_association: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +204,10 @@ class _GitHubUser(_GitHubResponse):
     login: _RequiredString
 
 
+class _GitHubAuthor(_GitHubUser):
+    type: _RequiredString
+
+
 class _PullRequestResponse(_GitHubResponse):
     number: _PositiveInteger
     node_id: _RequiredString
@@ -226,7 +246,8 @@ class _IssueCommentResponse(_GitHubResponse):
     id: _PositiveInteger
     body: StrictStr
     html_url: StrictStr
-    user: _GitHubUser
+    user: _GitHubAuthor
+    author_association: _RequiredString
 
     def comment(self) -> _IssueComment:
         return _IssueComment(
@@ -234,6 +255,8 @@ class _IssueCommentResponse(_GitHubResponse):
             body=self.body,
             url=self.html_url,
             author=self.user.login,
+            author_type=self.user.type,
+            author_association=self.author_association,
         )
 
 
@@ -241,7 +264,8 @@ class _IssueResponse(_GitHubResponse):
     id: _PositiveInteger
     state: StrictStr
     labels: tuple[_GitHubLabel, ...]
-    user: _GitHubUser
+    user: _GitHubAuthor
+    author_association: _RequiredString
     pull_request: dict[str, object] | None = None
 
 
@@ -365,7 +389,7 @@ class GitHubWorkflow:
         self._trusted_actor = trusted_actor
         # OpenHands may execute sibling tool calls concurrently. Keep the
         # one-WIP precondition and its GitHub mutation in one critical section.
-        self._assignment_lifecycle_lock = Lock()
+        self._assignment_lifecycle_lock = RLock()
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(repo={self._repo!r}, api_url={self._api_url!r})"
@@ -377,6 +401,18 @@ class GitHubWorkflow:
     @property
     def role(self) -> Literal["advisor", "student"]:
         return self._role
+
+    @contextmanager
+    def serialized_assignment_mutation(self) -> Iterator[None]:
+        """Serialize a coupled local mutation with this workflow's transitions.
+
+        This closes races among Senpai operations sharing this workflow instance.
+        GitHub's merge API has no base-SHA compare-and-swap; external writers still
+        require strict branch protection or a merge queue.
+        """
+
+        with self._assignment_lifecycle_lock:
+            yield
 
     def __getstate__(self) -> None:
         raise TypeError("GitHubWorkflow cannot be serialized")
@@ -510,45 +546,102 @@ class GitHubWorkflow:
             version=after.head_sha,
         )
 
-    def reconcile_labels(
+    def repair_assignment_routing(
         self,
         number: int,
         *,
         assignment_id: str,
-        add: set[str],
-        remove: set[str],
+        current_revision_id: str,
         expected_head_sha: str,
+        working_state: Literal["wip", "review"],
+        blockers: set[Literal["blocked", "hold", "needs-rebase"]],
     ) -> MutationResult:
-        before, _ = self._assigned_pull_at_head(
+        with self._assignment_lifecycle_lock:
+            return self._repair_assignment_routing(
+                number,
+                assignment_id=assignment_id,
+                current_revision_id=current_revision_id,
+                expected_head_sha=expected_head_sha,
+                working_state=working_state,
+                blockers=blockers,
+            )
+
+    def _repair_assignment_routing(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        current_revision_id: str,
+        expected_head_sha: str,
+        working_state: Literal["wip", "review"],
+        blockers: set[Literal["blocked", "hold", "needs-rebase"]],
+    ) -> MutationResult:
+        if working_state not in ("wip", "review"):
+            raise ValueError("working_state must be wip or review")
+        invalid_blockers = blockers - {"blocked", "hold", "needs-rebase"}
+        if invalid_blockers:
+            raise ValueError(
+                "unsupported assignment blocker(s): "
+                + ", ".join(sorted(invalid_blockers))
+            )
+        before, assignment = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
-        changed, desired = self._set_labels(
+        _require_open(before)
+        _require_current_revision(assignment, current_revision_id)
+        if working_state == "review":
+            result = self._require_result(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            _require_assignment_result(before, result)
+        protocol_labels = {
+            assignment.base_ref,
+            f"student:{assignment.student}",
+            f"status:{working_state}",
+            *(f"status:{blocker}" for blocker in blockers),
+        }
+        remove = {
+            label
+            for label in before.labels
+            if label.startswith(("student:", "status:"))
+            and label not in protocol_labels
+        }
+        expected_draft = working_state == "wip"
+        draft_changed = self._set_draft(before, draft=expected_draft)
+        labels_changed, desired = self._set_labels(
             number,
             before,
-            add=add,
+            add=protocol_labels,
             remove=remove,
         )
-        if not changed:
+        if not draft_changed and not labels_changed:
             return MutationResult(
                 changed=False,
                 resource_url=before.url,
-                state="labels_reconciled",
+                state="assignment_routing_repaired",
                 version=before.head_sha,
             )
 
-        after, _ = self._assigned_pull_at_head(
+        after, current_assignment = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
-        if after.labels != desired:
-            raise ReconciliationError("GitHub did not reach the requested label set")
+        _require_open(after)
+        _require_current_revision(current_assignment, current_revision_id)
+        if after.draft is not expected_draft:
+            raise ReconciliationError(
+                "GitHub did not reach the requested assignment draft state"
+            )
+        _require_exact_labels(after, desired)
         return MutationResult(
-            changed=True,
+            changed=draft_changed or labels_changed,
             resource_url=after.url,
-            state="labels_reconciled",
+            state="assignment_routing_repaired",
             version=after.head_sha,
         )
 
@@ -557,6 +650,7 @@ class GitHubWorkflow:
         number: int,
         *,
         human_message_id: int,
+        audience_labels: set[str],
         response: str,
     ) -> MutationResult:
         """Reply once to one verified human-authored GitHub issue message."""
@@ -566,14 +660,17 @@ class GitHubWorkflow:
         body = response.strip()
         if not body:
             raise ValueError("response must not be empty")
+        _validate_labels(audience_labels)
+        if not audience_labels:
+            raise ValueError("audience_labels must not be empty")
 
-        issue = self._human_issue(number)
+        issue = self._human_issue(number, audience_labels=audience_labels)
         source_author = self._human_message_author(
             number,
             issue=issue,
             human_message_id=human_message_id,
         )
-        if source_author == self._actor():
+        if source_author.casefold() == self._actor().casefold():
             raise WorkflowPreconditionError(
                 "human message must not be authored by the authenticated actor"
             )
@@ -585,7 +682,7 @@ class GitHubWorkflow:
             marker=marker,
             body=comment_body,
         )
-        self._human_issue(number)
+        self._human_issue(number, audience_labels=audience_labels)
         return MutationResult(
             changed=changed,
             resource_url=verified.url,
@@ -598,16 +695,20 @@ class GitHubWorkflow:
         number: int,
         *,
         assignment_id: str,
+        current_revision_id: str,
+        new_revision_id: str,
         expected_head_sha: str,
-        revision_id: str,
+        required_base_sha: str,
         comment: str,
     ) -> MutationResult:
         with self._assignment_lifecycle_lock:
             return self._request_revision(
                 number,
                 assignment_id=assignment_id,
+                current_revision_id=current_revision_id,
+                new_revision_id=new_revision_id,
                 expected_head_sha=expected_head_sha,
-                revision_id=revision_id,
+                required_base_sha=required_base_sha,
                 comment=comment,
             )
 
@@ -616,16 +717,35 @@ class GitHubWorkflow:
         number: int,
         *,
         assignment_id: str,
+        current_revision_id: str,
+        new_revision_id: str,
         expected_head_sha: str,
-        revision_id: str,
+        required_base_sha: str,
         comment: str,
     ) -> MutationResult:
+        if current_revision_id == new_revision_id:
+            raise ValueError("new_revision_id must differ from current_revision_id")
         before, assignment = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
         _require_open(before)
+        if assignment.revision_id == current_revision_id:
+            live_base_sha = self._branch_head_sha(assignment.base_ref)
+            if live_base_sha != required_base_sha:
+                raise StaleResearchBaseError(
+                    f"required research base {assignment.base_ref}@"
+                    f"{required_base_sha} does not match live {live_base_sha}"
+                )
+        elif not (
+            assignment.revision_id == new_revision_id
+            and assignment.base_sha == required_base_sha
+        ):
+            raise StaleAssignmentRevisionError(
+                f"assignment revision is {assignment.revision_id!r}, expected "
+                f"current {current_revision_id!r} or applied {new_revision_id!r}"
+            )
         conflicts = tuple(
             active_number
             for active_number in self._active_student_assignment_numbers(
@@ -643,7 +763,7 @@ class GitHubWorkflow:
                 repo=self._repo,
                 pr_number=number,
                 assignment_id=assignment.assignment_id,
-                revision_id=revision_id,
+                revision_id=new_revision_id,
                 requested_head_sha=expected_head_sha,
             )
         )
@@ -653,7 +773,12 @@ class GitHubWorkflow:
             marker=marker,
             body=marker_body,
         )
-        revised_assignment = assignment.model_copy(update={"revision_id": revision_id})
+        revised_assignment = assignment.model_copy(
+            update={
+                "revision_id": new_revision_id,
+                "base_sha": required_base_sha,
+            }
+        )
         revised_body = _replace_assignment_marker(
             before.body,
             revised_assignment,
@@ -705,6 +830,27 @@ class GitHubWorkflow:
         comment: str,
     ) -> MutationResult:
         """Upsert guidance for the current assignment without starting a revision."""
+
+        with self._assignment_lifecycle_lock:
+            return self._send_assignment_feedback(
+                number,
+                assignment_id=assignment_id,
+                revision_id=revision_id,
+                expected_head_sha=expected_head_sha,
+                feedback_id=feedback_id,
+                comment=comment,
+            )
+
+    def _send_assignment_feedback(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        revision_id: str,
+        expected_head_sha: str,
+        feedback_id: str,
+        comment: str,
+    ) -> MutationResult:
 
         before, assignment = self._assigned_pull_at_head(
             number,
@@ -763,6 +909,86 @@ class GitHubWorkflow:
             version=after.head_sha,
         )
 
+    def accept_result_on_current_base(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        current_revision_id: str,
+        expected_head_sha: str,
+        expected_current_base_sha: str,
+        reason: str,
+    ) -> MutationResult:
+        """Durably approve one exact result against the exact live research base."""
+
+        with self._assignment_lifecycle_lock:
+            before, assignment = self._assigned_pull_at_head(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            _require_open(before)
+            _require_current_revision(assignment, current_revision_id)
+            if before.draft:
+                raise WorkflowPreconditionError(
+                    "cannot accept a result while its pull request is draft"
+                )
+            _require_labels(before, required={"status:review"}, forbidden=set())
+            result = self._require_result(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            _require_assignment_result(before, result)
+            _require_exact_research_base(
+                assignment,
+                live_base_sha=self._branch_head_sha(assignment.base_ref),
+                expected_current_base_sha=expected_current_base_sha,
+            )
+            acceptance = ResearchBaseAcceptanceRecord(
+                repo=self._repo,
+                pr_number=number,
+                assignment_id=assignment.assignment_id,
+                revision_id=assignment.revision_id,
+                result_head_sha=expected_head_sha,
+                result_digest=experiment_result_digest(result),
+                evaluated_base_sha=assignment.base_sha,
+                base_ref=assignment.base_ref,
+                accepted_base_sha=expected_current_base_sha,
+            )
+            marker = render_research_base_acceptance_marker(acceptance)
+            changed, verified = self._upsert_marker_comment(
+                number,
+                marker=marker,
+                body=_marker_body(marker, reason),
+            )
+
+            after, current_assignment = self._assigned_pull_at_head(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            _require_open(after)
+            _require_current_revision(current_assignment, current_revision_id)
+            current_result = self._require_result(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            _require_assignment_result(after, current_result)
+            _require_exact_research_base(
+                current_assignment,
+                live_base_sha=self._branch_head_sha(current_assignment.base_ref),
+                expected_current_base_sha=expected_current_base_sha,
+            )
+            self._require_research_base_acceptance(number, acceptance)
+            return MutationResult(
+                changed=changed,
+                resource_url=verified.url,
+                state="research_base_accepted",
+                version=expected_current_base_sha,
+            )
+
     def preflight_submit_result(
         self,
         number: int,
@@ -771,7 +997,7 @@ class GitHubWorkflow:
         current_head_sha: str,
         expected_result_head_sha: str,
         result: ExperimentResult,
-    ) -> PullRequestSnapshot:
+    ) -> SubmitResultPreflight:
         """Validate an assignment/result pair before mutating its Git branch."""
 
         snapshot = self._pull_at_head(number, current_head_sha)
@@ -786,10 +1012,24 @@ class GitHubWorkflow:
             number=number,
             expected_head_sha=expected_result_head_sha,
         )
-        _require_assignment_result(snapshot, result)
-        return snapshot
+        assignment = _require_assignment_result(snapshot, result)
+        return SubmitResultPreflight(snapshot=snapshot, assignment=assignment)
 
     def submit_result(
+        self,
+        number: int,
+        *,
+        expected_head_sha: str,
+        result: ExperimentResult,
+    ) -> MutationResult:
+        with self._assignment_lifecycle_lock:
+            return self._submit_result(
+                number,
+                expected_head_sha=expected_head_sha,
+                result=result,
+            )
+
+    def _submit_result(
         self,
         number: int,
         *,
@@ -811,6 +1051,7 @@ class GitHubWorkflow:
         )
         current = self._pull_at_head(number, expected_head_sha)
         _require_open(current)
+        _require_assignment_result(current, result)
         ready_changed = self._set_draft(current, draft=False)
         labels_changed, desired_labels = self._set_labels(
             number,
@@ -820,6 +1061,16 @@ class GitHubWorkflow:
         )
         after = self._pull_at_head(number, expected_head_sha)
         _require_open(after)
+        try:
+            _require_assignment_result(after, result)
+        except StaleAssignmentRevisionError:
+            self._recover_stale_submit_routing(
+                number,
+                assignment_id=result.assignment.assignment_id,
+                expected_head_sha=expected_head_sha,
+                stale_result=result,
+            )
+            raise
         if after.draft:
             raise ReconciliationError(
                 "GitHub did not mark the pull request ready for review"
@@ -832,20 +1083,169 @@ class GitHubWorkflow:
             version=after.head_sha,
         )
 
-    def close_experiment(
+    def _recover_stale_submit_routing(
         self,
         number: int,
         *,
         assignment_id: str,
         expected_head_sha: str,
+        stale_result: ExperimentResult,
+    ) -> None:
+        """Undo stale review routing without clobbering newer valid evidence."""
+
+        for _attempt in range(3):
+            current, assignment = self._assigned_pull_at_head(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            _require_open(current)
+            if assignment.revision_id == stale_result.assignment.revision_id:
+                return
+            if self._has_result_for_snapshot(current, assignment_id):
+                return
+
+            self._set_draft(current, draft=True)
+            current, refreshed = self._assigned_pull_at_head(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            if refreshed != assignment:
+                continue
+            if self._has_result_for_snapshot(current, assignment_id):
+                self._restore_current_result_review(
+                    current,
+                    assignment_id=assignment_id,
+                    expected_head_sha=expected_head_sha,
+                )
+                return
+
+            self._set_labels(
+                number,
+                current,
+                add={"status:wip"},
+                remove={"status:review"},
+            )
+            after, verified = self._assigned_pull_at_head(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            if verified != assignment:
+                continue
+            if self._has_result_for_snapshot(after, assignment_id):
+                self._restore_current_result_review(
+                    after,
+                    assignment_id=assignment_id,
+                    expected_head_sha=expected_head_sha,
+                )
+                return
+            if (
+                after.draft
+                and "status:wip" in after.labels
+                and "status:review" not in after.labels
+            ):
+                return
+            raise ReconciliationError(
+                "GitHub did not restore the current assignment revision to WIP"
+            )
+        raise ReconciliationError(
+            "assignment revision kept changing during stale-submit recovery"
+        )
+
+    def _has_result_for_snapshot(
+        self,
+        snapshot: PullRequestSnapshot,
+        assignment_id: str,
+    ) -> bool:
+        for match in self._result_comments(snapshot.number, assignment_id):
+            try:
+                _require_result_identity(
+                    match.result,
+                    repo=self._repo,
+                    number=snapshot.number,
+                    expected_head_sha=snapshot.head_sha,
+                )
+                _require_assignment_result(snapshot, match.result)
+            except WorkflowPreconditionError:
+                continue
+            return True
+        return False
+
+    def _restore_current_result_review(
+        self,
+        snapshot: PullRequestSnapshot,
+        *,
+        assignment_id: str,
+        expected_head_sha: str,
+    ) -> None:
+        """Keep a concurrently submitted current-revision result reviewable."""
+
+        self._set_draft(snapshot, draft=False)
+        current, assignment = self._assigned_pull_at_head(
+            snapshot.number,
+            assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
+        )
+        if not self._has_result_for_snapshot(current, assignment_id):
+            raise ReconciliationError(
+                "current-revision result disappeared during stale-submit recovery"
+            )
+        self._set_labels(
+            snapshot.number,
+            current,
+            add={"status:review"},
+            remove={"status:wip"},
+        )
+        after, verified = self._assigned_pull_at_head(
+            snapshot.number,
+            assignment_id=assignment_id,
+            expected_head_sha=expected_head_sha,
+        )
+        if verified != assignment or not self._has_result_for_snapshot(
+            after, assignment_id
+        ):
+            raise ReconciliationError(
+                "current-revision result changed during stale-submit recovery"
+            )
+
+    def close_experiment(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        current_revision_id: str,
+        expected_head_sha: str,
         marker: str,
         reason: str,
     ) -> MutationResult:
-        before, _ = self._assigned_pull_at_head(
+        with self._assignment_lifecycle_lock:
+            return self._close_experiment(
+                number,
+                assignment_id=assignment_id,
+                current_revision_id=current_revision_id,
+                expected_head_sha=expected_head_sha,
+                marker=marker,
+                reason=reason,
+            )
+
+    def _close_experiment(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        current_revision_id: str,
+        expected_head_sha: str,
+        marker: str,
+        reason: str,
+    ) -> MutationResult:
+        before, assignment = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
+        _require_current_revision(assignment, current_revision_id)
         _require_unmerged(before)
         state_changed = before.state != "closed"
         if state_changed:
@@ -855,11 +1255,12 @@ class GitHubWorkflow:
                 json_body={"state": "closed"},
                 expected_statuses={200},
             )
-        closed, _ = self._assigned_pull_at_head(
+        closed, closed_assignment = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
+        _require_current_revision(closed_assignment, current_revision_id)
         _require_unmerged(closed)
         if closed.state != "closed":
             raise ReconciliationError("GitHub did not close the pull request")
@@ -869,11 +1270,12 @@ class GitHubWorkflow:
             marker=marker,
             body=marker_body,
         )
-        after, _ = self._assigned_pull_at_head(
+        after, after_assignment = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
+        _require_current_revision(after_assignment, current_revision_id)
         _require_unmerged(after)
         if after.state != "closed":
             raise ReconciliationError("pull request reopened during reconciliation")
@@ -890,8 +1292,29 @@ class GitHubWorkflow:
         *,
         expected_head_sha: str,
         assignment_id: str,
+        current_revision_id: str,
+        expected_current_base_sha: str,
         merge_method: Literal["merge", "squash", "rebase"] = "squash",
-        accepted_base_sha: str | None = None,
+    ) -> MutationResult:
+        with self._assignment_lifecycle_lock:
+            return self._merge_experiment(
+                number,
+                expected_head_sha=expected_head_sha,
+                assignment_id=assignment_id,
+                current_revision_id=current_revision_id,
+                expected_current_base_sha=expected_current_base_sha,
+                merge_method=merge_method,
+            )
+
+    def _merge_experiment(
+        self,
+        number: int,
+        *,
+        expected_head_sha: str,
+        assignment_id: str,
+        current_revision_id: str,
+        expected_current_base_sha: str,
+        merge_method: Literal["merge", "squash", "rebase"],
     ) -> MutationResult:
         if merge_method not in ("merge", "squash", "rebase"):
             raise ValueError("merge_method must be merge, squash, or rebase")
@@ -904,6 +1327,7 @@ class GitHubWorkflow:
             expected_head_sha=expected_head_sha,
         )
         assignment = _require_assignment_result(before, terminal_result)
+        _require_current_revision(assignment, current_revision_id)
         if before.merged:
             if before.state != "closed":
                 raise ReconciliationError(
@@ -944,11 +1368,41 @@ class GitHubWorkflow:
                 "cannot merge while GitHub mergeability is unknown"
             )
 
-        current_base_sha = self._branch_head_sha(assignment.base_ref)
-        _require_current_baseline(
+        _require_exact_research_base(
             assignment,
-            current_base_sha=current_base_sha,
-            accepted_base_sha=accepted_base_sha,
+            live_base_sha=self._branch_head_sha(assignment.base_ref),
+            expected_current_base_sha=expected_current_base_sha,
+        )
+        if assignment.base_sha != expected_current_base_sha:
+            self._require_research_base_acceptance(
+                number,
+                ResearchBaseAcceptanceRecord(
+                    repo=self._repo,
+                    pr_number=number,
+                    assignment_id=assignment.assignment_id,
+                    revision_id=assignment.revision_id,
+                    result_head_sha=expected_head_sha,
+                    result_digest=experiment_result_digest(terminal_result),
+                    evaluated_base_sha=assignment.base_sha,
+                    base_ref=assignment.base_ref,
+                    accepted_base_sha=expected_current_base_sha,
+                ),
+            )
+
+        _require_exact_research_base(
+            assignment,
+            live_base_sha=self._branch_head_sha(assignment.base_ref),
+            expected_current_base_sha=expected_current_base_sha,
+        )
+
+        _require_same_result(
+            terminal_result,
+            self._require_result(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            ),
+            phase="immediately before merge",
         )
 
         self._mutate(
@@ -960,6 +1414,15 @@ class GitHubWorkflow:
             },
             expected_statuses={200},
         )
+        _require_same_result(
+            terminal_result,
+            self._require_result(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            ),
+            phase="immediately after merge",
+        )
         after = self._pull_at_head(number, expected_head_sha)
         if not after.merged or after.state != "closed":
             raise ReconciliationError("GitHub did not merge the pull request")
@@ -967,10 +1430,14 @@ class GitHubWorkflow:
             raise ReconciliationError(
                 "GitHub did not return the resulting merge commit SHA"
             )
-        self._require_result(
-            number,
-            assignment_id=assignment_id,
-            expected_head_sha=expected_head_sha,
+        _require_same_result(
+            terminal_result,
+            self._require_result(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            ),
+            phase="final merge reconciliation",
         )
         return MutationResult(
             changed=True,
@@ -1113,16 +1580,75 @@ class GitHubWorkflow:
         result: ExperimentResult,
     ) -> tuple[bool, _IssueComment]:
         assignment_id = result.assignment.assignment_id
-        body = render_result_comment(result)
-        return self._upsert_comment(
-            number,
-            body=body,
-            matches=lambda: tuple(
-                match.comment for match in self._result_comments(number, assignment_id)
-            ),
-            subject=f"result markers for {assignment_id!r}",
-            desired_state="terminal result",
-        )
+        body = _role_prefixed_comment(render_result_comment(result), self._role)
+        existing = self._result_comments(number, assignment_id)
+        distinct = _distinct_results(existing)
+        if len(distinct) > 1:
+            raise ReconciliationError(
+                f"GitHub contains multiple distinct result markers for "
+                f"{assignment_id!r}"
+            )
+        if distinct:
+            published = distinct[0]
+            if experiment_result_digest(published) == experiment_result_digest(result):
+                comments = {match.comment.id: match.comment for match in existing}
+                changed = False
+                for comment in comments.values():
+                    if comment.body == body:
+                        continue
+                    self._mutate(
+                        "PATCH",
+                        f"/repos/{self._repo}/issues/comments/{comment.id}",
+                        json_body={"body": body},
+                        expected_statuses={200},
+                    )
+                    changed = True
+                if not changed:
+                    return False, existing[0].comment
+                verified = self._result_comments(number, assignment_id)
+                if not verified or any(
+                    match.comment.body != body for match in verified
+                ):
+                    raise ReconciliationError(
+                        "GitHub did not normalize the terminal result comment"
+                    )
+                return True, verified[0].comment
+            if (
+                published.assignment.revision_id == result.assignment.revision_id
+                and published.assignment.expected_head_sha
+                == result.assignment.expected_head_sha
+            ):
+                raise WorkflowPreconditionError(
+                    "a published terminal result is immutable at the same "
+                    "assignment revision and head; use a new revision or head"
+                )
+            comments = {match.comment.id: match.comment for match in existing}
+            for comment in comments.values():
+                self._mutate(
+                    "PATCH",
+                    f"/repos/{self._repo}/issues/comments/{comment.id}",
+                    json_body={"body": body},
+                    expected_statuses={200},
+                )
+        else:
+            self._mutate(
+                "POST",
+                f"/repos/{self._repo}/issues/{number}/comments",
+                json_body={"body": body},
+                expected_statuses={201},
+            )
+
+        verified = self._result_comments(number, assignment_id)
+        verified_distinct = _distinct_results(verified)
+        if (
+            len(verified_distinct) != 1
+            or experiment_result_digest(verified_distinct[0])
+            != experiment_result_digest(result)
+        ):
+            raise ReconciliationError(
+                "GitHub did not reach the requested terminal result"
+            )
+        return True, verified[0].comment
 
     def _upsert_comment(
         self,
@@ -1168,20 +1694,52 @@ class GitHubWorkflow:
         matches: list[_ResultComment] = []
         trusted_actor = self._actor()
         for comment in self._comments(number):
-            if comment.author != trusted_actor:
+            if comment.author.casefold() != trusted_actor.casefold():
+                continue
+            for line in comment.body.splitlines():
+                try:
+                    results = parse_result_markers(line)
+                except ResultMarkerError:
+                    continue
+                matches.extend(
+                    _ResultComment(comment=comment, result=result)
+                    for result in results
+                    if result.assignment.assignment_id == assignment_id
+                )
+        return tuple(matches)
+
+    def _research_base_acceptances(
+        self,
+        number: int,
+    ) -> tuple[ResearchBaseAcceptanceRecord, ...]:
+        trusted_actor = self._actor()
+        acceptances: list[ResearchBaseAcceptanceRecord] = []
+        for comment in self._comments(number):
+            if comment.author.casefold() != trusted_actor.casefold():
                 continue
             try:
-                results = parse_result_markers(comment.body)
-            except ResultMarkerError as error:
-                raise ReconciliationError(
-                    f"GitHub contains an invalid result marker: {error}"
-                ) from error
-            matches.extend(
-                _ResultComment(comment=comment, result=result)
-                for result in results
-                if result.assignment.assignment_id == assignment_id
+                acceptances.extend(
+                    parse_research_base_acceptance_markers(comment.body)
+                )
+            except ValueError:
+                continue
+        return tuple(acceptances)
+
+    def _require_research_base_acceptance(
+        self,
+        number: int,
+        expected: ResearchBaseAcceptanceRecord,
+    ) -> None:
+        matches = tuple(
+            acceptance
+            for acceptance in self._research_base_acceptances(number)
+            if acceptance == expected
+        )
+        if not matches:
+            raise StaleResearchBaseError(
+                "the current result has no durable acceptance for research base "
+                f"{expected.base_ref}@{expected.accepted_base_sha}"
             )
-        return tuple(matches)
 
     def _assignment_pull_requests(
         self,
@@ -1263,11 +1821,13 @@ class GitHubWorkflow:
             raise WorkflowPreconditionError(
                 f"schema-valid terminal result for {assignment_id!r} is missing"
             )
-        if len(matches) > 1:
+        distinct = _distinct_results(matches)
+        if len(distinct) > 1:
             raise ReconciliationError(
-                f"GitHub contains multiple result markers for {assignment_id!r}"
+                f"GitHub contains multiple distinct result markers for "
+                f"{assignment_id!r}"
             )
-        result = matches[0].result
+        result = distinct[0]
         _require_result_identity(
             result,
             repo=self._repo,
@@ -1285,7 +1845,8 @@ class GitHubWorkflow:
         return tuple(
             comment
             for comment in self._comments(number)
-            if comment.author == trusted_actor and marker in comment.body.splitlines()
+            if comment.author.casefold() == trusted_actor.casefold()
+            and marker in comment.body.splitlines()
         )
 
     def _comments(self, number: int) -> tuple[_IssueComment, ...]:
@@ -1321,7 +1882,12 @@ class GitHubWorkflow:
                 )
         return tuple(comments)
 
-    def _human_issue(self, number: int) -> _IssueResponse:
+    def _human_issue(
+        self,
+        number: int,
+        *,
+        audience_labels: set[str],
+    ) -> _IssueResponse:
         response = self._request(
             "GET",
             f"/repos/{self._repo}/issues/{number}",
@@ -1334,8 +1900,13 @@ class GitHubWorkflow:
             )
         if issue.state != "open":
             raise WorkflowPreconditionError("human issue must be open")
-        if "human" not in {label.name for label in issue.labels}:
+        labels = {label.name for label in issue.labels}
+        if "human" not in labels:
             raise WorkflowPreconditionError("human issue must retain the human label")
+        if not labels.intersection(audience_labels):
+            raise WorkflowPreconditionError(
+                "human issue must retain a team or current-role audience label"
+            )
         return issue
 
     def _human_message_author(
@@ -1346,6 +1917,11 @@ class GitHubWorkflow:
         human_message_id: int,
     ) -> str:
         if issue.id == human_message_id:
+            _require_trusted_human_author(
+                login=issue.user.login,
+                author_type=issue.user.type,
+                association=issue.author_association,
+            )
             return issue.user.login
         match = next(
             (
@@ -1359,6 +1935,11 @@ class GitHubWorkflow:
             raise WorkflowPreconditionError(
                 f"human message ID {human_message_id} is not present on issue #{number}"
             )
+        _require_trusted_human_author(
+            login=match.author,
+            author_type=match.author_type,
+            association=match.author_association,
+        )
         return match.author
 
     def _actor(self) -> str:
@@ -1441,6 +2022,38 @@ def _positive_message_id(message_id: int) -> int:
     ):
         raise ValueError("human message ID must be a positive integer")
     return message_id
+
+
+def _require_trusted_human_author(
+    *,
+    login: str,
+    author_type: str,
+    association: str,
+) -> None:
+    if author_type != "User" or association not in _TRUSTED_HUMAN_ASSOCIATIONS:
+        raise WorkflowPreconditionError(
+            f"human message author {login!r} must be an OWNER, MEMBER, or "
+            "COLLABORATOR User"
+        )
+
+
+def _distinct_results(
+    matches: tuple[_ResultComment, ...],
+) -> tuple[ExperimentResult, ...]:
+    distinct: dict[str, ExperimentResult] = {}
+    for match in matches:
+        distinct.setdefault(experiment_result_digest(match.result), match.result)
+    return tuple(distinct.values())
+
+
+def _require_same_result(
+    expected: ExperimentResult,
+    current: ExperimentResult,
+    *,
+    phase: str,
+) -> None:
+    if experiment_result_digest(expected) != experiment_result_digest(current):
+        raise ReconciliationError(f"terminal result changed {phase}")
 
 
 def _require_head(snapshot: PullRequestSnapshot, expected_head_sha: str) -> None:
@@ -1547,29 +2160,19 @@ def _require_assignment_result(
     return record
 
 
-def _require_current_baseline(
+def _require_exact_research_base(
     assignment: AssignmentRecord,
     *,
-    current_base_sha: str,
-    accepted_base_sha: str | None,
+    live_base_sha: str,
+    expected_current_base_sha: str,
 ) -> None:
-    if accepted_base_sha is not None:
-        accepted_base_sha = accepted_base_sha.strip()
-        if not accepted_base_sha:
-            raise ValueError("accepted_base_sha must not be empty")
-        if accepted_base_sha != current_base_sha:
-            raise StaleBaselineError(
-                f"accepted baseline {accepted_base_sha} does not match live "
-                f"{assignment.base_ref}@{current_base_sha}"
-            )
-    if current_base_sha == assignment.base_sha or accepted_base_sha is not None:
-        return
-    raise StaleBaselineError(
-        f"assignment baseline {assignment.base_ref}@{assignment.base_sha} has "
-        f"advanced to {current_base_sha}; review the result against the new "
-        "baseline and rerun if scientifically necessary, or deliberately retry "
-        f"with accepted_base_sha={current_base_sha!r}"
-    )
+    if not expected_current_base_sha.strip():
+        raise ValueError("expected_current_base_sha must not be empty")
+    if live_base_sha != expected_current_base_sha:
+        raise StaleResearchBaseError(
+            f"expected research base {assignment.base_ref}@"
+            f"{expected_current_base_sha}, but live base is {live_base_sha}"
+        )
 
 
 def _require_assignment_identity(

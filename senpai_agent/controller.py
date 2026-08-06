@@ -46,7 +46,7 @@ from senpai_agent.supervisor import LEASE_ENV, ProgressLease
 from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergence
 
 
-_EDGE_TRIGGERED_EVENT_KINDS = frozenset({"baseline_advanced"})
+_EDGE_TRIGGERED_EVENT_KINDS = frozenset({"research_base_changed"})
 
 
 @dataclass(frozen=True, slots=True)
