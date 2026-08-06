@@ -55,6 +55,15 @@ class TurnResult:
     delivered_event_keys: frozenset[str] = frozenset()
 
 
+class ConversationRecoveryExhausted(RuntimeError):
+    def __init__(self, conversation_id: UUID, error: Exception):
+        self.conversation_id = conversation_id
+        self.error = error
+        super().__init__(
+            f"context recovery failed for conversation {conversation_id}: {error}"
+        )
+
+
 class TurnRunner(Protocol):
     def run(
         self,
@@ -65,15 +74,49 @@ class TurnRunner(Protocol):
     ) -> TurnResult: ...
 
 
+def _is_context_history_failure(error: Exception) -> bool:
+    from openhands.sdk.conversation.exceptions import ConversationRunError
+    from openhands.sdk.llm.exceptions import (
+        LLMContextWindowExceedError,
+        LLMMalformedConversationHistoryError,
+    )
+
+    cause = (
+        error.original_exception
+        if isinstance(error, ConversationRunError)
+        else error
+    )
+    return isinstance(
+        cause,
+        (LLMContextWindowExceedError, LLMMalformedConversationHistoryError),
+    )
+
+
+def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
+    research_brief = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
+    return research_brief + (
+        "# Conversation context recovery\n\n"
+        "The previous model-visible conversation branch exhausted or corrupted "
+        "its context. Its complete raw trace and workspace are preserved, but "
+        "the active model context was reset. Inspect preserved state as needed, "
+        "and verify any interrupted action before relying on it."
+        f"\n\n# Current actionable state\n\n{current_prompt}"
+    )
+
+
 class OpenHandsTurnRunner:
     def __init__(
         self,
         config: object,
         *,
+        full_prompt: str,
         github_mailbox: GitHubMailbox | None = None,
         active_poll_interval_seconds: float = 30,
     ):
         self.config = config
+        self.full_prompt = full_prompt.strip()
+        if not self.full_prompt:
+            raise ValueError("full prompt must not be empty")
         self.github_mailbox = github_mailbox
         self.active_poll_interval_seconds = active_poll_interval_seconds
 
@@ -90,8 +133,50 @@ class OpenHandsTurnRunner:
             self.config,
             conversation_id=conversation_id,
         )
+        turn_deadline = time.monotonic() + config.timeout_seconds
+
+        def run_turn() -> int:
+            try:
+                return run_openhands(prompt, config)
+            except Exception as error:
+                if not _is_context_history_failure(error):
+                    raise
+                print(
+                    "SENPAI_CONTEXT_RECOVERY "
+                    f"conversation_id={conversation_id} "
+                    f"error={type(error).__name__}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                remaining = turn_deadline - time.monotonic()
+                if remaining <= 0:
+                    timeout = TimeoutError(
+                        "no turn time remains for context recovery"
+                    )
+                    raise ConversationRecoveryExhausted(
+                        conversation_id,
+                        timeout,
+                    ) from error
+                recovery_config = replace(
+                    config,
+                    timeout_seconds=remaining,
+                )
+                try:
+                    return run_openhands(
+                        _context_recovery_prompt(self.full_prompt, prompt),
+                        recovery_config,
+                        reset_context=True,
+                    )
+                except Exception as recovery_error:
+                    if _is_context_history_failure(recovery_error):
+                        raise ConversationRecoveryExhausted(
+                            conversation_id,
+                            recovery_error,
+                        ) from recovery_error
+                    raise
+
         if self.github_mailbox is None:
-            return TurnResult(exit_code=run_openhands(prompt, config))
+            return TurnResult(exit_code=run_turn())
 
         store_path = local_event_db_path(config)
         map_event = None
@@ -118,7 +203,7 @@ class OpenHandsTurnRunner:
             poll_interval_seconds=self.active_poll_interval_seconds,
             map_event=map_event,
         ) as watcher:
-            exit_code = run_openhands(prompt, config)
+            exit_code = run_turn()
         with AdvisorEventStore(store_path) as store:
             delivered = store.acknowledged(tuple(watcher.observed_keys))
         return TurnResult(
@@ -217,6 +302,7 @@ class Controller:
             raise ValueError("event reminder interval must be positive")
         self._started: set[UUID] = set()
         self._visible: dict[str, float] = {}
+        self._deferred_until: dict[str, float] = {}
 
     def run(self, *, max_cycles: int | None = None) -> None:
         self._wait_for_start_gates()
@@ -269,6 +355,25 @@ class Controller:
                                 event.dedupe_key for event in batch_events
                             ),
                         )
+                    except ConversationRecoveryExhausted as error:
+                        retry_delay = max(self.poll_interval_seconds, 600)
+                        retry_at = time.monotonic() + retry_delay
+                        deferred_keys = tuple(
+                            event.dedupe_key for event in batch_events
+                        )
+                        for key in deferred_keys:
+                            self._visible.pop(key, None)
+                            self._deferred_until[key] = retry_at
+                        print(
+                            "SENPAI_TURN_DEFERRED "
+                            f"conversation_id={conversation_id} "
+                            f"event_keys={','.join(deferred_keys)} "
+                            f"retry_after_seconds={retry_delay:g} "
+                            f"error={error}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        continue
                     except Exception as error:  # noqa: BLE001
                         turn_failures += 1
                         for event in batch_events:
@@ -411,7 +516,15 @@ class Controller:
         now = time.monotonic()
         current: dict[str, float] = {}
         new: list[ControllerEvent] = []
+        self._deferred_until = {
+            key: deadline
+            for key, deadline in self._deferred_until.items()
+            if now < deadline
+        }
         for event in events:
+            retry_at = self._deferred_until.get(event.dedupe_key)
+            if retry_at is not None:
+                continue
             delivered_at = self._visible.get(event.dedupe_key)
             reminder_due = (
                 allow_reminders
@@ -448,9 +561,8 @@ class Controller:
         if refresh_system_context:
             prompt += (
                 "\n\n# Updated Senpai system context\n\n"
-                "The deployed harness or role charter changed since this "
-                "conversation last ran. Treat the following as the current "
-                "Senpai operating context:\n\n"
+                "The Senpai operating context or research brief changed since "
+                "this conversation last ran. Treat the following as current:\n\n"
                 f"{self.system_context}"
             )
         return prompt
@@ -591,8 +703,18 @@ def controller_main(
         conversation_selector = StudentConversationSelector(registry)
         reconcile = StudentWorkspaceReconciler(runner_config.workspace)
 
+    full_prompt = _full_prompt(role, env)
+    system_context = compose_system_instructions(
+        read_role_instructions(runner_config.harness_file),
+        read_role_instructions(runner_config.role_file),
+    )
+    continuation_context = (
+        f"{system_context.strip()}\n\n"
+        f"# Current research brief\n\n{full_prompt}"
+    )
     turns = OpenHandsTurnRunner(
         runner_config,
+        full_prompt=full_prompt,
         github_mailbox=github_mailbox,
         active_poll_interval_seconds=float(
             env.get("SENPAI_ACTIVE_GITHUB_POLL_INTERVAL_S", "30")
@@ -603,10 +725,7 @@ def controller_main(
         mailbox=mailbox,
         turns=turns,
         conversation_id=runner_config.conversation_id,
-        system_context=compose_system_instructions(
-            read_role_instructions(runner_config.harness_file),
-            read_role_instructions(runner_config.role_file),
-        ),
+        system_context=continuation_context,
         conversation_state=ConversationStateLedger(
             runner_config.state_dir / "conversation-state.json"
         ),
@@ -636,7 +755,7 @@ def controller_main(
             else None
         ),
         start_gate_poll_seconds=float(env.get("SENPAI_START_GATE_POLL_SECONDS", "30")),
-        full_prompt=_full_prompt(role, env),
+        full_prompt=full_prompt,
         poll_interval_seconds=_role_interval(
             env,
             role,

@@ -7,7 +7,12 @@ from uuid import UUID
 import pytest
 
 import senpai_agent.controller as controller_module
-from senpai_agent.controller import Controller, TurnResult, _full_prompt
+from senpai_agent.controller import (
+    ConversationRecoveryExhausted,
+    Controller,
+    TurnResult,
+    _full_prompt,
+)
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.state import ConversationStateLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
@@ -406,6 +411,11 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     )
     assert created[0].poll_interval_seconds == 30
     assert created[0].event_reminder_seconds == 600
+    assert created[0].full_prompt == "programme"
+    assert created[0].turns.full_prompt == "programme"
+    assert created[0].system_context.endswith(
+        "# Current research brief\n\nprogramme"
+    )
 
 
 def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():
@@ -421,6 +431,80 @@ def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():
         ).run(max_cycles=2)
 
     assert len(turns.calls) == 2
+
+
+def test_exhausted_context_recovery_defers_then_retries_without_failure_streak(
+    monkeypatch,
+    capsys,
+):
+    event = review_event(17)
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+    mailbox = Mailbox([(event,), (event,), (event,), ()])
+    turns = Turns(
+        [
+            ConversationRecoveryExhausted(
+                CONVERSATION_ID,
+                RuntimeError("clean branch also exceeded context"),
+            ),
+            TurnResult(exit_code=0),
+        ]
+    )
+
+    Controller(
+        role="advisor",
+        mailbox=mailbox,
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+        max_consecutive_turn_failures=1,
+    ).run(max_cycles=2)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({event.dedupe_key}),
+        frozenset({event.dedupe_key}),
+    ]
+    assert mailbox.acknowledged == [(event.dedupe_key,)]
+    assert clock[0] == 600
+    log = capsys.readouterr().err
+    assert "SENPAI_TURN_DEFERRED" in log
+    assert "retry_after_seconds=600" in log
+
+
+def test_context_retry_deadline_survives_a_transiently_absent_event(
+    monkeypatch,
+):
+    event = review_event(17)
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+    mailbox = Mailbox([(event,), (), (event,), ()])
+    turns = Turns(
+        [
+            ConversationRecoveryExhausted(
+                CONVERSATION_ID,
+                RuntimeError("clean branch also exceeded context"),
+            ),
+        ]
+    )
+
+    Controller(
+        role="advisor",
+        mailbox=mailbox,
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=30,
+        jitter_seconds=0,
+        max_consecutive_turn_failures=1,
+    ).run(max_cycles=2)
+
+    assert len(turns.calls) == 1
+    assert mailbox.acknowledged == []
+    assert clock[0] == 30
 
 
 def test_preserved_workspace_divergence_is_delivered_to_the_existing_turn():

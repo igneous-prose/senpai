@@ -53,7 +53,7 @@ def assignment(*, base_sha="b" * 40):
     )
 
 
-def test_review_label_wakes_the_advisor_and_marks_other_students_idle(monkeypatch):
+def test_review_label_wakes_the_advisor_and_releases_the_student_slot(monkeypatch):
     advisor = mailbox(
         monkeypatch,
         [
@@ -66,9 +66,14 @@ def test_review_label_wakes_the_advisor_and_marks_other_students_idle(monkeypatc
 
     events = advisor.poll()
 
-    assert [event.kind for event in events] == ["review_ready", "idle_student"]
+    assert [event.kind for event in events] == [
+        "review_ready",
+        "idle_student",
+        "idle_student",
+    ]
     assert events[0].payload["number"] == 17
-    assert events[1].payload == {"student": "student-2"}
+    assert events[1].payload == {"student": "student-1"}
+    assert events[2].payload == {"student": "student-2"}
 
 
 @pytest.mark.parametrize(
@@ -114,8 +119,8 @@ def test_duplicate_assignments_report_every_pr_for_the_student(monkeypatch):
     advisor = mailbox(
         monkeypatch,
         [
-            pull(labels=("student:student-1", "status:review"), number=17),
-            pull(labels=("student:student-1", "status:review"), number=18),
+            pull(labels=("student:student-1", "status:wip"), number=17),
+            pull(labels=("student:student-1", "status:wip"), number=18),
         ],
         students=("student-1",),
     )

@@ -1,6 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+
 import pytest
 
 from senpai_agent.github_workflow import (
+    MutationResult,
     ReconciliationError,
     WorkflowPreconditionError,
 )
@@ -64,16 +68,14 @@ def test_create_assignment_does_not_repurpose_a_foreign_pull_request():
     assert fake.mutations == []
 
 
-@pytest.mark.parametrize("status", ["status:wip", "status:review"])
-def test_create_assignment_rejects_another_active_pull_for_the_student(status):
+def test_create_assignment_rejects_another_wip_pull_for_the_student():
     assignment = assignment_record(
         assignment_id="assignment-8",
         head_ref="student-one/new-candidate",
-        head_sha="c" * 40,
     )
     fake = FakeGitHub(
         pull_request(
-            labels={"other-base", "student:student-one", status},
+            labels={"other-base", "student:student-one", "status:wip"},
             base_ref="other-base",
             head_ref="student-one/other-candidate",
         )
@@ -87,6 +89,79 @@ def test_create_assignment_rejects_another_active_pull_for_the_student(status):
         )
 
     assert fake.mutations == []
+
+
+def test_create_assignment_allows_a_review_ready_pull_for_the_student():
+    assignment = assignment_record(
+        assignment_id="assignment-8",
+        head_ref="student-one/new-candidate",
+    )
+    fake = FakeGitHub(
+        pull_request(
+            labels={"other-base", "student:student-one", "status:review"},
+            base_ref="other-base",
+            head_ref="student-one/other-candidate",
+        )
+    )
+
+    result = workflow(fake).create_assignment(
+        assignment,
+        title="Try another candidate",
+        body="Run one bounded comparison.",
+    )
+
+    assert result.changed is True
+    assert {"student:student-one", "status:wip"}.issubset(fake.pr["labels"])
+    assert "status:review" not in fake.pr["labels"]
+
+
+def test_create_and_revision_transitions_cannot_overlap(monkeypatch):
+    client = workflow(FakeGitHub(pull_request()))
+    create_entered = Event()
+    release_create = Event()
+    revision_started = Event()
+    revision_entered = Event()
+    result = MutationResult(False, "https://github.test/pr/7", "test")
+
+    def hold_create(*_args, **_kwargs):
+        create_entered.set()
+        assert release_create.wait(1)
+        return result
+
+    def observe_revision(*_args, **_kwargs):
+        revision_entered.set()
+        return result
+
+    monkeypatch.setattr(type(client), "_create_assignment", hold_create)
+    monkeypatch.setattr(type(client), "_request_revision", observe_revision)
+
+    def request_revision():
+        revision_started.set()
+        return client.request_revision(
+            7,
+            assignment_id=ASSIGNMENT_ID,
+            expected_head_sha=HEAD_SHA,
+            revision_id="revision-2",
+            comment="Run the requested ablation.",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        create = executor.submit(
+            client.create_assignment,
+            assignment_record(),
+            title="Try another candidate",
+            body="Run one bounded comparison.",
+        )
+        assert create_entered.wait(1)
+        revise = executor.submit(request_revision)
+        assert revision_started.wait(1)
+        overlapped = revision_entered.wait(0.1)
+        release_create.set()
+        assert create.result(timeout=1) is result
+        assert revise.result(timeout=1) is result
+
+    assert not overlapped
+    assert revision_entered.is_set()
 
 
 def test_reconcile_labels_sets_the_exact_union_and_replays_without_writes():

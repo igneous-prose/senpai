@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Lock
 from typing import Annotated, Literal, Protocol
 from urllib import request
 from urllib.error import HTTPError, URLError
@@ -326,6 +327,7 @@ class GitHubWorkflow:
 
     __slots__ = (
         "_api_url",
+        "_assignment_lifecycle_lock",
         "_repo",
         "_token",
         "_transport",
@@ -355,6 +357,9 @@ class GitHubWorkflow:
         self._transport = transport or _UrllibTransport()
         self._api_url = api_url.rstrip("/")
         self._trusted_actor = trusted_actor
+        # OpenHands may execute sibling tool calls concurrently. Keep the
+        # one-WIP precondition and its GitHub mutation in one critical section.
+        self._assignment_lifecycle_lock = Lock()
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(repo={self._repo!r}, api_url={self._api_url!r})"
@@ -391,6 +396,16 @@ class GitHubWorkflow:
     ) -> MutationResult:
         """Create or reconcile one typed draft assignment PR."""
 
+        with self._assignment_lifecycle_lock:
+            return self._create_assignment(assignment, title=title, body=body)
+
+    def _create_assignment(
+        self,
+        assignment: AssignmentRecord,
+        *,
+        title: str,
+        body: str,
+    ) -> MutationResult:
         if assignment.repo != self._repo:
             raise WorkflowPreconditionError(
                 "assignment repository does not match the GitHub workflow"
@@ -577,12 +592,42 @@ class GitHubWorkflow:
         revision_id: str,
         comment: str,
     ) -> MutationResult:
+        with self._assignment_lifecycle_lock:
+            return self._request_revision(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+                revision_id=revision_id,
+                comment=comment,
+            )
+
+    def _request_revision(
+        self,
+        number: int,
+        *,
+        assignment_id: str,
+        expected_head_sha: str,
+        revision_id: str,
+        comment: str,
+    ) -> MutationResult:
         before, assignment = self._assigned_pull_at_head(
             number,
             assignment_id=assignment_id,
             expected_head_sha=expected_head_sha,
         )
         _require_open(before)
+        conflicts = tuple(
+            active_number
+            for active_number in self._active_student_assignment_numbers(
+                assignment.student
+            )
+            if active_number != number
+        )
+        if conflicts:
+            raise WorkflowPreconditionError(
+                f"student:{assignment.student} already has active assignment "
+                f"PR(s): {', '.join(f'#{active_number}' for active_number in conflicts)}"
+            )
         marker = render_revision_marker(
             RevisionRecord(
                 repo=self._repo,
@@ -1188,8 +1233,7 @@ class GitHubWorkflow:
             issue.number
             for issue in issues
             if issue.pull_request is not None
-            and {label.name for label in issue.labels}
-            & {"status:wip", "status:review"}
+            and "status:wip" in {label.name for label in issue.labels}
         )
 
     def _require_result(
@@ -1577,10 +1621,9 @@ def _require_active_assignment_routing(
         raise WorkflowPreconditionError(
             "pull request must retain exactly its assigned student label"
         )
-    status_labels = labels & {"status:wip", "status:review"}
-    if len(status_labels) != 1:
+    if "status:wip" not in labels or "status:review" in labels:
         raise WorkflowPreconditionError(
-            "pull request must have exactly one active assignment status"
+            "pull request must have status:wip as its only active assignment status"
         )
 
 

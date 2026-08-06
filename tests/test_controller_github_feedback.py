@@ -195,11 +195,14 @@ def test_trusted_feedback_from_each_github_surface_is_ordered_and_routable(
     mailbox = student_mailbox(
         monkeypatch,
         responses,
-        status="status:review",
         trusted_actor="MorganMcG1",
     )
 
-    events = mailbox.poll()
+    events = [
+        event
+        for event in mailbox.poll()
+        if event.kind == "student_pr_feedback"
+    ]
 
     assert [event.dedupe_key for event in events] == [
         "student_pr_feedback:issue_comment:17:101",
@@ -213,6 +216,18 @@ def test_trusted_feedback_from_each_github_surface_is_ordered_and_routable(
     assert events[1].payload["state"] == "CHANGES_REQUESTED"
     assert events[2].payload["path"] == "train.py"
     assert events[2].payload["line"] == 42
+
+
+def test_review_ready_pull_does_not_route_feedback_to_the_student(monkeypatch):
+    mailbox = student_mailbox(
+        monkeypatch,
+        feedback_responses(
+            issue_comments=[feedback(101, "Please revisit this result.")]
+        ),
+        status="status:review",
+    )
+
+    assert mailbox.poll() == ()
 
 
 def test_untrusted_people_bots_and_automation_comments_are_not_feedback(

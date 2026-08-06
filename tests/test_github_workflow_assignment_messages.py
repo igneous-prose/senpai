@@ -144,6 +144,26 @@ def test_request_revision_rejects_a_foreign_assignment_before_writing():
     assert fake.mutations == []
 
 
+def test_request_revision_rejects_another_wip_for_the_student(monkeypatch):
+    fake = FakeGitHub(
+        pull_request(labels={"student:one", "status:review"}, draft=False)
+    )
+    client = workflow(fake)
+    monkeypatch.setattr(
+        type(client),
+        "_active_student_assignment_numbers",
+        lambda _self, student: (19,) if student == "student-one" else (),
+    )
+
+    with pytest.raises(
+        WorkflowPreconditionError,
+        match=r"student:student-one already has active assignment PR\(s\): #19",
+    ):
+        request_revision(client)
+
+    assert fake.mutations == []
+
+
 def feedback_marker() -> str:
     return render_assignment_feedback_marker(
         AssignmentFeedbackRecord(
@@ -178,8 +198,8 @@ def send_feedback(
 def test_assignment_feedback_replays_without_changing_assignment_state():
     fake = FakeGitHub(
         pull_request(
-            labels={"student:student-one", "status:review", "status:hold"},
-            draft=False,
+            labels={"student:student-one", "status:wip", "status:hold"},
+            draft=True,
         )
     )
     original_state = (fake.pr["body"], fake.pr["draft"], fake.pr["labels"])
@@ -268,9 +288,10 @@ def test_assignment_feedback_rejects_stale_identity_before_writing(
     [
         {"student:someone-else", "status:wip"},
         {"student:student-one"},
+        {"student:student-one", "status:review"},
         {"student:student-one", "status:wip", "status:review"},
     ],
-    ids=("wrong-student", "missing-status", "ambiguous-status"),
+    ids=("wrong-student", "missing-status", "review-ready", "ambiguous-status"),
 )
 def test_assignment_feedback_requires_unambiguous_active_routing(labels):
     fake = FakeGitHub(pull_request(labels=labels))

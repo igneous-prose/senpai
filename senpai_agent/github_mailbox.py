@@ -137,8 +137,9 @@ class GitHubMailbox:
                 for label in labels
                 if label.startswith("student:")
             )
-            for student in students:
-                active_by_student.setdefault(student, []).append(number)
+            if "status:wip" in labels:
+                for student in students:
+                    active_by_student.setdefault(student, []).append(number)
             payload = _pull_payload(pull)
             if "status:review" in labels:
                 events.append(
@@ -268,7 +269,7 @@ class GitHubMailbox:
             pull
             for pull in pulls
             if assignment_label in _label_names(pull)
-            and {"status:wip", "status:review"} & _label_names(pull)
+            and "status:wip" in _label_names(pull)
         ]
         if len(assigned) > 1:
             numbers = sorted(int(pull["number"]) for pull in assigned)

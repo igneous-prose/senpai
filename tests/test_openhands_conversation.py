@@ -74,6 +74,63 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
     assert captured["closed"] is True
 
 
+def test_context_reset_preserves_history_and_starts_a_fresh_active_branch(
+    tmp_path,
+    monkeypatch,
+):
+    history = ["old message", "old response"]
+    active = list(history)
+    calls = []
+
+    class FakeConversation:
+        def __init__(self, **kwargs):
+            self.id = kwargs["conversation_id"]
+            self.state = SimpleNamespace(
+                active_branch=lambda: active,
+                events=history,
+                execution_status=ConversationExecutionStatus.FINISHED,
+            )
+
+        def reject_pending_actions(self, reason):
+            calls.append(("reject", reason))
+
+        def navigate_to(self, event_id):
+            calls.append(("navigate", event_id))
+            active.clear()
+
+        def send_message(self, prompt):
+            calls.append(("send", prompt))
+            active.append(prompt)
+
+        async def arun(self):
+            calls.append(("run", None))
+
+        def close(self):
+            calls.append(("close", None))
+
+    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
+    monkeypatch.setattr(
+        runner.ConversationState,
+        "get_unmatched_actions",
+        lambda _events: [object()],
+    )
+    isolate_agent_discovery(monkeypatch, runner)
+    config = runtime_config(tmp_path)
+
+    assert run_openhands("fresh recovery prompt", config, reset_context=True) == 0
+
+    assert history == ["old message", "old response"]
+    assert active == ["fresh recovery prompt"]
+    assert [name for name, _ in calls] == [
+        "reject",
+        "navigate",
+        "send",
+        "run",
+        "close",
+    ]
+    assert calls[1] == ("navigate", None)
+
+
 def test_child_requests_ephemeral_storage_and_emits_its_terminal_report(
     tmp_path,
     monkeypatch,

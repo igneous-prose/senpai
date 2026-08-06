@@ -1125,7 +1125,12 @@ def final_agent_result(conversation: object) -> str:
     raise RuntimeError("child finished without a model-visible result")
 
 
-def run_openhands(prompt: str, config: RunnerConfig) -> int:
+def run_openhands(
+    prompt: str,
+    config: RunnerConfig,
+    *,
+    reset_context: bool = False,
+) -> int:
     started_at = time.time()
     run_deadline = min(
         started_at + config.timeout_seconds,
@@ -1182,6 +1187,7 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
                     config.conversation_id,
                 ),
                 "child": config.child,
+                "reset_context": reset_context,
             },
             sort_keys=True,
         ),
@@ -1276,6 +1282,16 @@ def run_openhands(prompt: str, config: RunnerConfig) -> int:
             prompt_cache_key=conversation_prompt_cache_key(config),
         )
         reject_recovered_actions(conversation)
+        if reset_context:
+            preserved_events = len(conversation.state.events)
+            conversation.navigate_to(None)
+            print(
+                "OPENHANDS_CONTEXT_RESET "
+                f"conversation_id={config.conversation_id} "
+                f"preserved_events={preserved_events}",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             # send_message performs OpenHands' lazy tool initialization.
             conversation.send_message(prompt)

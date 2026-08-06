@@ -3,12 +3,13 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence, Set
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol, Self
 
+from openhands.sdk.conversation import ConversationExecutionStatus, ConversationState
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -151,10 +152,12 @@ class MessageConversation(Protocol):
     def send_message(self, message: str) -> None: ...
 
 
-def deliver_pending_events(
+def _deliver_pending_events(
     store: AdvisorEventStore,
     conversation: MessageConversation,
     *,
+    record_delivery: Callable[[str], None],
+    already_delivered: Set[str] = frozenset(),
     parent_conversation_id: str | None = None,
 ) -> int:
     delivered = 0
@@ -167,10 +170,26 @@ def deliver_pending_events(
             == parent_conversation_id
         ]
     for event in pending:
+        if event.dedupe_key in already_delivered:
+            continue
         conversation.send_message(event.to_user_message())
-        store.acknowledge(event.dedupe_key)
+        record_delivery(event.dedupe_key)
         delivered += 1
     return delivered
+
+
+def deliver_pending_events(
+    store: AdvisorEventStore,
+    conversation: MessageConversation,
+    *,
+    parent_conversation_id: str | None = None,
+) -> int:
+    return _deliver_pending_events(
+        store,
+        conversation,
+        record_delivery=store.acknowledge,
+        parent_conversation_id=parent_conversation_id,
+    )
 
 
 class AdvisorEventPump:
@@ -186,6 +205,7 @@ class AdvisorEventPump:
         self._conversation = conversation
         self._poll_interval = poll_interval
         self._parent_conversation_id = parent_conversation_id
+        self._delivered_event_keys: set[str] = set()
         self._stop = threading.Event()
         self._error: BaseException | None = None
         self._thread = threading.Thread(
@@ -196,15 +216,34 @@ class AdvisorEventPump:
     def _run(self) -> None:
         try:
             while not self._stop.is_set():
-                deliver_pending_events(
-                    self._store,
-                    self._conversation,
-                    parent_conversation_id=self._parent_conversation_id,
-                )
+                if self._store.pending_count():
+                    self._deliver_if_safe()
                 self._stop.wait(self._poll_interval)
         except BaseException as error:  # noqa: BLE001
             self._error = error
             self._stop.set()
+
+    def _deliver_if_safe(self) -> int:
+        state = getattr(self._conversation, "state", None)
+        if state is None:
+            # Lightweight message adapters have no tool-action state to guard.
+            return _deliver_pending_events(
+                self._store,
+                self._conversation,
+                record_delivery=self._delivered_event_keys.add,
+                already_delivered=self._delivered_event_keys,
+                parent_conversation_id=self._parent_conversation_id,
+            )
+        with state:
+            if ConversationState.get_unmatched_actions(state.active_branch()):
+                return 0
+            return _deliver_pending_events(
+                self._store,
+                self._conversation,
+                record_delivery=self._delivered_event_keys.add,
+                already_delivered=self._delivered_event_keys,
+                parent_conversation_id=self._parent_conversation_id,
+            )
 
     def __enter__(self) -> Self:
         self._thread.start()
@@ -218,6 +257,15 @@ class AdvisorEventPump:
     ) -> None:
         self._stop.set()
         self._thread.join()
+        # Failed turns may abandon their active branch; replay those events instead.
+        if exc_type is None and self._error is None:
+            state = getattr(self._conversation, "state", None)
+            if (
+                state is None
+                or state.execution_status == ConversationExecutionStatus.FINISHED
+            ):
+                for key in sorted(self._delivered_event_keys):
+                    self._store.acknowledge(key)
         if exc_type is None and self._error is not None:
             raise self._error
 
