@@ -69,7 +69,9 @@ def test_request_revision_converges_marker_assignment_state_and_replays():
     assert parse_assignment_markers(cast(str, fake.pr["body"]))[0].revision_id == (
         "revision-2"
     )
-    assert fake.comments == [comment(1, f"{marker}\n\nRun the requested ablation.")]
+    assert fake.comments == [
+        comment(1, f"{marker}\n\nADVISOR: Run the requested ablation.")
+    ]
     assert fake.pr["draft"] is True
     assert fake.pr["labels"] == {"student:one", "status:wip"}
     assert fake.mutations == mutations_after_first
@@ -90,7 +92,7 @@ def test_request_revision_updates_a_trusted_marker_on_the_final_comment_page():
 
     assert [item["body"] for item in fake.comments] == [
         "unrelated",
-        f"{marker}\n\nRun the requested ablation.",
+        f"{marker}\n\nADVISOR: Run the requested ablation.",
     ]
 
 
@@ -112,7 +114,7 @@ def test_request_revision_does_not_trust_spoofed_or_embedded_markers():
         spoofed,
         f"Documentation example: {marker}",
         f"> {marker}",
-        f"{marker}\n\nUse the trusted revision.",
+        f"{marker}\n\nADVISOR: Use the trusted revision.",
     ]
 
 
@@ -224,11 +226,29 @@ def test_assignment_feedback_replays_without_changing_assignment_state():
         comment(
             1,
             f"{feedback_marker()}\n\n"
-            "Check the cruise split before choosing a default.",
+            "ADVISOR: Check the cruise split before choosing a default.",
         )
     ]
     assert (fake.pr["body"], fake.pr["draft"], fake.pr["labels"]) == original_state
     assert fake.mutations == mutations_after_first
+
+
+def test_assignment_feedback_upgrades_a_legacy_unprefixed_comment():
+    marker = feedback_marker()
+    guidance = "Check the cruise split before choosing a default."
+    fake = FakeGitHub(
+        pull_request(labels={"student:student-one", "status:wip"}, draft=True),
+        comments=[comment(1, f"{marker}\n\n{guidance}")],
+    )
+
+    result = send_feedback(
+        workflow(fake),
+        feedback_id="check-cruise-split",
+        comment=f"ADVISOR: {guidance}",
+    )
+
+    assert result.changed is True
+    assert fake.comments == [comment(1, f"{marker}\n\nADVISOR: {guidance}")]
 
 
 def test_assignment_feedback_id_cannot_be_reused_for_different_guidance():

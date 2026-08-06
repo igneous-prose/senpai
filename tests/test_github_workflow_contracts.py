@@ -74,6 +74,7 @@ def test_api_errors_do_not_expose_the_token():
     client = GitHubWorkflow(
         REPO,
         SecretStr("never-show-this"),
+        role="advisor",
         transport=FailingTransport(),
         api_url=API_URL,
     )
@@ -93,6 +94,7 @@ def test_network_failure_raises_a_token_safe_transport_error(monkeypatch):
     client = GitHubWorkflow(
         REPO,
         SecretStr("never-show-this"),
+        role="advisor",
         api_url=API_URL,
     )
 

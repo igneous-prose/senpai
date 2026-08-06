@@ -44,7 +44,7 @@ def test_submit_result_converges_review_state_and_replays_without_writes():
         pull_request(labels={"student:one", "status:wip"}, draft=True)
     )
     result = experiment_result()
-    client = workflow(fake)
+    client = workflow(fake, role="student")
 
     first = submit_result(client, result)
     mutations_after_first = list(fake.mutations)
@@ -55,7 +55,7 @@ def test_submit_result_converges_review_state_and_replays_without_writes():
     assert fake.pr["draft"] is False
     assert fake.pr["labels"] == {"student:one", "status:review"}
     assert len(fake.comments) == 1
-    assert "<!-- senpai-result:v1 " in str(fake.comments[0]["body"])
+    assert "\n\nSTUDENT: Status: succeeded" in str(fake.comments[0]["body"])
     assert fake.mutations == mutations_after_first
 
 
@@ -141,7 +141,7 @@ def test_submit_result_recovers_when_the_comment_response_is_lost():
         fail_path=f"/repos/{REPO}/issues/7/comments",
     )
 
-    result = submit_result(workflow(fake))
+    result = submit_result(workflow(fake, role="student"))
 
     assert result.state == "result_submitted"
     assert fake.failed is True
@@ -160,7 +160,7 @@ def test_submit_result_does_not_treat_the_initial_assignment_head_as_a_lease():
         )
     )
 
-    submitted = submit_result(workflow(fake))
+    submitted = submit_result(workflow(fake, role="student"))
 
     assert submitted.state == "result_submitted"
 
@@ -181,7 +181,7 @@ def test_submit_result_rejects_mismatched_result_location(result):
     )
 
     with pytest.raises(WorkflowPreconditionError, match="result"):
-        submit_result(workflow(fake), result)
+        submit_result(workflow(fake, role="student"), result)
 
     assert fake.mutations == []
 
@@ -202,7 +202,7 @@ def test_close_experiment_writes_one_reason_and_replays_without_writes():
             "id": 1,
             "body": (
                 "<!-- senpai-disposition:v1 dead-end-7 -->\n\n"
-                "The hypothesis was falsified."
+                "ADVISOR: The hypothesis was falsified."
             ),
             "user": {"login": "senpai-bot"},
             "html_url": f"https://github.com/{REPO}/pull/7#issuecomment-1",

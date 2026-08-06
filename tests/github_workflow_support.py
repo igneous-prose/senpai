@@ -1,6 +1,6 @@
 """Stateful GitHub transport used by the workflow transition tests."""
 
-from typing import cast
+from typing import Literal, cast
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import SecretStr
@@ -378,10 +378,15 @@ class AmbiguousMutationGitHub(FakeGitHub):
         return response
 
 
-def workflow(fake: FakeGitHub) -> GitHubWorkflow:
+def workflow(
+    fake: FakeGitHub,
+    *,
+    role: Literal["advisor", "student"] = "advisor",
+) -> GitHubWorkflow:
     return GitHubWorkflow(
         REPO,
         SecretStr("github-secret"),
+        role=role,
         transport=fake,
         api_url=API_URL,
         trusted_actor="senpai-bot",
