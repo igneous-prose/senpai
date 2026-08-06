@@ -36,6 +36,10 @@ exclude = ["k8s*", "target*", "tests*"]
 pythonpath = ["."]
 
 [tool.uv]
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+]
 exclude-newer = "2026-07-27T20:01:53.448785Z"
 exclude-newer-package = { cryptography = "2026-08-01T00:00:00Z" }
 constraint-dependencies = [
@@ -45,6 +49,5 @@ constraint-dependencies = [
 [project.optional-dependencies]
 dev = [
     "ipython",
-    "jupyter",
     "pytest",
 ]

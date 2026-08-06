@@ -1,4 +1,5 @@
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,14 @@ import yaml
 
 ROOT = Path(__file__).parents[1]
 TEMPLATE_TOKEN = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+BINARY_ONLY_RUNTIME_PACKAGES = (
+    "cryptography",
+    "jiter",
+    "litellm",
+    "pycparser",
+    "pydantic-core",
+    "rpds-py",
+)
 
 
 def load_kubernetes_template(name: str) -> dict:
@@ -49,6 +58,28 @@ def test_student_dockerfile_declares_the_cuda_training_runtime():
     assert "NVIDIA_VISIBLE_DEVICES=all" in dockerfile
     assert "senpai-gpu-smoke-test" in dockerfile
     assert "@anthropic-ai/claude-code" not in lowered
+
+
+def test_lock_targets_linux_and_macos_without_the_unused_notebook_stack():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert project["tool"]["uv"]["environments"] == [
+        "sys_platform == 'linux'",
+        "sys_platform == 'darwin'",
+    ]
+    assert "jupyter" not in project["project"]["optional-dependencies"]["dev"]
+
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked_names = {package["name"] for package in lock["package"]}
+    assert locked_names.isdisjoint({"fastjsonschema", "pyreadline3", "pywinpty"})
+
+
+def test_role_images_refuse_source_builds_for_flagged_registry_packages():
+    for role in ("advisor", "student"):
+        dockerfile = (ROOT / f"Dockerfile.{role}").read_text(encoding="utf-8")
+
+        for package in BINARY_ONLY_RUNTIME_PACKAGES:
+            assert f"--only-binary {package}" in dockerfile
 
 
 def test_both_role_images_run_as_the_same_explicit_non_root_user():

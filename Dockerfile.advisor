@@ -44,7 +44,14 @@ RUN cd /tmp/senpai && \
       --prune einops \
       --prune matplotlib \
       > requirements.txt && \
-    uv pip install --python "$SENPAI_PYTHON" -r requirements.txt && \
+    uv pip install --python "$SENPAI_PYTHON" \
+      --only-binary cryptography \
+      --only-binary jiter \
+      --only-binary litellm \
+      --only-binary pycparser \
+      --only-binary pydantic-core \
+      --only-binary rpds-py \
+      -r requirements.txt && \
     python -c 'import importlib.metadata, importlib.util, openhands.sdk, sys; assert sys.version_info[:2] == (3, 13); assert importlib.util.find_spec("torch") is None; assert importlib.metadata.version("openhands-sdk") == "1.40.0"; assert importlib.metadata.version("weave-openhands") == "0.1.0"' && \
     chown -R 10001:10001 /opt/senpai-venv && \
     rm -rf /root/.cache/uv
