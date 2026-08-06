@@ -616,7 +616,7 @@ Each SENPAI target repository carries a \texttt{program.md} file that makes task
 \section{Skill Catalogue}
 \label{app:skill-catalogue}
 
-SENPAI's prompts route common operations through small helper skills and a shared \texttt{senpai-gh} library. This was a deliberate control choice: high-frequency GitHub and bookkeeping operations should have narrow, testable interfaces instead of being reconstructed from scratch by each agent invocation.
+SENPAI's prompts route reusable workflows through progressively disclosed skills, while the controller and typed tools own polling, GitHub state transitions, and bookkeeping. This is a deliberate control choice: high-frequency control-plane operations should have narrow, testable interfaces instead of being reconstructed from shell commands by each agent invocation.
 
 \begin{center}
   \captionof{table}{Helper skills used by the Advisor and Students.}
@@ -626,14 +626,12 @@ SENPAI's prompts route common operations through small helper skills and a share
     \toprule
     Helper & Caller & Effect on the experiment ledger \\
     \midrule
-    \texttt{survey-prs} & Advisor & Reads review-ready, WIP, draft/stalled, and idle-Student state for an Advisor branch. \\
-    \texttt{poll-for-work} & Student & Returns assigned WIP PRs for a Student label and reads comments to detect revisions. \\
     \texttt{check-human-issues} & Both & Finds labeled human issues for the caller and posts role-prefixed replies without closing issues. \\
     \texttt{list-experiments} & Researcher & Exports merged winners, compact result tables, and detailed PR bodies from the PR ledger. \\
+    \texttt{bootstrap-target} & Operator & Creates the target programme contract and role-specific instruction overlays for a new research repository. \\
     \texttt{assign-experiment} & Advisor & Creates a Student branch, opens a draft PR, labels it \texttt{status:wip}, and writes full experiment instructions. \\
     \shortstack[l]{\texttt{submit-}\\\texttt{experiment-results}} & Student & Commits changed experiment files, pushes the branch, marks the PR ready, and swaps \texttt{status:wip} to \texttt{status:review}. \\
     \texttt{merge-winner} & Advisor & Preflights terminal results, squash-merges a winning PR, updates the Advisor baseline, and pulls the updated branch. \\
-    \texttt{senpai-gh} & Both & Provides lower-level label swaps, PR comments, closure, preflight, and read-only query primitives. \\
     \bottomrule
   \end{tabular}
 \end{center}

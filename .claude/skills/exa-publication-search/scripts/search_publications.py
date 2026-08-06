@@ -1,1 +1,0 @@
-../../../../.agents/skills/exa-publication-search/scripts/search_publications.py

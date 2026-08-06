@@ -2,8 +2,7 @@
 # Arm a cluster-side Senpai cutoff job.
 #
 # The job waits inside Kubernetes until all expected Senpai pods are Ready,
-# records that timestamp on the PVC, sleeps for the requested budget, harvests
-# Claude Code conversation logs from /root/.claude, writes them to the PVC, then
+# records that timestamp on the PVC, sleeps for the requested budget, then
 # deletes the tagged Senpai deployments/configmaps/secrets. This keeps the hard
 # cutoff independent of the operator laptop staying awake.
 
@@ -12,22 +11,18 @@ set -euo pipefail
 CONTEXT="${CONTEXT:-pai-2}"
 NAMESPACE="${NAMESPACE:-default}"
 KUBECTL="${KUBECTL:-kubectl}"
-REPO_ROOT="${REPO_ROOT:-/Users/mmcguire/ML/senpai}"
-CONVERSATION_LOG_DIR="${CONVERSATION_LOG_DIR:-${REPO_ROOT}/conversation_logs}"
 
 RUN_SLUG=""
 TAGS_CSV=""
 EXPECTED_PODS="90"
 EXPECTED_DEPLOYMENTS="90"
+READINESS_TIMEOUT_MINUTES="30"
 BUDGET_HOURS="48"
-HARVEST_LEAD_SECONDS="900"
 PVC_CLAIM_NAME="new-pvc"
 PVC_MOUNT_PATH="/mnt/new-pvc"
 PVC_LOG_ROOT="/mnt/new-pvc/senpai-conversation-logs"
-IMAGE="ghcr.io/wandb/senpai:latest"
-MAX_PARALLEL_COPIES="16"
+IMAGE=""
 START_GATE_PATH=""
-START_LOCAL_PULL="true"
 DRY_RUN="false"
 
 usage() {
@@ -40,15 +35,15 @@ Usage:
 Options:
   --expected-pods N           Expected Ready pod count before the 48h timer starts (default: 90)
   --expected-deployments N    Expected deployment count before the timer starts (default: 90)
-  --budget-hours H            Fleet runtime after all pods are Ready (default: 48)
-  --harvest-lead-seconds S    Seconds before cutoff to harvest Claude logs (default: 900)
+  --readiness-timeout-minutes M
+                              Arm even if not all pods are Ready after M minutes (default: 30)
+  --budget-hours H            Fleet runtime after readiness or timeout arming (default: 48)
   --pvc-claim NAME            PVC claim mounted into cutoff job (default: new-pvc)
   --pvc-mount-path PATH       Mount path inside cutoff job (default: /mnt/new-pvc)
-  --pvc-log-root PATH         PVC output root (default: /mnt/new-pvc/senpai-conversation-logs)
-  --image IMAGE               Image containing bash, python, tar, and kubectl (default: ghcr.io/wandb/senpai:latest)
-  --max-parallel-copies N     Concurrent pod log tar streams during harvest (default: 16)
-  --start-gate-path PATH      Write this file after all pods are Ready, releasing gated pods
-  --no-local-pull             Do not start the best-effort local PVC mirror process
+  --pvc-log-root PATH         PVC cutoff-state root (default: /mnt/new-pvc/senpai-conversation-logs)
+  --image IMAGE               Immutable cutoff image digest or :sha-<commit> tag
+                              (default: this checkout's senpai-cutoff commit tag)
+  --start-gate-path PATH      Write this file after readiness or timeout, releasing gated pods
   --dry-run                   Print manifests and helper script without applying
 USAGE
 }
@@ -59,15 +54,13 @@ while [ "$#" -gt 0 ]; do
     --tags-csv) TAGS_CSV="$2"; shift 2 ;;
     --expected-pods) EXPECTED_PODS="$2"; shift 2 ;;
     --expected-deployments) EXPECTED_DEPLOYMENTS="$2"; shift 2 ;;
+    --readiness-timeout-minutes) READINESS_TIMEOUT_MINUTES="$2"; shift 2 ;;
     --budget-hours) BUDGET_HOURS="$2"; shift 2 ;;
-    --harvest-lead-seconds) HARVEST_LEAD_SECONDS="$2"; shift 2 ;;
     --pvc-claim) PVC_CLAIM_NAME="$2"; shift 2 ;;
     --pvc-mount-path) PVC_MOUNT_PATH="$2"; shift 2 ;;
     --pvc-log-root) PVC_LOG_ROOT="$2"; shift 2 ;;
     --image) IMAGE="$2"; shift 2 ;;
-    --max-parallel-copies) MAX_PARALLEL_COPIES="$2"; shift 2 ;;
     --start-gate-path) START_GATE_PATH="$2"; shift 2 ;;
-    --no-local-pull) START_LOCAL_PULL="false"; shift ;;
     --dry-run) DRY_RUN="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -76,6 +69,39 @@ done
 
 if [ -z "$RUN_SLUG" ] || [ -z "$TAGS_CSV" ]; then
   usage >&2
+  exit 2
+fi
+
+if [ -z "$IMAGE" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  SOURCE_REVISION="$(git -C "$SCRIPT_DIR/.." rev-parse --verify HEAD 2>/dev/null)" || {
+    echo "Unable to resolve the Senpai checkout revision; pass --image." >&2
+    exit 2
+  }
+  IMAGE="ghcr.io/wandb/senpai-cutoff:sha-${SOURCE_REVISION}"
+fi
+if [[ ! "$IMAGE" =~ @sha256:[0-9a-f]{64}$ && ! "$IMAGE" =~ :sha-[0-9a-f]{40}$ ]]; then
+  echo "--image must be an immutable digest or :sha-<40-character-commit> tag" >&2
+  exit 2
+fi
+if [ -n "$START_GATE_PATH" ] && ! python - "$START_GATE_PATH" "$PVC_MOUNT_PATH" <<'PY'
+import posixpath
+import sys
+
+gate, mount = map(posixpath.normpath, sys.argv[1:])
+valid = (
+    posixpath.isabs(gate)
+    and gate == sys.argv[1]
+    and posixpath.isabs(mount)
+    and gate.startswith(f"{mount.rstrip('/')}/")
+)
+if not valid:
+    raise SystemExit(
+        "ERROR: --start-gate-path must be an absolute normalized file path "
+        "beneath the shared PVC --pvc-mount-path"
+    )
+PY
+then
   exit 2
 fi
 
@@ -99,16 +125,22 @@ import sys
 print(int(float(sys.argv[1]) * 3600))
 PY
 )"
+READINESS_TIMEOUT_SECONDS="$(python - "$READINESS_TIMEOUT_MINUTES" <<'PY'
+import math
+import sys
+
+minutes = float(sys.argv[1])
+if not math.isfinite(minutes) or minutes < 0:
+    raise SystemExit("--readiness-timeout-minutes must be a non-negative number")
+print(int(minutes * 60))
+PY
+)"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 CUTOFF_SCRIPT="${TMP_DIR}/cutoff-job.sh"
 RBAC_MANIFEST="${TMP_DIR}/rbac.yaml"
 JOB_MANIFEST="${TMP_DIR}/job.yaml"
-LOCAL_PULL_SCRIPT="${CONVERSATION_LOG_DIR}/_${RUN_SLUG}_pull_from_pvc.sh"
-LOCAL_PULL_LOG="${CONVERSATION_LOG_DIR}/_${RUN_SLUG}_pull_from_pvc.log"
-
-mkdir -p "$CONVERSATION_LOG_DIR"
 
 cat > "$CUTOFF_SCRIPT" <<'JOBSCRIPT'
 #!/usr/bin/env bash
@@ -118,10 +150,9 @@ RUN_SLUG="${RUN_SLUG:?}"
 TAGS_CSV="${TAGS_CSV:?}"
 EXPECTED_PODS="${EXPECTED_PODS:?}"
 EXPECTED_DEPLOYMENTS="${EXPECTED_DEPLOYMENTS:?}"
+READINESS_TIMEOUT_SECONDS="${READINESS_TIMEOUT_SECONDS:?}"
 BUDGET_SECONDS="${BUDGET_SECONDS:?}"
-HARVEST_LEAD_SECONDS="${HARVEST_LEAD_SECONDS:?}"
 PVC_LOG_ROOT="${PVC_LOG_ROOT:?}"
-MAX_PARALLEL_COPIES="${MAX_PARALLEL_COPIES:?}"
 START_GATE_PATH="${START_GATE_PATH:-}"
 NAMESPACE="${NAMESPACE:-default}"
 SELECTOR="research-tag in (${TAGS_CSV})"
@@ -129,7 +160,6 @@ SELECTOR="research-tag in (${TAGS_CSV})"
 RUN_DIR="${PVC_LOG_ROOT}/${RUN_SLUG}"
 STATE_FILE="${RUN_DIR}/cutoff_state.env"
 mkdir -p "$RUN_DIR"
-exec > >(tee -a "${RUN_DIR}/cutoff-job.log") 2>&1
 
 log() {
   printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
@@ -140,14 +170,6 @@ utc_from_epoch() {
 import datetime as dt
 import sys
 print(dt.datetime.fromtimestamp(int(sys.argv[1]), tz=dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-PY
-}
-
-safe_name() {
-  python - "$1" <<'PY'
-import re
-import sys
-print(re.sub(r"[^A-Za-z0-9_.=-]+", "_", sys.argv[1]).strip("_") or "pod")
 PY
 }
 
@@ -171,7 +193,7 @@ deployment_count() {
 }
 
 write_state() {
-  local now kill_at kill_at_utc tmp
+  local reason="$1" now kill_at kill_at_utc tmp
   now="$(date -u '+%s')"
   kill_at=$((now + BUDGET_SECONDS))
   kill_at_utc="$(utc_from_epoch "$kill_at")"
@@ -179,7 +201,8 @@ write_state() {
   {
     printf 'RUN_SLUG=%q\n' "$RUN_SLUG"
     printf 'TAGS_CSV=%q\n' "$TAGS_CSV"
-    printf 'LAST_READY_UTC=%q\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'ARMED_AT_UTC=%q\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'ARM_REASON=%q\n' "$reason"
     printf 'KILL_AT_EPOCH=%q\n' "$kill_at"
     printf 'KILL_AT_UTC=%q\n' "$kill_at_utc"
     printf 'EXPECTED_PODS=%q\n' "$EXPECTED_PODS"
@@ -207,29 +230,41 @@ open_start_gate() {
 }
 
 wait_for_ready_gate() {
-  local total ready deploys
+  local total ready deploys deadline now delay
   if [ -f "$STATE_FILE" ]; then
     # shellcheck source=/dev/null
     source "$STATE_FILE"
-    log "Loaded existing cutoff state: LAST_READY_UTC=${LAST_READY_UTC}, KILL_AT_UTC=${KILL_AT_UTC}"
+    log "Loaded existing cutoff state: KILL_AT_UTC=${KILL_AT_UTC}"
     open_start_gate
     return 0
   fi
 
-  log "Waiting for ready gate: expected pods=${EXPECTED_PODS}, deployments=${EXPECTED_DEPLOYMENTS}, selector=${SELECTOR}"
+  deadline=$(($(date -u '+%s') + READINESS_TIMEOUT_SECONDS))
+  log "Waiting for ready gate: expected pods=${EXPECTED_PODS}, deployments=${EXPECTED_DEPLOYMENTS}, timeout=${READINESS_TIMEOUT_SECONDS}s, selector=${SELECTOR}"
   while true; do
     read -r total ready < <(pod_counts)
     deploys="$(deployment_count)"
     log "Ready gate poll: ready=${ready}/${EXPECTED_PODS}, pods=${total}/${EXPECTED_PODS}, deployments=${deploys}/${EXPECTED_DEPLOYMENTS}"
     if [ "$total" = "$EXPECTED_PODS" ] && [ "$ready" = "$EXPECTED_PODS" ] && [ "$deploys" = "$EXPECTED_DEPLOYMENTS" ]; then
-      write_state
+      write_state "all_ready"
       # shellcheck source=/dev/null
       source "$STATE_FILE"
-      log "Ready gate passed: LAST_READY_UTC=${LAST_READY_UTC}, KILL_AT_UTC=${KILL_AT_UTC}"
+      log "Ready gate passed: ARMED_AT_UTC=${ARMED_AT_UTC}, KILL_AT_UTC=${KILL_AT_UTC}"
       open_start_gate
       return 0
     fi
-    sleep 60
+    now="$(date -u '+%s')"
+    if [ "$now" -ge "$deadline" ]; then
+      log "Readiness deadline reached; arming cutoff anyway"
+      write_state "readiness_timeout"
+      # shellcheck source=/dev/null
+      source "$STATE_FILE"
+      open_start_gate
+      return 0
+    fi
+    delay=$((deadline - now))
+    [ "$delay" -gt 60 ] && delay=60
+    sleep "$delay"
   done
 }
 
@@ -249,83 +284,11 @@ sleep_until() {
   done
 }
 
-copy_one_pod() {
-  local pod="$1" tag="$2" dest="$3" pod_dir
-  pod_dir="${dest}/pods/$(safe_name "$tag")/$(safe_name "$pod")"
-  mkdir -p "$pod_dir"
-  printf '%s\t%s\n' "$pod" "$tag" > "${pod_dir}/pod.tsv"
-  log "Harvesting Claude Code logs from ${pod} (${tag})"
-  if kubectl -n "$NAMESPACE" exec "$pod" -- sh -lc '
-      cd /root || exit 0
-      set --
-      [ -d .claude/projects ] && set -- "$@" .claude/projects
-      [ -d .claude/todos ] && set -- "$@" .claude/todos
-      [ -f .claude.json ] && set -- "$@" .claude.json
-      [ "$#" -gt 0 ] || exit 0
-      tar -czf - "$@"
-    ' > "${pod_dir}/claude-code-logs.tgz" 2> "${pod_dir}/harvest.err"; then
-    log "Harvested ${pod}"
-  else
-    log "WARN: failed to harvest ${pod}; see ${pod_dir}/harvest.err"
-    return 1
-  fi
-}
-
-harvest_claude_logs() {
-  local ts dest copy_failed job_count pod_count
-  ts="$(date -u '+%Y%m%dT%H%M%SZ')"
-  dest="${RUN_DIR}/${ts}_claude_logs"
-  mkdir -p "${dest}/pods"
-  cp "$STATE_FILE" "${dest}/schedule.env"
-  log "Harvest destination on PVC: ${dest}"
-
-  kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o json | python -c '
-import json
-import sys
-data = json.load(sys.stdin)
-for item in data.get("items", []):
-    meta = item.get("metadata", {})
-    print("{}\t{}".format(meta.get("name", ""), meta.get("labels", {}).get("research-tag", "")))
-' > "${dest}/pod_list.tsv"
-
-  pod_count="$(wc -l < "${dest}/pod_list.tsv" | tr -d ' ')"
-  log "Pods selected for Claude log harvest: ${pod_count}"
-  if [ "$pod_count" = "0" ]; then
-    log "WARN: no pods found at harvest time"
-    return 0
-  fi
-
-  copy_failed=0
-  while IFS="$(printf '\t')" read -r pod tag; do
-    [ -n "$pod" ] || continue
-    while true; do
-      job_count="$(jobs -pr | wc -l | tr -d ' ')"
-      [ "$job_count" -lt "$MAX_PARALLEL_COPIES" ] && break
-      sleep 1
-    done
-    copy_one_pod "$pod" "$tag" "$dest" &
-  done < "${dest}/pod_list.tsv"
-
-  for job in $(jobs -pr); do
-    if ! wait "$job"; then
-      copy_failed=1
-    fi
-  done
-
-  if [ "$copy_failed" -ne 0 ]; then
-    log "WARN: one or more Claude log harvests failed"
-  else
-    log "All Claude log harvests completed"
-  fi
-  printf '%s\n' "$dest" > "${RUN_DIR}/latest_harvest_path.txt"
-}
-
 delete_targets() {
   local deploys
   deploys="$(deployment_count)"
   if [ "$deploys" = "0" ]; then
-    log "No target deployments remain; delete already complete or launch never existed"
-    return 0
+    log "No target deployments remain; deleting any residual launch resources"
   fi
   log "Deleting deployments/configmaps/secrets with selector: ${SELECTOR}"
   kubectl -n "$NAMESPACE" delete deployments,configmaps,secrets -l "$SELECTOR" --ignore-not-found=true
@@ -338,9 +301,6 @@ main() {
   wait_for_ready_gate
   # shellcheck source=/dev/null
   source "$STATE_FILE"
-  harvest_at=$((KILL_AT_EPOCH - HARVEST_LEAD_SECONDS))
-  sleep_until "$harvest_at" "Claude Code log harvest"
-  harvest_claude_logs
   sleep_until "$KILL_AT_EPOCH" "hard cutoff delete"
   delete_targets
   log "Cluster cutoff job done: ${RUN_SLUG}"
@@ -366,13 +326,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: ["pods"]
-  verbs: ["get", "list", "watch", "delete"]
-- apiGroups: [""]
-  resources: ["pods/log"]
   verbs: ["get", "list", "watch"]
-- apiGroups: [""]
-  resources: ["pods/exec"]
-  verbs: ["create"]
 - apiGroups: [""]
   resources: ["configmaps", "secrets"]
   verbs: ["get", "list", "watch", "delete"]
@@ -432,14 +386,12 @@ spec:
           value: "${EXPECTED_PODS}"
         - name: EXPECTED_DEPLOYMENTS
           value: "${EXPECTED_DEPLOYMENTS}"
+        - name: READINESS_TIMEOUT_SECONDS
+          value: "${READINESS_TIMEOUT_SECONDS}"
         - name: BUDGET_SECONDS
           value: "${BUDGET_SECONDS}"
-        - name: HARVEST_LEAD_SECONDS
-          value: "${HARVEST_LEAD_SECONDS}"
         - name: PVC_LOG_ROOT
           value: "${PVC_LOG_ROOT}"
-        - name: MAX_PARALLEL_COPIES
-          value: "${MAX_PARALLEL_COPIES}"
         - name: START_GATE_PATH
           value: "${START_GATE_PATH}"
         - name: NAMESPACE
@@ -475,38 +427,5 @@ fi
 "$KUBECTL" --context "$CONTEXT" apply -f "$JOB_MANIFEST"
 
 echo "Armed cluster cutoff job: ${JOB_NAME}"
-echo "PVC log root: ${PVC_LOG_ROOT}/${RUN_SLUG}"
+echo "PVC cutoff state: ${PVC_LOG_ROOT}/${RUN_SLUG}"
 echo "Monitor: kubectl --context ${CONTEXT} -n ${NAMESPACE} logs -f job/${JOB_NAME}"
-
-if [ "$START_LOCAL_PULL" = "true" ]; then
-  cat > "$LOCAL_PULL_SCRIPT" <<EOF_PULL
-#!/usr/bin/env bash
-set -euo pipefail
-KUBECTL="${KUBECTL}"
-CONTEXT="${CONTEXT}"
-NAMESPACE="${NAMESPACE}"
-JOB_NAME="${JOB_NAME}"
-RUN_SLUG="${RUN_SLUG}"
-PVC_CLAIM_NAME="${PVC_CLAIM_NAME}"
-PVC_MOUNT_PATH="${PVC_MOUNT_PATH}"
-PVC_LOG_ROOT="${PVC_LOG_ROOT}"
-IMAGE="${IMAGE}"
-DEST="${CONVERSATION_LOG_DIR}/\${RUN_SLUG}_pvc"
-READER_POD="senpai-pvc-log-reader-${SAFE_SLUG}"
-
-mkdir -p "\${DEST}"
-"\${KUBECTL}" --context "\${CONTEXT}" -n "\${NAMESPACE}" wait --for=condition=complete "job/\${JOB_NAME}" --timeout=200h
-"\${KUBECTL}" --context "\${CONTEXT}" -n "\${NAMESPACE}" delete pod "\${READER_POD}" --ignore-not-found=true
-"\${KUBECTL}" --context "\${CONTEXT}" -n "\${NAMESPACE}" run "\${READER_POD}" \
-  --image="\${IMAGE}" \
-  --restart=Never \
-  --overrides="{\"spec\":{\"containers\":[{\"name\":\"reader\",\"image\":\"\${IMAGE}\",\"command\":[\"/bin/bash\",\"-lc\",\"sleep 3600\"],\"volumeMounts\":[{\"name\":\"dataset\",\"mountPath\":\"\${PVC_MOUNT_PATH}\"}]}],\"volumes\":[{\"name\":\"dataset\",\"persistentVolumeClaim\":{\"claimName\":\"\${PVC_CLAIM_NAME}\"}}]}}"
-"\${KUBECTL}" --context "\${CONTEXT}" -n "\${NAMESPACE}" wait --for=condition=Ready "pod/\${READER_POD}" --timeout=10m
-"\${KUBECTL}" --context "\${CONTEXT}" -n "\${NAMESPACE}" cp "\${READER_POD}:\${PVC_LOG_ROOT}/\${RUN_SLUG}" "\${DEST}"
-"\${KUBECTL}" --context "\${CONTEXT}" -n "\${NAMESPACE}" delete pod "\${READER_POD}" --ignore-not-found=true
-EOF_PULL
-  chmod +x "$LOCAL_PULL_SCRIPT"
-  nohup "$LOCAL_PULL_SCRIPT" > "$LOCAL_PULL_LOG" 2>&1 &
-  echo "Started best-effort local PVC mirror: ${LOCAL_PULL_SCRIPT}"
-  echo "Local mirror log: ${LOCAL_PULL_LOG}"
-fi

@@ -5,11 +5,12 @@
 [project]
 name = "senpai"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "numpy",
     "PyYAML",
-    "torch",
+    "torch==2.13.0",
+    "torchvision==0.28.0",
     "torch_geometric",
     "einops",
     "timm",
@@ -17,9 +18,13 @@ dependencies = [
     "python-dotenv",
     "simple-parsing",
     "wandb",
-    "weave",
+    "weave>=0.53.1,<0.54",
+    "weave-openhands @ git+https://github.com/morganmcg1/weave-openhands.git@c1e9cda697e10ee92e5629b19c7d81cac8bcf54b",
     "tqdm",
     "matplotlib",
+    "openhands-sdk @ git+https://github.com/morganmcg1/software-agent-sdk.git@main#subdirectory=openhands-sdk",
+    "openhands-tools @ git+https://github.com/morganmcg1/software-agent-sdk.git@main#subdirectory=openhands-tools",
+    "psutil",
     # v2.16.2 is tagged upstream but has not been published to PyPI.
     "exa-py @ https://github.com/exa-labs/exa-py/archive/71f315b4be07d474df128c8fafc70cc7d0e47b56.tar.gz",
 ]
@@ -27,8 +32,22 @@ dependencies = [
 [tool.setuptools.packages.find]
 exclude = ["k8s*", "target*", "tests*"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.uv]
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+]
+exclude-newer = "2026-07-27T20:01:53.448785Z"
+exclude-newer-package = { cryptography = "2026-08-01T00:00:00Z" }
+constraint-dependencies = [
+    "cryptography>=50.0.0", # CVE-2026-69247 / GHSA-g6cj-pr64-35w5
+]
+
 [project.optional-dependencies]
 dev = [
     "ipython",
-    "jupyter",
+    "pytest",
 ]

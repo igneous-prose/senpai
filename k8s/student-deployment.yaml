@@ -25,24 +25,58 @@ spec:
       research-tag: {{RESEARCH_TAG}}
   template:
     metadata:
+      annotations:
+        senpai.wandb.com/content-hash: "{{POD_CONFIG_HASH}}"
       labels:
         app: senpai
         role: student
         student: {{STUDENT_NAME}}
         research-tag: {{RESEARCH_TAG}}
     spec:
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: student
-        image: {{IMAGE}}
+        image: {{STUDENT_IMAGE}}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
         command: ["/bin/bash", "-c"]
         args:
         - |
           set -e
-          repo_auth_url="$(printf '%s' "$REPO_URL" | sed "s#https://github.com/#https://${GITHUB_TOKEN}@github.com/#")"
-          git clone --branch "$REPO_BRANCH" --single-branch --depth 1 --no-tags "$repo_auth_url" /workspace/senpai
+          askpass=/tmp/senpai-git-askpass
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" x-access-token ;;' \
+            '  *Password*) printf "%s\n" "$GITHUB_TOKEN" ;;' \
+            'esac' > "$askpass"
+          chmod 700 "$askpass"
+          mkdir -p /workspace
+          git init /workspace/senpai
+          GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+            git -C /workspace/senpai fetch --depth 1 "$REPO_URL" "$REPO_REVISION"
+          git -C /workspace/senpai checkout --detach FETCH_HEAD
           cd /workspace/senpai
-          git remote set-url origin "$REPO_URL"
-          bash k8s/entrypoint-student.sh
+          git remote add origin "$REPO_URL"
+          test "$(git rev-parse HEAD)" = "$REPO_REVISION"
+          test "$SENPAI_IMAGE_REVISION" = "$REPO_REVISION"
+          token_handoff=/tmp/senpai-supervisor-github-token
+          umask 077
+          printf '%s' "$GITHUB_TOKEN" > "$token_handoff"
+          export SENPAI_GITHUB_TOKEN_FILE="$token_handoff"
+          unset GITHUB_TOKEN GH_TOKEN
+          rm -f "$askpass"
+          exec bash k8s/entrypoint-student.sh
         envFrom:
         - configMapRef:
             name: {{STUDENT_CONFIGMAP_NAME}}
@@ -50,18 +84,14 @@ spec:
         - name: WANDB_API_KEY
           valueFrom:
             secretKeyRef:
-              name: senpai-secrets
+              name: {{LAUNCH_SECRET_NAME}}
               key: wandb-api-key
         - name: GITHUB_TOKEN
           valueFrom:
             secretKeyRef:
               name: {{LAUNCH_SECRET_NAME}}
               key: github-token
-        - name: ANTHROPIC_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: {{LAUNCH_SECRET_NAME}}
-              key: anthropic-api-key
+        {{MODEL_PROVIDER_ENV}}
         - name: EXA_API_KEY
           valueFrom:
             secretKeyRef:
@@ -76,11 +106,32 @@ spec:
             cpu: "{{STUDENT_CPU}}"
             memory: "{{STUDENT_MEMORY}}"
             nvidia.com/gpu: "{{GPUS_PER_STUDENT}}"
+        startupProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - python -m senpai_agent.supervisor health "/var/lib/senpai/openhands_state/controller-lease.json"
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 60
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - python -m senpai_agent.supervisor health "/var/lib/senpai/openhands_state/controller-lease.json"
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 5
+          terminationGracePeriodSeconds: 75
         volumeMounts:
         - name: dshm
           mountPath: /dev/shm
         - name: dataset
           mountPath: {{PVC_MOUNT_PATH}}
+        - name: state
+          mountPath: /var/lib/senpai
       volumes:
       - name: dshm
         emptyDir:
@@ -89,6 +140,8 @@ spec:
       - name: dataset
         persistentVolumeClaim:
           claimName: {{PVC_CLAIM_NAME}}
+      - name: state
+        emptyDir: {}
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"

@@ -6,299 +6,397 @@ SPDX-PackageName: senpai
 
 # senpai
 
-**ICML 2026 AI for Science Workshop:** [Project Page](https://wandb.github.io/senpai/) - [Paper](https://openreview.net/forum?id=g0bJFA9gVT#discussion)
+Senpai is an autonomous ML research loop built on the OpenHands Agent SDK. An advisor proposes and reviews experiments; GPU students implement one assigned experiment each, train, and return evidence through GitHub and W&B.
 
-*Currently undergoing a full-write in [PR#3467](https://github.com/wandb/senpai/pull/3467) to use OpenHands agent SDK*
+Senpai is problem-agnostic. It runs against a separate target repository, and every experiment branch, commit, and PR lands there—not in this runner repository.
 
-Current 
+- **ICML 2026:** [*SENPAI: Self-ExperimentatioN for Physical AI—An Observability-Based Research Harness*](https://openreview.net/forum?id=g0bJFA9gVT) was presented at the AI for Science Workshop; see the [project site](https://wandb.github.io/senpai/).
+- **ICLR 2026:** Kagent, a Senpai variant, placed fourth in the [GRaM competition](https://gram-competition.github.io/).
 
-Autonomous ML research loop powered by Claude Code agents coordinated through GitHub PRs. Point it at a problem, deploy advisor + student agents on k8s, and let them iterate.
+## Quick start
 
-## How it works
+Kubernetes is currently the turnkey deployment path. The GitHub-based coordination protocol is infrastructure-independent, but Docker and direct-host operation still require manual bootstrap; see [Other deployment environments](#other-deployment-environments).
 
-An **advisor** pod creates experiment PRs and assigns them to **student** GPU pods. Students implement, train, and report; the advisor merges winners and closes dead ends. GitHub labels route work, and W&B tracks metrics.
+### 1. Prerequisites
 
-`senpai` is **problem-agnostic**. The pod entrypoint clones the configured problem-package repo into `target/`, so agent commits and PRs land in that external repo, not here.
+- Python 3.13, [uv](https://docs.astral.sh/uv/), Git, and `kubectl`.
+- A Kubernetes context and existing namespace with outbound access to GitHub, Anthropic, Exa, and W&B. Your identity must be able to get, list, create, update, patch, and delete Deployments, ConfigMaps, and Secrets there.
+- An existing PVC with enough space for the dataset and advisor state, plus concurrent mounts from every scheduled node—normally `ReadWriteMany`, unless your storage driver explicitly supports another multi-node topology. The launcher mounts this claim but does not create it.
+- NVIDIA GPU nodes, the Kubernetes NVIDIA device plugin, and a host driver compatible with CUDA 13 and the shipped student image.
+- A target GitHub repository that Senpai can clone and modify.
+- Immutable advisor and student images reachable by every cluster node.
 
-### Problem packages
-
-| Repo | Status | Notes |
-|---|---|---|
-| [`morganmcg1/tandemfoil2`](https://github.com/morganmcg1/tandemfoil2) | Active | TandemFoilSet velocity prediction, branch `kagent_royal_rumble` |
-| [`morganmcg1/icml2026`](https://github.com/morganmcg1/icml2026) | Archive | ICML 2026 CFD multi-dataset harness |
-| [`morganmcg1/cfd_tandemfoil_v1`](https://github.com/morganmcg1/cfd_tandemfoil_v1) | Archive | Original v1 TandemFoil package |
-
-## DOMAIN SPECIFIC GUIDES
-
-- [LLM Inference Optimization Senpai Guide](LLM-INFERENCE-OPTIMIZATION-SENPAI-GUIDE.md): Fast Gemma 4 case-study lessons for serving-time LLM optimization, including quality gates, bytes-per-token bottlenecks, kernels, quantization, and speculative decoding.
-- [LLM Training Optimization Guide](LLM-TRAINING-OPTIMIZATION-GUIDE.md): Modded-NanoGPT case-study lessons for reducing training steps under a fixed benchmark contract, including optimizer mechanisms, schedules, cooldown behavior, parameter groups, statistical gates, and experiment hygiene.
-
-![val/loss over time](animated_chart.gif)
-
-[W&B Dashboard](https://wandb.ai/wandb-applied-ai-team/senpai-v1)
-
-## Architecture
-
-```mermaid
-graph TD
-    subgraph K8s["Kubernetes Cluster"]
-        A["Advisor Pod<br/>(Claude Code, no GPU)<br/>Creates hypothesis PRs<br/>Reviews results, merges/closes"]
-        subgraph Students["Student Deployments (one per GPU node)"]
-            S1["frieren<br/>8x GPU"]
-            S2["fern<br/>8x GPU"]
-            S3["tanjiro<br/>8x GPU"]
-            S4["..."]
-        end
-        A -->|"GitHub PRs<br/>(draft → review → merge/close)"| Students
-    end
-    K8s --> GH["GitHub<br/>PRs = hypotheses<br/>Labels = routing"]
-    K8s --> WB["Weights & Biases<br/>Metrics, runs, groups"]
-```
-
-### PR lifecycle
-
-```mermaid
-graph TD
-    A["Advisor creates draft PR"] -->|"student:name + status:wip"| B["Student picks up PR"]
-    B --> C["Implements hypothesis, runs experiments"]
-    C -->|"status:review"| D["Advisor reviews"]
-    D -->|Merge| E["Improvement lands on advisor branch"]
-    D -->|Request changes| F["status:wip — student iterates"]
-    D -->|Close| G["Dead end, branch deleted"]
-    F --> B
-```
-
-## Repo layout
-
-```
-senpai/
-├── senpai.yaml                    # Project config: problem-package repo/branch + launch defaults
-├── target/                        # Problem package clone (empty by default)
-│   ├── train.py                   #   Training script + model
-│   ├── program.md                 #   Research context, metrics, constraints
-│   ├── data.py / data/            #   Data pipeline
-│   └── instructions/              #   Task-specific Claude Code prompt templates
-│       ├── prompt-advisor.md
-│       └── prompt-student.md
-├── system_instructions/           # System-level Claude Code instructions (run the role)
-│   ├── CLAUDE-ADVISOR.md
-│   └── CLAUDE-STUDENT.md
-├── k8s/                           # Kubernetes deployment (problem-agnostic)
-│   ├── launch.py                  #   Deploy advisor + student pods
-│   ├── advisor-deployment.yaml
-│   ├── student-deployment.yaml
-│   ├── entrypoint-advisor.sh
-│   └── entrypoint-student.sh
-├── Dockerfile
-└── .claude/                       # Claude Code skills and agents
-```
-
-**Important**: agent commits and PRs land in the problem-package repo, never in `wandb/senpai`.
-
-## Configuration
-
-All project settings live in `senpai.yaml`:
-
-```yaml
-problem_dir: target/
-repo_url: https://github.com/wandb/senpai.git
-repo_branch: main
-target_repo_url: https://github.com/morganmcg1/tandemfoil2.git
-target_repo_branch: main
-advisor_branch: schmidhuber
-gh_history_scope: branch
-human_issues: true
-image: ghcr.io/wandb/senpai:latest
-pvc_claim_name: new-pvc
-pvc_mount_path: /mnt/new-pvc
-wandb_entity: wandb-applied-ai-team
-wandb_project: senpai-v1
-timeout_minutes: 30.0
-max_epochs: 50
-poll_interval_s: 600
-poll_jitter_s: 120
-stale_wip_seconds: 7200
-advisor_claude_watchdog_interval_s: 60
-advisor_claude_min_runtime_s: 600
-advisor_claude_stale_log_s: 1200
-student_claude_watchdog_interval_s: 300
-student_claude_watchdog_jitter_s: 60
-student_claude_min_runtime_s: 600
-student_claude_stale_log_s: 1200
-student_assignment_drift_grace_s: 1800
-n_students: 4
-student_prefix: ""
-gpus_per_student: 8
-cpu_per_gpu: 15
-memory_gi_per_gpu: 120
-preflight_only: false
-```
-
-`launch.py` reads this via `simple_parsing` — every field can be overridden on the CLI.
-
-### Responsiveness knobs
-
-Advisor and student entrypoints poll GitHub before invoking Claude Code. By
-default they sleep for 10 minutes plus jitter between idle checks, which is
-appropriate for long training loops but too slow for short-budget targets. Use
-the polling and watchdog launch fields to make the loop more responsive without
-editing manifests by hand.
-
-`poll_interval_s` and `poll_jitter_s` are shared by both advisor and student
-outer loops. The watchdog fields tune role-specific checks while Claude is
-already running.
-
-For short, interactive experiments, lower `poll_interval_s` and
-`poll_jitter_s` so idle students and review-ready PRs are picked up quickly.
-For long training runs, keep those defaults or use larger values to reduce
-GitHub/API churn. Lower `*_claude_watchdog_interval_s` and
-`student_assignment_drift_grace_s` only when you want the outer loop to reclaim
-stale or reassigned work aggressively.
+### 2. Install Senpai
 
 ```bash
-python k8s/launch.py \
-  --tag inferencebench-a-r1 \
-  --advisor \
-  --poll_interval_s 30 \
-  --poll_jitter_s 5 \
-  --stale_wip_seconds 600 \
-  --student_claude_watchdog_interval_s 30 \
-  --student_claude_watchdog_jitter_s 5 \
-  --student_assignment_drift_grace_s 120
+git clone https://github.com/wandb/senpai.git
+cd senpai
+uv sync --locked
 ```
 
-### Image rebuilds
+For development, include the test dependencies:
 
-The published runner image is `ghcr.io/wandb/senpai:latest`. It is built by `.github/workflows/build.yaml` on pushes to `main` or `docker` when `Dockerfile`, `pyproject.toml`, or the workflow changes. It can also be rebuilt manually from the GitHub Actions `workflow_dispatch` button.
+```bash
+uv sync --locked --extra dev
+```
 
-### Launch credentials
-
-`launch.py` resolves and preflights these for real launches and `--preflight_only`, then writes them to a per-tag Secret named `senpai-launch-secrets-<tag>`:
-
-| Env var | Pod env | Resolution |
-|---|---|---|
-| `GITHUB_TOKEN` | `GITHUB_TOKEN` | shell env -> `.env` -> `gh auth token` |
-| `ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` | shell env -> `.env` |
-| `EXA_API_KEY` | `EXA_API_KEY` | shell env -> `.env` |
-
-`EXA_API_KEY` powers the researcher agent's direct Exa publication-search tool
-through the official `exa-py` library. No Exa MCP server is configured.
-
-Use `example.env` for local setup:
+### 3. Add credentials
 
 ```bash
 cp example.env .env
-# edit .env and set GITHUB_TOKEN, ANTHROPIC_API_KEY, and EXA_API_KEY
 ```
 
-Notes: `--dry_run` renders redacted manifests without resolving or preflighting credentials. Real launches pass the Secret manifest to `kubectl apply` via stdin, but Kubernetes Secrets are still readable to anyone with namespace Secret read access. Delete launch resources when done: `kubectl delete deployments,configmaps,secrets -l research-tag=<tag>`.
+Fill in the values in the gitignored `.env` file. Model-provider keys are
+required when any configured model uses that provider:
 
-GitHub token requirements: use a PAT with `repo` and `read:org`; it must clone `target_repo_url` and push/open PRs there.
+```dotenv
+GITHUB_TOKEN=
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+EXA_API_KEY=
+WANDB_API_KEY=
+```
 
-### GitHub History Scope
+| Credential | Required access |
+|---|---|
+| `GITHUB_TOKEN` | Target-repository Contents, Pull requests, and Issues read/write. A classic token with `repo` scope also works. GitHub CLI authentication is the fallback when this value is absent. |
+| `ANTHROPIC_API_KEY` | Required when an `anthropic/...` model is configured. |
+| `OPENAI_API_KEY` | Required when an `openai/...` model is configured. Every default profile uses GPT-5.6. |
+| `EXA_API_KEY` | General-web and research-publication search. |
+| `WANDB_API_KEY` | Read/write access to the configured W&B entity and project. |
 
-`--target_repo_branch` is the branch in the problem-package repo used as the base when `--advisor_branch` does not already exist. Leave it empty to use the target repo's default branch.
+`k8s/launch.py` reads shell environment variables first and then the repository-root `.env`; only the GitHub token also falls back to `gh auth token`. Direct Docker or host execution must export or pass credentials explicitly.
 
-`--gh_history_scope branch` is the default: pods clone only the advisor branch while keeping that branch's history. Use `--gh_history_scope repo` to clone the full target repo, or `--gh_history_scope fresh` for a shallow single-branch clone. Use `--extra_instructions` for any agent-facing guidance about what history to use or ignore.
+The launcher places credentials in a per-launch Kubernetes Secret. During bootstrap, the GitHub write token is removed from the process environment and handed to the controller through a one-use channel; it is not exposed to the model or subagents.
 
-### Research Modes
+### 4. Prepare the target repository
 
-- **Isolated ablation:** use a unique `--tag`, unique `--advisor_branch`, `--gh_history_scope fresh`, `--student_prefix`, and `--nohuman_issues`. Agents see only the routed branch/PR stream unless explicitly told otherwise.
-- **Normal branch memory:** use `--gh_history_scope branch` with human issues enabled. Agents keep continuity on the active advisor branch while routine PR/issue polling stays scoped to the target repo.
-- **Deliberate exploration:** use `--gh_history_scope repo` or targeted `--extra_instructions` that ask the advisor/researcher-agent to inspect other branches, PRs, issues, W&B runs, or repos. Senpai helpers stay scoped to `GH_REPO`, but explicit `gh --repo owner/repo ...` reads are available when credentials allow.
+The target branch must contain:
 
-### Ablations
+```text
+program.md
+instructions/
+├── prompt-advisor.md
+└── prompt-student.md
+```
 
-The ICML appendix Charlie/Willow logging ablation uses long-lived runner
-branches in `wandb/senpai` plus matching mirror branches in the
-[`morganmcg1/TandemFoilSet-Balanced`](https://github.com/morganmcg1/TandemFoilSet-Balanced)
-problem-package repo. Keep these pairs matched; do not launch a Charlie runner
-against a Willow target branch, or vice versa.
+- `program.md` defines the research objective, baseline, metrics, benchmark rules, training limits, and allowed edit surface.
+- `prompt-advisor.md` adds target-specific experiment-selection and review guidance.
+- `prompt-student.md` adds target-specific implementation, training, and reporting guidance.
 
-| Arm | Runner branch (`wandb/senpai`) | Target mirror branch (`TandemFoilSet-Balanced`) | Meaning |
-|---|---|---|---|
-| Willow | `icml-appendix-willow` | `icml-appendix-willow` | Control arm: normal Senpai with W&B experiment logging available to advisor/student workflows. The target mirror should stay functionally aligned with the target repo's `main`. |
-| Charlie | `icml-appendix-charlie` | `icml-appendix-charlie` | Treatment arm: removes W&B experiment logging from advisor/student workflows and from the target trainer. The target trainer writes committed local metrics such as `models/<experiment>/metrics.jsonl` and `metrics.yaml` instead. Developer telemetry such as Weave/Hivemind may still run from the runner, but it is not an experiment-metrics source and should not be used as a research signal. |
+Use the [bootstrap-target guide](plugins/senpai/skills/bootstrap-target/SKILL.md) to inspect a new target and create these files. Target `AGENTS.md`, compatible `CLAUDE.md`, and `.agents/skills/` are also loaded through OpenHands project context and progressive disclosure.
 
-Before rerunning this ablation, sync current operational fixes into both runner
-branches. Then verify the target mirrors: Willow should match target `main`;
-Charlie should keep the same model, data, optimizer, scheduler, validation,
-test, and timeout behavior as Willow, changing only the experiment-metrics
-logging surface and the prompts/docs that describe it.
+The target repository must be different from the Senpai runner repository.
 
-### Shared cluster secret (`senpai-secrets`)
+### 5. Configure the launch
 
-Every pod also reads `WANDB_API_KEY` from the shared `senpai-secrets` Secret:
+Copy the checked-in defaults and replace the W&B, branch, PVC, and resource values for your environment:
 
 ```bash
-# Create
-kubectl create secret generic senpai-secrets --from-literal=wandb-api-key="$WANDB_API_KEY"
-
-# Rotate
-kubectl patch secret senpai-secrets --type=merge -p "{\"stringData\":{\"wandb-api-key\":\"$WANDB_API_KEY\"}}"
+cp senpai.yaml senpai.local.yaml
 ```
 
-`launch.py` does not preflight W&B; missing keys crash-loop pods.
+The most important settings are:
 
-## Running
+```yaml
+target_repo_branch: main
+advisor_branch: senpai-research
+
+wandb_entity: your-team
+wandb_project: your-project
+
+advisor_model: openai/gpt-5.6-sol
+advisor_reasoning_effort: xhigh
+student_model: openai/gpt-5.6-sol
+student_reasoning_effort: xhigh
+
+smart_model: openai/gpt-5.6-sol
+smart_reasoning_effort: xhigh
+fast_model: openai/gpt-5.6-luna
+fast_reasoning_effort: high
+frontier_model: openai/gpt-5.6-sol
+frontier_reasoning_effort: ultra
+
+pvc_claim_name: your-existing-pvc
+pvc_mount_path: /mnt/data
+
+n_students: 1
+gpus_per_student: 1
+cpu_per_gpu: 8
+memory_gi_per_gpu: 64
+
+timeout_minutes: 30
+max_epochs: 50
+```
+
+W&B Inference uses LiteLLM's native `wandb/` provider. For example, set every
+model profile to `wandb/zai-org/GLM-5.2` with reasoning effort `max`. Senpai
+uses `WANDB_API_KEY`, routes requests through the W&B chat endpoint, explicitly
+enables GLM thinking, and sends
+`OpenAI-Project: <wandb_entity>/<wandb_project>` on every request.
+
+The defaults in `senpai.yaml` describe W&B's deployment and should not be copied unchanged into another environment. Every setting can also be overridden on the command line. `--tag` and `--target_repo_url` are required unless your chosen config file supplies them.
+
+Deployments require matching advisor and student image digests, or `sha-<40-character-commit>` tags built from the same Senpai revision. Digest-pinned images also require the full matching `repo_revision`. The source commit must be fetchable from `repo_url`; PR image checks build but do not publish images.
+
+### 6. Run preflight
 
 ```bash
-# Clone the active problem-package repo into target/ (one-time, for local dev)
-git clone -b kagent_royal_rumble https://github.com/morganmcg1/tandemfoil2.git target/
-
-# Train locally (inside the active problem package; copy exact flags from --help)
-cd target/ && python train.py --help
-cd target/ && python train.py --wandb_name "<name>/<description>"
-
-# Deploy to k8s (reads defaults from senpai.yaml, only --tag is required)
-python k8s/launch.py --tag <research-tag> --advisor
-
-python k8s/launch.py --tag <research-tag> --advisor --n_students 7 --pvc_mount_path "/mnt/pai-amf1-cfd"
-python k8s/launch.py --tag <research-tag> --n_students 7 --dry_run
-python k8s/launch.py --tag <research-tag> --advisor --extra_instructions "Only consider optimizer changes."
-python k8s/launch.py --tag <research-tag> --advisor --target_repo_branch icml-appendix-charlie --advisor_branch icml-appendix-charlie-rerun-r1 --gh_history_scope fresh --extra_instructions no-history.md
-
-# Parallel launches: use unique tags, plus --student_prefix when runs share student names
-python k8s/launch.py --tag <tag-a> --advisor --student_prefix a
-python k8s/launch.py --tag <tag-b> --advisor --student_prefix b
-
-# Stop a launch
-kubectl delete deployments,configmaps,secrets -l research-tag=<research-tag>
+uv run python k8s/launch.py \
+  --config_path senpai.local.yaml \
+  --tag first-run \
+  --target_repo_url https://github.com/OWNER/TARGET.git \
+  --preflight_only
 ```
 
-## Adding a new problem
+Preflight authenticates GitHub, Exa, W&B, and every model provider referenced by
+the configured model profiles. It also verifies GitHub Contents write access,
+resolves the target branch, and rejects student labels already carrying active
+assignments. It deliberately skips image validation and makes no cluster
+changes. A real launch additionally verifies immutable image syntax and that
+both role images identify the same source revision.
 
-Use the `senpai:bootstrap-target <target-repo-path-or-url>` skill to onboard any ML or research target repository.
-It inspects the repo, interviews for missing metric/benchmark/guardrail decisions, and drafts the `program.md`
-plus `instructions/` files that make the target work well with Senpai.
+### 7. Launch
 
-1. Create a new public repo (e.g. `myorg/my_problem`) with the minimum problem-package layout:
-   - `train.py` — training script + model (entry point for students)
-   - `data.py` or `data/` — data pipeline
-   - `program.md` — research context, metrics, constraints, file-edit boundaries
-   - `instructions/prompt-advisor.md`, `instructions/prompt-student.md`
-   - a working branch (e.g. `main` or `royal_rumble`) that advisors merge into
-2. Point senpai's config at it — the pod entrypoint will clone it for you:
-   ```bash
-   # edit senpai.yaml:
-   #   target_repo_url: https://github.com/myorg/my_problem.git
-   #   target_repo_branch: <base-branch>
-   #   advisor_branch: <advisor-branch>
-   git add senpai.yaml && git commit -m "Point senpai at my_problem"
-   ```
-   Or pass on the CLI: `--target_repo_url ... --target_repo_branch ... --advisor_branch ...`.
-3. Deploy as usual — `python k8s/launch.py --tag <tag> --advisor`. Agent commits/PRs will land in `myorg/my_problem`, not senpai.
+For a Senpai commit whose images have been published:
 
-## References
+```bash
+revision=$(git rev-parse HEAD)
 
-`TandemFoilSet: Datasets for Flow Field Prediction of Tandem-Airfoil Through the Reuse of Single Airfoils` is distributed by CC-BY-4.0.
-```bibtex
-@inproceedings{
-lim2026tandemfoilset,
-title={{TandemFoilSet}: Datasets for Flow Field Prediction of Tandem-Airfoil Through the Reuse of Single Airfoils},
-author={Wei Xian Lim and Loh Sher En Jessica and Zenong Li and Thant Zin Oo and Wai Lee Chan and Adams Wai-Kin Kong},
-booktitle={The Fourteenth International Conference on Learning Representations},
-year={2026},
-url={https://openreview.net/forum?id=4Z0P4Nbosn}
-}
+uv run python k8s/launch.py \
+  --config_path senpai.local.yaml \
+  --tag first-run \
+  --target_repo_url https://github.com/OWNER/TARGET.git \
+  --advisor \
+  --names frieren \
+  --advisor_image "ghcr.io/wandb/senpai-advisor:sha-$revision" \
+  --student_image "ghcr.io/wandb/senpai-student:sha-$revision"
 ```
+
+The launcher creates routing labels, one launch Secret, role ConfigMaps, and Deployments. It does not create the namespace, PVC, Service, or general cluster RBAC.
+
+Inspect and stop the launch:
+
+```bash
+kubectl get deployments,pods -l research-tag=first-run
+kubectl logs -f deployment/senpai-first-run-frieren
+kubectl delete deployments,configmaps,secrets -l research-tag=first-run
+```
+
+Use `--kube_context` and `--namespace` when the desired cluster is not your current default. Use `--dry_run` to render redacted manifests without checking credentials or writing to the cluster.
+
+## Experiment workflow
+
+GitHub is both the coordination layer and the durable scientific notebook. W&B is the metric and artifact record.
+
+```mermaid
+flowchart LR
+    H["Advisor records hypothesis, baseline, and acceptance rule"]
+    P["Typed draft PR<br/>student:name + status:wip"]
+    I["Student implements and commits"]
+    T["Supervised training<br/>W&B metrics"]
+    R["Structured result<br/>status:review"]
+    D["Advisor merges, closes, requests a revision, or sends feedback"]
+
+    H --> P --> I --> T --> R --> D
+    D -->|revision| I
+```
+
+1. The advisor creates a falsifiable assignment with the exact baseline SHA, baseline metrics, expected mechanism, implementation scope, and stopping rules.
+2. `github_transition` creates the student branch and draft PR, embeds a typed assignment record, and applies the routing labels.
+3. The assigned student receives one OpenHands conversation for that assignment revision. New PR comments and reviews are injected into that conversation, including while a turn is active.
+4. The student commits the exact implementation, launches supervised training, and records every referenced run in W&B.
+5. The student submits a typed terminal result. The transition validates and publishes the branch before changing the PR to `status:review`.
+6. The advisor compares the evidence, then merges a reproducible winner, closes a useful negative result, requests a new revision, or sends non-revision feedback.
+
+The structured result records its terminal status, exact result commit, W&B run IDs and URLs, bounded conclusion, and baseline/candidate metric comparison when available. Non-revision feedback continues the same student conversation; a revision request intentionally creates a fresh revision identity and conversation.
+
+`status:wip` owns a student compute slot; `status:review` does not. The advisor can therefore review one result while that student starts another experiment. Assignment creation and revision requests are serialized inside the single advisor process so they cannot race into two WIP assignments for the same student.
+
+Trusted collaborator comments, submitted reviews, and inline review comments are delivered automatically to the relevant student; feedback from untrusted authors and unrecognized bots is ignored. `get_prs` can still retrieve the complete discussion explicitly. If the advisor branch advances while an experiment is running, Senpai emits `baseline_advanced`; merging against the stale baseline is blocked until the advisor explicitly accepts the exact new SHA or requests a rerun.
+
+`get_prs` returns complete PR bodies and discussions. Up to five PRs are returned in context by default; larger selections become a Markdown artifact outside the target checkout so long histories do not pollute the main conversation.
+
+## Long-running training and monitoring
+
+Students do not start GPU work, stream logs, sleep, or poll through the terminal. Four typed tools make training a durable controller operation:
+
+| Tool | Contract |
+|---|---|
+| `run_training` | Accepts structured `argv`, `cwd`, and a hard timeout. It requires a clean assignment worktree, starts a supervised process group without blocking, persists its identity, full log, and bounded error tail, discovers W&B run IDs, and automatically registers terminal-state monitoring for the current conversation. |
+| `get_training_status` | Performs one bounded read of the latest persisted state, exit code, elapsed time, W&B run IDs, and error tail. |
+| `monitor_training` | Adds a W&B metric, minimize/maximize direction, `lte`, `gte`, `improved_by`, or `regressed_by` gates, a poll interval, and stale-update detection. It cannot disable terminal wakes. |
+| `cancel_training` | Stops the complete process group through the supervised TERM/KILL path, waits for a durable terminal state, and retires its monitor. |
+
+After launch, the student can finish its turn. The deterministic controller polls process state and at most one selected W&B metric without consuming model tokens. A threshold crossing, regression, stale metric, terminal state, or monitor error creates one compact durable event and resumes the same student conversation. One broken monitor cannot block other training, GitHub feedback, or child-agent results.
+
+`improved_by` and `regressed_by` compare with the monitor policy's first observed sample; they do not silently reuse the assignment's documented baseline.
+
+Worker and container restarts preserve completed OpenHands events. Recovered live training is terminated safely rather than being adopted under an unverifiable process identity; the original student conversation receives the persisted terminal outcome.
+
+## Subagents
+
+`spawn_agents` launches a batch and immediately returns stable task IDs;
+`await_agents` collects them with an `all`, `first`, or `quorum` join. Every
+child runs in a fresh OpenHands conversation and separate process group.
+
+| Agent | Best for | Recommended tier |
+|---|---|---|
+| [General Purpose](.agents/agents/general-purpose.md) | Bounded work combining terminal investigation, code editing, task tracking, tests, and one controlled level of leaf delegation. | `smart` for ordinary implementation or review; `frontier` for the hardest generalist work. |
+| [Explore](.agents/agents/explore.md) | Read-only search across code, data, experiment artifacts, papers, or durable conversation history. It returns conclusions with paths and line numbers rather than dumping source. | `fast` for mechanical exploration; `smart` when relationships are subtle. |
+| [Search](.agents/agents/search.md) | External research through Exa in `general-web` or `research-publications` mode, with primary-source links. | `smart`. |
+| [Bash Runner](.agents/agents/bash-runner.md) | Tests, builds, linters, dependency commands, Git inspection, and noisy CLI work. It returns counts and actionable failures rather than raw logs. | `fast`. |
+
+The model tier is independent of the agent specialization. With the default
+`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at the `ultra`
+profile, sent to the Responses API as `max` effort with `reasoning.mode: pro`
+with the general-purpose terminal and code-editing toolset. Pair `frontier`
+with `agent=search` when the hard task is external or publication research.
+
+A root spawn batch and its descendants form one delegation tree, which may
+create at most eight children total. A role runs at most eight active tasks
+concurrently across all trees. Root tasks count toward the tree total, so leave
+slots when a General Purpose child needs helpers. Recursion is limited to two
+child edges: the root may spawn any agent, and a depth-one General Purpose
+child may spawn leaf helpers; Explore, Search, Bash Runner, and all depth-two
+children cannot delegate. The tree shares one absolute root-turn deadline, and
+a nested child must await or cancel all of its helpers before returning.
+Individual tasks are capped at ten minutes for `fast`, thirty for `smart`, and
+one hour for `frontier`, shortened when the root deadline is nearer.
+
+An await call is capped at five minutes and does not cancel unfinished work.
+`agent_status` provides a non-blocking snapshot; with no task IDs, it returns
+up to eight direct tasks that are active or have an uncollected terminal result.
+`cancel_agents` records terminal cancellation. Atomic records keyed by the
+required batch key and each optional task key (or stable list index) make replay
+return the original task IDs instead of spawning duplicates.
+The deprecated `delegate_agent` name remains visible on root advisor and
+student agents only so persisted conversations can resume; it never launches
+work and directs callers to `spawn_agents` and `await_agents`.
+`include_context=false` sends only the system prompt and task; the child can
+still search the supplied parent-history directory. `include_context=true`
+also copies the model-visible parent history. The root advisor or student may
+leave useful tasks running and receives their terminal results as durable
+events; nested children may not detach descendants.
+
+Children share the parent workspace, so their process and conversation are isolated but their filesystem is not. They receive only their declared tools and never receive GitHub credentials, GitHub workflow tools, or training tools.
+
+## Task guides
+
+OpenHands receives these as progressively disclosed skills; their bodies are loaded only when the task calls for them.
+
+### Core research workflow
+
+| Guide | Purpose |
+|---|---|
+| [Bootstrap a target](plugins/senpai/skills/bootstrap-target/SKILL.md) | Build `program.md` and the advisor/student overlays from a new ML repository. |
+| [Assign an experiment](plugins/senpai/skills/assign-experiment/SKILL.md) | Turn a hypothesis into a typed student branch and draft PR. |
+| [Submit experiment results](plugins/senpai/skills/submit-experiment-results/SKILL.md) | Commit the tested implementation and publish a structured, evidence-backed result. |
+| [Review an experiment](plugins/senpai/skills/merge-winner/SKILL.md) | Merge a reproducible winner, close a useful negative, or request the missing evidence. |
+| [Handle human Issues](plugins/senpai/skills/check-human-issues/SKILL.md) | Respond to authenticated human-to-agent messages delivered through GitHub Issues. |
+
+### Evidence and research
+
+| Guide | Purpose |
+|---|---|
+| [Senpai status check](.agents/skills/senpai-status-check/SKILL.md) | Produce a bounded, read-only GitHub, W&B, and local-controller status report. |
+| [Exa search](.agents/skills/exa-search/SKILL.md) | Search the current web or scholarly publications with mode-specific defaults. |
+| [AlphaXiv paper lookup](.agents/skills/alphaxiv-paper-lookup/SKILL.md) | Get a structured overview before reading a primary paper deeply. |
+| [W&B and Weave](.agents/skills/wandb-primary/SKILL.md) | Inspect runs, metrics, artifacts, evaluations, and agent traces. |
+| [Experiment report](.agents/skills/experiment-report/SKILL.md) | Create the project-standard `nn_cfd` W&B comparison report; this guide is target-specific rather than part of the generic runtime. |
+| [Training code style](literature_and_guidance/TRAINING-CODE-STYLE.md) | Structure expensive ML entrypoints so configuration, artifacts, validation, and failure boundaries stay explicit. |
+
+The repository also contains two reusable optimization case studies:
+
+- [LLM inference optimization](LLM-INFERENCE-OPTIMIZATION-SENPAI-GUIDE.md)
+- [LLM training optimization](LLM-TRAINING-OPTIMIZATION-GUIDE.md)
+
+## Architecture and durability
+
+```mermaid
+flowchart LR
+    GH["GitHub<br/>PR and Issue state"]
+    WB["W&B<br/>runs and metrics"]
+    A["Advisor<br/>controller + OpenHands"]
+    S["Students<br/>controller + OpenHands + GPU"]
+
+    A <--> GH
+    S <--> GH
+    A --> WB
+    S --> WB
+```
+
+There is no Senpai RPC service or cross-node database. GitHub PR labels, typed comments, reviews, and human-tagged Issues are the only advisor/student communication protocol; W&B is the shared experiment store. Role-local SQLite stores local event queues and deduplication plus training-monitor policies; it is never shared across nodes.
+
+Each role runs a small Python supervisor around the deterministic controller:
+
+```text
+entrypoint
+  clone and configure
+  exec supervisor
+
+supervisor
+  restart crashed workers with bounded backoff
+  terminate and restart an overdue phase
+
+controller
+  poll -> reconcile -> bounded OpenHands turn -> verify -> acknowledge -> sleep
+```
+
+The controller owns cadence, durable events, conversation selection, GitHub transitions, process supervision, and monitoring. OpenHands owns research judgment, code changes, and evidence interpretation.
+
+- The advisor keeps one durable conversation UUID under `/var/lib/senpai/<tag>/advisor/openhands_state`.
+- A student uses one UUID per assignment revision; feedback, monitor events, and child-task results resume that exact conversation.
+- Still-actionable GitHub state is re-delivered on the configured reminder cadence, which defaults to at least ten minutes even when GitHub is polled more frequently. Immediate post-turn polls deliver changed state but not timed reminders, so a successful research-only turn cannot enter a no-sleep reminder loop. `baseline_advanced` is edge-delivered because it has no WIP-time acknowledgement transition: it wakes again when either SHA changes or the condition disappears and reappears, while merge-time baseline validation remains authoritative.
+- Each model request gets one bounded 15-minute attempt. Foreground terminal calls return control within ten minutes for explicit continuation, the whole turn retains its one-hour hard lease, and two consecutive failed turns exit to the supervisor for a clean worker restart. Restart backoff grows across failed workers to a five-minute ceiling; only a successfully acknowledged turn resets that streak, not process uptime or idle sleep.
+- Events injected into an active conversation are acknowledged only after that turn exits cleanly. A typed context-window or malformed-history failure gets one fresh model-visible branch under the same conversation UUID and original turn deadline; the raw trace and workspace remain intact. If that clean recovery also fails, the work stays unacknowledged and is retried after at least ten minutes rather than entering a restart loop.
+- On restart, an incomplete persisted tool action is rejected rather than replayed implicitly. A checked-out assignment branch that was deliberately rebased or extended locally is preserved and surfaced to its existing student conversation for explicit reconciliation.
+- The complete OpenHands event log remains locally searchable. Senpai does not prune conversation directories; operators own retention.
+- Student state may be ephemeral because the branch, PR, typed result, W&B runs, and Weave trace are the durable handoff.
+- Project `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded progressively instead of being inlined into every prompt.
+
+The command policy blocks raw GitHub mutations, direct training, `git push`, polling loops, and log streams. Typed transitions enforce repository, branch, assignment, revision, head-SHA, label, and replay preconditions. This policy keeps routine operations deterministic while leaving high-entropy research work to the agent.
+
+When `WANDB_ENTITY` and `WANDB_PROJECT` are configured, [`weave-openhands`](https://github.com/morganmcg1/weave-openhands) traces advisor, student, and child conversations. Each `OPENHANDS_RUN` record includes a direct Weave Agent Observability URL.
+
+## Operations
+
+Useful launch controls:
+
+- `--names frieren,fern` selects stable students; otherwise use `--n_students` and `--student_prefix`.
+- `--gpus_per_student`, `--cpu_per_gpu`, and `--memory_gi_per_gpu` size each student.
+- `--timeout_minutes` and `--max_epochs` are hard per-training limits.
+- `--poll_interval_s` and `--poll_jitter_s` control idle GitHub cadence without teaching the model to poll.
+- `--gh_history_scope branch` keeps normal advisor-branch memory, `fresh` creates a shallow ablation checkout, and `repo` exposes full repository history.
+- `--extra_instructions` accepts a Markdown file or literal operator guidance.
+- `human_issues: false` disables GitHub Issue polling for isolated launches.
+
+Advisor and student images are built from the same source revision. The advisor image excludes CUDA and PyTorch; the student image contains the CUDA/PyTorch runtime; the cutoff image contains only the minimal job runtime and pinned `kubectl`. Advisor and student builds install Chromium and execute an OpenHands browser smoke test.
+
+For multi-day fleets, [`arm_senpai_cluster_cutoff.sh`](scripts/arm_senpai_cluster_cutoff.sh) creates a cluster-side hard cutoff that does not depend on an operator laptop remaining online. It can also hold a shared start gate until the expected fleet is ready or its readiness deadline expires.
+
+Pod startup and liveness probes read the supervisor lease. Restarting a Deployment resumes the durable advisor or student conversation when its state directory survives. Stop a container before copying or snapshotting a live advisor state directory.
+
+### Other deployment environments
+
+GitHub coordination works across Docker, cloud VMs, or local hosts without private networking. The current repository does not yet provide a Compose or direct-host launcher: the Kubernetes manifests perform the source clone, environment assembly, skill installation, token handoff, mounts, and entrypoint selection.
+
+To build another launcher, reproduce [entrypoint-advisor.sh](k8s/entrypoint-advisor.sh) or [entrypoint-student.sh](k8s/entrypoint-student.sh), persist `/var/lib/senpai/<tag>/advisor` for the advisor, and use the container healthcheck with a restart policy. Student execution requires Linux, an NVIDIA runtime, and compatible CUDA hardware; Docker Desktop on macOS cannot run the GPU student image.
+
+## Development and reference
+
+```bash
+uv sync --locked --extra dev
+uv run pytest -q
+bash -n k8s/*.sh scripts/*.sh plugins/senpai/scripts/*.sh
+```
+
+Deep references:
+
+- [SPEC.md](SPEC.md): canonical runtime, persistence, safety, and acceptance contract.
+- [OpenHands plugin](plugins/senpai/README.md): skills and lifecycle hooks.
+- [Harness instructions](system_instructions/SENPAI-HARNESS.md): shared agent/tool contract.
+- [Advisor instructions](system_instructions/ADVISOR.md) and [student instructions](system_instructions/STUDENT.md): role workflows.
+- [OpenHands fork modifications](https://github.com/morganmcg1/software-agent-sdk/blob/main/FORK_MODS.md): provider continuation, compaction, reasoning, and cache changes.
+- [Contributing](CONTRIBUTING.md): development and CLA requirements.
+- [W&B dashboard](https://wandb.ai/wandb-applied-ai-team/senpai-v1): the default project's experiment record.

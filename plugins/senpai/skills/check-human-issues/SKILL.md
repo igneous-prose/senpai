@@ -33,35 +33,37 @@ Human researchers communicate with agents through GitHub Issues. Issues are tagg
 
 ## Steps
 
-1. **Source the senpai-gh library** and list issues using **name** as the label filter:
+1. **Read the current `human_issue` event.** The controller supplies the issue
+   identity and the exact human message ID that triggered the wake. It polls
+   GitHub for issues addressed to you or the whole team.
 
-```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/senpai-gh.sh"
-check_gh_issues "$0"
-```
-
-This returns a deduplicated JSON array of issues addressed to you and the whole team.
-
-2. **For each issue**, read the full body and comments:
-
-```bash
-issue_with_comments <number>
-```
-
-3. **Decide whether to respond:**
+2. **Decide whether to respond:**
    - If you haven't commented on this issue yet → respond.
    - If you have commented, check if the human posted a new comment *after* your last response. If so → respond to the new message. If not → skip, you're waiting for the human.
+   - Record the exact numeric `id` of the issue body or human comment you are
+     answering. Never substitute the issue number for a comment ID.
 
-4. **Respond** with your role prefix:
+3. **Respond** through `github_transition` with
+   `operation="respond_to_issue"`, the issue number, the exact
+   `human_message_id`, and your role-prefixed response. This verified,
+   idempotent operation refuses closed issues, pull requests, missing `human`
+   labels, stale message IDs, and messages authored by the agent identity.
 
-```bash
-# ADVISOR example:
-gh issue comment <number> --body "ADVISOR: <your response>"
-# STUDENT example:
-gh issue comment <number> --body "STUDENT $0: <your response>"
+```json
+{
+  "transition": {
+    "operation": "respond_to_issue",
+    "issue_number": 123,
+    "human_message_id": 987654,
+    "response": "ADVISOR: <your response>"
+  }
+}
 ```
 
-5. **Never close human issues.** Only the human does that.
+For a student, use `"response": "STUDENT $0: <your response>"`. Never mutate
+the issue through `gh` or `curl`.
+
+4. **Never close human issues.** Only the human does that.
 
 ## Return format
 

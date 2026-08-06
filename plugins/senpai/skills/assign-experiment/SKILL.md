@@ -5,85 +5,39 @@
 
 name: assign-experiment
 description: >
-  Create a branch and draft PR to assign a hypothesis to a student.
-  Handles branch creation, PR creation with the correct template and
-  labels, and ensures the student gets a well-structured assignment.
-  Use this skill to: assign an experiment, create a hypothesis PR,
-  give a student work.
+  Create a typed assignment branch and draft PR for one student. Use when the
+  advisor has a concrete hypothesis and an idle student.
 argument-hint: "<student-name> <hypothesis-slug> <problem-dir>"
 model: claude-sonnet-4-6
 effort: high
 ---
 
-# assign-experiment
+# Assign an experiment
 
-Create a branch and draft PR that assigns a hypothesis to a student. The student will pick it up on their next poll cycle.
+Read the current baseline and `program.md`, then write one complete assignment:
 
-## Arguments
+- a falsifiable hypothesis and mechanism;
+- exact files and changes in scope;
+- baseline metrics and W&B evidence;
+- commands, run limits, metrics, and stopping conditions; and
+- one student, one branch, and one experiment.
 
-- **$0** — The student to assign (e.g. `fern`)
-- **$1** — A short kebab-case slug for the hypothesis (e.g. `cosine-annealing`)
-- **$2** — The active problem directory (e.g. `target/cfd_tandemfoil`)
+Fetch the advisor branch and record its exact remote SHA. Call
+`github_transition` with `operation="create_assignment"` and:
 
-The hypothesis details, instructions, and baseline metrics come from your own reasoning — this skill handles the git/GitHub mechanics.
+- stable `assignment_id` and initial `revision_id`;
+- `student`;
+- `base_branch`: `$ADVISOR_BRANCH`;
+- `expected_base_sha`: the fetched remote advisor SHA;
+- `head_branch`: `<student>/<hypothesis-slug>`;
+- a concise title; and
+- the complete assignment body.
 
-## Steps
+The transition creates an empty assignment commit without changing the advisor
+worktree, pushes the branch with a lease, creates or reconciles one draft PR,
+adds the exact routing labels, embeds the typed assignment marker, verifies the
+result, and rejects a second active assignment for the student.
 
-1. **Start from the latest advisor branch:**
-
-```bash
-source "${CLAUDE_PLUGIN_ROOT}/scripts/senpai-gh.sh"
-ADVISOR_BRANCH="${ADVISOR_BRANCH}"  # from environment
-```
-
-2. **Create the experiment branch with a real assignment commit:**
-
-```bash
-BRANCH="$0/$1"
-create_assignment_branch "$0" "$1"
-```
-
-3. **Write the PR body to a temp file**. Replace the placeholders with your actual hypothesis, instructions, and baseline data:
-
-```bash
-BODY_FILE=$(mktemp)
-cat > "$BODY_FILE" <<'PREOF'
-## Hypothesis
-<What we think will improve metrics and why. For non-trivial changes,
-include links to papers or code that support the hypothesis.>
-
-## Instructions
-<Specific changes to make to $2/train.py — be concrete.
-"Try a higher learning rate" is vague. Change lr from 5e-4 to 1e-3 and add cosine annealing with T_max=epochs" is actionable.>
-
-## Baseline
-<Current best metrics from BASELINE.md:
-- val/loss: X.XXX
-- Surface MAE metrics: p_in | p_oodc | p_tan | p_re
-- Baseline W&B run: <run-id> (<wandb-link>)
-- Reproduce command: `cd "$2" && python train.py ...`>
-PREOF
-```
-
-4. **Create and verify the draft PR**:
-
-```bash
-create_assignment_pr_from_file \
-    "$0" \
-    "$BRANCH" \
-    "<Hypothesis title — clear, specific, under 70 chars>" \
-    "$BODY_FILE" \
-    "$ADVISOR_BRANCH"
-rm -f "$BODY_FILE"
-```
-
-## Important details
-
-- **Read BASELINE.md** before creating the PR take the most recent metrics from the file. The student needs concrete metrics to compare against.
-- **Do not skip `create_assignment_branch`.** GitHub rejects PRs with no commits between the advisor branch and head.
-- **Pass the active problem dir as the third argument.** Example: `senpai:assign-experiment fern cosine-annealing target/cfd_tandemfoil`.
-- **Be specific in instructions.** The student implements exactly what you write. Vague instructions waste GPU time.
-- **Use `--wandb_group`** in instructions when a hypothesis needs multiple iterations (e.g. "try surface weight 5, 10, 20") so related runs are grouped in W&B.
-- **One hypothesis per PR.** Bundling multiple changes makes it impossible to attribute what worked.
-- **Use `create_assignment_pr_from_file`.** It fails if the PR is not draft, targets the wrong base or head, or is missing `$ADVISOR_BRANCH`, `student:$0`, or `status:wip`.
-- If the PR body is too long, keep the core info in the body file and add supplementary details as a follow-up comment.
+Do not create the branch, PR, labels, or assignment marker through shell
+commands. If the transition reports stale state, refresh the named SHA and
+re-evaluate rather than bypassing the precondition.

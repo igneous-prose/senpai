@@ -1,45 +1,50 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: senpai-image-test
+  name: {{POD_NAME}}
   labels:
     app: senpai
     role: test
     research-tag: {{RESEARCH_TAG}}
 spec:
+  restartPolicy: Never
   containers:
   - name: test
     image: {{IMAGE}}
     command: ["/bin/bash", "-c"]
     args:
     - |
-      git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-      git clone --branch "${REPO_BRANCH}" --depth 1 "${REPO_URL}" /workspaces/senpai
-      source /workspaces/senpai/k8s/install-weave-cc-plugin.sh
+      if [ "${SENPAI_IMAGE_REVISION}" != "${REPO_REVISION}" ]; then
+        echo "Image revision ${SENPAI_IMAGE_REVISION} does not match requested source ${REPO_REVISION}" >&2
+        exit 1
+      fi
+      askpass=/tmp/senpai-test-git-askpass
+      printf '%s\n' \
+        '#!/bin/sh' \
+        'case "$1" in' \
+        '  *Username*) printf "%s\n" x-access-token ;;' \
+        '  *Password*) printf "%s\n" "$GITHUB_TOKEN" ;;' \
+        'esac' > "$askpass"
+      chmod 700 "$askpass"
+      git init /workspaces/senpai
+      GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+        git -C /workspaces/senpai fetch --depth 1 "${REPO_URL}" "${REPO_REVISION}"
+      git -C /workspaces/senpai checkout --detach FETCH_HEAD
+      test "$(git -C /workspaces/senpai rev-parse HEAD)" = "${REPO_REVISION}"
       sleep infinity
     envFrom:
     - configMapRef:
-        name: senpai-config-test
-    env:
-    - name: WANDB_API_KEY
-      valueFrom:
-        secretKeyRef:
-          name: senpai-secrets
-          key: wandb-api-key
-    - name: ANTHROPIC_API_KEY
-      valueFrom:
-        secretKeyRef:
-          name: senpai-secrets
-          key: anthropic-api-key
-    - name: GITHUB_TOKEN
-      valueFrom:
-        secretKeyRef:
-          name: senpai-secrets
-          key: github-token
+        name: {{CONFIGMAP_NAME}}
     resources:
       requests:
         cpu: "2"
         memory: "4Gi"
+        nvidia.com/gpu: "1"
       limits:
         cpu: "4"
         memory: "8Gi"
+        nvidia.com/gpu: "1"
+  tolerations:
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"

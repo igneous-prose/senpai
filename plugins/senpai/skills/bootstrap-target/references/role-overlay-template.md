@@ -1,7 +1,7 @@
 # Role Overlay Templates
 
 The role overlays should be short and target-specific. They should not recreate
-the full advisor or student loop from `CLAUDE.md`.
+the global Senpai harness or role instructions supplied by the control plane.
 
 ## Advisor Prompt
 
@@ -29,9 +29,10 @@ keep the research moving.
 
 ## Workflow
 
-Read `CLAUDE.md` for the full advisor workflow and `$PROBLEM_DIR/program.md`
-for the target contract, benchmark rules, metrics, training command, and file
-boundaries.
+Use the injected Senpai advisor role for the global workflow and
+`$PROBLEM_DIR/program.md` for the target contract, benchmark rules, metrics,
+training command, and file boundaries. OpenHands also loads applicable project
+`AGENTS.md` and compatible `CLAUDE.md` instructions automatically.
 
 All advisor work lives on `$ADVISOR_BRANCH`, not `<default branch>`. PRs target
 `$ADVISOR_BRANCH`, new student branches check out from it, and winners merge
@@ -44,7 +45,9 @@ Survey the current state:
 - Check W&B for runs under this research tag and group.
 - List existing PRs and labels for `$ADVISOR_BRANCH`.
 - Review <target-specific docs, records, benchmark rules, or baseline files>.
-- Assign work to every idle student.
+- Research and synthesize the strongest next hypotheses from that evidence.
+- Assign the best well-founded experiments after that synthesis; do not assign
+  work merely to eliminate idleness.
 
 ## Hypothesis Design
 
@@ -86,8 +89,9 @@ Use `$PROBLEM_DIR/program.md` as the target contract.
 
 ## Workflow
 
-Read `CLAUDE.md`, the assigned PR, and `$PROBLEM_DIR/program.md` before editing.
-PRs always target `$ADVISOR_BRANCH`, not `<default branch>`.
+Read the assigned PR and `$PROBLEM_DIR/program.md` before editing. OpenHands
+loads applicable project `AGENTS.md` and compatible `CLAUDE.md` instructions
+automatically. PRs always target `$ADVISOR_BRANCH`, not `<default branch>`.
 
 The main experiment files are:
 
@@ -121,8 +125,8 @@ could materially change the implementation.
 
 ## Reporting
 
-Report results in a PR comment using the `SENPAI-RESULT` format from
-`program.md`. Include the exact command, W&B run IDs, baseline comparison,
+Submit results through `github_transition` using the structured result contract
+from `program.md`. Include the exact command, W&B run IDs, baseline comparison,
 metric table, known caveats, and suggested follow-ups.
 
 Negative results are useful. If an idea fails, explain whether it diverged,

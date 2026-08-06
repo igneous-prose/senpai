@@ -1,0 +1,136 @@
+"""Small authenticated GitHub reader shared by Senpai control-plane code."""
+
+from __future__ import annotations
+
+import json
+from urllib import request
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+
+from pydantic import SecretStr
+
+
+class GitHubReadError(RuntimeError):
+    """A GitHub read failed or returned an invalid response."""
+
+
+class GitHubReader:
+    """Read JSON objects and paginated lists from one GitHub API origin."""
+
+    def __init__(
+        self,
+        token: SecretStr | None,
+        *,
+        api_url: str = "https://api.github.com",
+        trusted_actor: str | None = None,
+        timeout: int = 30,
+    ):
+        if token is not None and not isinstance(token, SecretStr):
+            raise TypeError("token must be a SecretStr")
+        if token is not None and not token.get_secret_value().strip():
+            raise ValueError("token must not be empty")
+        if trusted_actor is not None and not trusted_actor.strip():
+            raise ValueError("trusted actor must not be empty")
+        self._token = token
+        self._api_url = api_url.rstrip("/")
+        self._origin = urlsplit(self._api_url)[:2]
+        self._actor = trusted_actor
+        self._timeout = timeout
+
+    def get(self, path: str) -> object:
+        """Return one decoded GitHub JSON response."""
+
+        payload, _ = self._request(path)
+        return payload
+
+    def _request(self, path: str) -> tuple[object, str | None]:
+        url = self._url(path)
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if self._token is not None:
+            headers["Authorization"] = f"Bearer {self._token.get_secret_value()}"
+        github_request = request.Request(url, headers=headers)
+        try:
+            with request.urlopen(github_request, timeout=self._timeout) as response:
+                return json.loads(response.read()), next_link(
+                    response.headers.get("Link")
+                )
+        except HTTPError as error:
+            raise GitHubReadError(
+                f"GitHub GET {self._safe_path(url)} returned HTTP {error.code}"
+            ) from error
+        except (URLError, TimeoutError) as error:
+            raise GitHubReadError(
+                f"GitHub GET {self._safe_path(url)} failed before an HTTP response"
+            ) from error
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise GitHubReadError(
+                f"GitHub GET {self._safe_path(url)} returned invalid JSON"
+            ) from error
+
+    def pages(self, path: str) -> tuple[object, ...]:
+        """Return every page while rejecting cycles and foreign origins."""
+
+        pages: list[object] = []
+        url: str | None = self._url(path)
+        visited: set[str] = set()
+        while url is not None:
+            if url in visited:
+                raise GitHubReadError("GitHub pagination contains a cycle")
+            visited.add(url)
+            page, url = self._request(url)
+            pages.append(page)
+        return tuple(pages)
+
+    def objects(self, path: str) -> list[dict[str, object]]:
+        """Return all objects from a paginated list response."""
+
+        objects: list[dict[str, object]] = []
+        for page in self.pages(path):
+            if not isinstance(page, list) or any(
+                not isinstance(item, dict) for item in page
+            ):
+                raise GitHubReadError("GitHub returned an invalid paginated list")
+            objects.extend(page)
+        return objects
+
+    def actor(self) -> str:
+        """Return and cache the authenticated GitHub login."""
+
+        if self._actor is None:
+            user = self.get("/user")
+            if not isinstance(user, dict) or not isinstance(user.get("login"), str):
+                raise GitHubReadError("GitHub returned an invalid authenticated user")
+            self._actor = user["login"]
+        return self._actor
+
+    def _url(self, path: str) -> str:
+        url = (
+            path
+            if path.startswith(("https://", "http://"))
+            else f"{self._api_url}/{path.lstrip('/')}"
+        )
+        if urlsplit(url)[:2] != self._origin:
+            raise GitHubReadError("GitHub pagination returned an unexpected origin")
+        return url
+
+    @staticmethod
+    def _safe_path(url: str) -> str:
+        parsed = urlsplit(url)
+        return f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path
+
+
+def next_link(value: str | None) -> str | None:
+    """Extract the RFC 8288 ``rel=next`` target from a GitHub Link header."""
+
+    if value is None:
+        return None
+    for part in value.split(","):
+        sections = [section.strip() for section in part.split(";")]
+        if 'rel="next"' in sections[1:]:
+            target = sections[0]
+            if target.startswith("<") and target.endswith(">"):
+                return target[1:-1]
+    return None

@@ -1,0 +1,20 @@
+FROM python:3.13-slim-bookworm
+
+ARG KUBECTL_VERSION=v1.31.0
+ARG SENPAI_SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision="${SENPAI_SOURCE_REVISION}"
+
+ENV SENPAI_IMAGE_REVISION="${SENPAI_SOURCE_REVISION}"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends bash ca-certificates curl && \
+    architecture="$(dpkg --print-architecture)" && \
+    curl -fsSLo /usr/local/bin/kubectl \
+      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${architecture}/kubectl" && \
+    curl -fsSLo /tmp/kubectl.sha256 \
+      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${architecture}/kubectl.sha256" && \
+    echo "$(cat /tmp/kubectl.sha256)  /usr/local/bin/kubectl" | sha256sum --check && \
+    chmod +x /usr/local/bin/kubectl && \
+    kubectl version --client && \
+    python --version && \
+    rm -rf /var/lib/apt/lists/* /tmp/kubectl.sha256
