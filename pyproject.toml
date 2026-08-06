@@ -37,6 +37,10 @@ pythonpath = ["."]
 
 [tool.uv]
 exclude-newer = "2026-07-27T20:01:53.448785Z"
+exclude-newer-package = { cryptography = "2026-08-01T00:00:00Z" }
+constraint-dependencies = [
+    "cryptography>=50.0.0", # CVE-2026-69247 / GHSA-g6cj-pr64-35w5
+]
 
 [project.optional-dependencies]
 dev = [
