@@ -6,6 +6,12 @@ SPDX-PackageName: senpai
 
 # senpai
 
+**ICML 2026 AI for Science Workshop:** [Project Page](https://wandb.github.io/senpai/) - [Paper](https://openreview.net/forum?id=g0bJFA9gVT#discussion)
+
+*Currently undergoing a full-write in PR#3467 to use OpenHands agent SDK*
+
+Current 
+
 Autonomous ML research loop powered by Claude Code agents coordinated through GitHub PRs. Point it at a problem, deploy advisor + student agents on k8s, and let them iterate.
 
 ## How it works
