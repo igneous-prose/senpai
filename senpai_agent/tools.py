@@ -757,7 +757,7 @@ class RespondToIssueTransition(_Transition):
     response: str = Field(
         min_length=1,
         max_length=50_000,
-        description="Response including the role prefix required by the skill.",
+        description="Response text; the runtime adds the authenticated role prefix.",
     )
 
 
@@ -1121,9 +1121,12 @@ class GitHubTransitionTool(
             workflow = GitHubWorkflow(
                 credentials.repo,
                 credentials.token,
+                role=role,
                 trusted_actor=credentials.trusted_actor,
             )
             git_token = credentials.token
+        elif isinstance(workflow, GitHubWorkflow) and workflow.role != role:
+            raise ValueError("workflow role must match the GitHub tool role")
         if workspace is None:
             if conv_state is None:
                 raise ValueError("github_transition requires its OpenHands workspace")

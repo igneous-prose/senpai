@@ -20,13 +20,13 @@ def test_respond_to_issue_writes_one_verified_idempotent_reply():
     first = client.respond_to_issue(
         7,
         human_message_id=700,
-        response="ADVISOR: I will investigate this now.",
+        response="I will investigate this now.",
     )
     mutations_after_first = list(fake.mutations)
     second = client.respond_to_issue(
         7,
         human_message_id=700,
-        response="ADVISOR: I will investigate this now.",
+        response="I will investigate this now.",
     )
 
     assert first.changed is True
@@ -49,7 +49,7 @@ def test_respond_to_issue_accepts_a_specific_human_comment():
         comments=[comment(42, "Please also compare memory use.", author="ada")],
     )
 
-    result = workflow(fake).respond_to_issue(
+    result = workflow(fake, role="student").respond_to_issue(
         7,
         human_message_id=42,
         response="STUDENT fern: I included memory in the comparison.",
@@ -57,7 +57,9 @@ def test_respond_to_issue_accepts_a_specific_human_comment():
 
     assert result.changed is True
     assert len(fake.comments) == 2
-    assert "<!-- senpai-human-response:42 -->" in cast(str, fake.comments[-1]["body"])
+    assert cast(str, fake.comments[-1]["body"]).endswith(
+        "\n\nSTUDENT: I included memory in the comparison."
+    )
 
 
 @pytest.mark.parametrize(

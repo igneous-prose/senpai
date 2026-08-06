@@ -6,6 +6,7 @@ import pytest
 from openhands.sdk.tool import Tool, resolve_tool
 from pydantic import SecretStr
 
+from github_workflow_support import FakeGitHub, pull_request, workflow
 from senpai_agent.github import PRManifestEntry, PRRetrievalResult
 from senpai_agent.github_workflow import MutationResult
 from senpai_agent.tools import (
@@ -116,6 +117,17 @@ ADVISOR_TRANSITIONS = [
         id="merge-experiment",
     ),
 ]
+
+
+def test_transition_rejects_a_workflow_bound_to_another_role(tmp_path: Path):
+    student_workflow = workflow(FakeGitHub(pull_request()), role="student")
+
+    with pytest.raises(ValueError, match="workflow role"):
+        GitHubTransitionTool.create(
+            workflow=student_workflow,
+            role="advisor",
+            workspace=tmp_path,
+        )
 
 
 @pytest.mark.parametrize("transition", ADVISOR_TRANSITIONS)

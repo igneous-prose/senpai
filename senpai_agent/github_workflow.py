@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import Lock
@@ -329,6 +330,7 @@ class GitHubWorkflow:
         "_api_url",
         "_assignment_lifecycle_lock",
         "_repo",
+        "_role",
         "_token",
         "_transport",
         "_trusted_actor",
@@ -339,6 +341,7 @@ class GitHubWorkflow:
         repo: str,
         token: SecretStr,
         *,
+        role: Literal["advisor", "student"],
         transport: HttpTransport | None = None,
         api_url: str = "https://api.github.com",
         trusted_actor: str | None = None,
@@ -349,10 +352,13 @@ class GitHubWorkflow:
             raise TypeError("token must be a SecretStr")
         if not token.get_secret_value().strip():
             raise ValueError("token must not be empty")
+        if role not in {"advisor", "student"}:
+            raise ValueError("role must be advisor or student")
         if trusted_actor is not None and not trusted_actor.strip():
             raise ValueError("trusted actor must not be empty")
 
         self._repo = repo
+        self._role = role
         self._token = token
         self._transport = transport or _UrllibTransport()
         self._api_url = api_url.rstrip("/")
@@ -367,6 +373,10 @@ class GitHubWorkflow:
     @property
     def repo(self) -> str:
         return self._repo
+
+    @property
+    def role(self) -> Literal["advisor", "student"]:
+        return self._role
 
     def __getstate__(self) -> None:
         raise TypeError("GitHubWorkflow cannot be serialized")
@@ -724,7 +734,11 @@ class GitHubWorkflow:
             raise ReconciliationError(
                 f"GitHub contains multiple comments for marker {marker!r}"
             )
-        if existing and existing[0].body != marker_body:
+        desired_body = _role_prefixed_comment(marker_body, self._role)
+        if existing and _role_prefixed_comment(
+            existing[0].body,
+            self._role,
+        ) != desired_body:
             raise WorkflowPreconditionError(
                 "feedback_id already identifies different guidance; "
                 "use a new feedback_id"
@@ -1119,6 +1133,7 @@ class GitHubWorkflow:
         subject: str,
         desired_state: str,
     ) -> tuple[bool, _IssueComment]:
+        body = _role_prefixed_comment(body, self._role)
         existing = matches()
         if len(existing) > 1:
             raise ReconciliationError(f"GitHub contains multiple {subject}")
@@ -1678,6 +1693,20 @@ def _marker_body(marker: str, content: str) -> str:
     body = f"{marker}\n\n{content}"
     _validate_marker(marker, body)
     return body
+
+
+_ROLE_COMMENT_PREFIX = re.compile(r"^(?:ADVISOR|STUDENT(?: [^:\s]+)?):[ \t]*")
+
+
+def _role_prefixed_comment(
+    body: str,
+    role: Literal["advisor", "student"],
+) -> str:
+    marker, separator, content = body.partition("\n\n")
+    if not (separator and marker.startswith("<!-- senpai-")):
+        marker, separator, content = "", "", body
+    content = _ROLE_COMMENT_PREFIX.sub("", content)
+    return f"{marker}{separator}{role.upper()}: {content}"
 
 
 def _replace_assignment_marker(
