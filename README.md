@@ -8,7 +8,7 @@ SPDX-PackageName: senpai
 
 **ICML 2026 AI for Science Workshop:** [Project Page](https://wandb.github.io/senpai/) - [Paper](https://openreview.net/forum?id=g0bJFA9gVT#discussion)
 
-*Currently undergoing a full-write in PR#3467 to use OpenHands agent SDK*
+*Currently undergoing a full-write in [PR#3467](https://github.com/wandb/senpai/pull/3467) to use OpenHands agent SDK*
 
 Current 
 
