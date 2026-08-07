@@ -119,6 +119,15 @@ class GitHubToolRuntime:
             raise RuntimeError("student GitHub tools require a student name")
         return {"team", f"student:{self.student_name}"}
 
+    def human_issue_responder(self) -> str:
+        """Return the role or pod identity used to key one Issue reply."""
+
+        if self.role == "advisor":
+            return "advisor"
+        if not self.student_name:
+            raise RuntimeError("student GitHub tools require a student name")
+        return self.student_name
+
 
 class SubmitExperimentResultExecutor(
     ToolExecutor[SubmitExperimentResultAction, GitHubMutationObservation]

@@ -11,12 +11,19 @@ _ROLE_COMMENT_PREFIX = re.compile(r"^(?:ADVISOR|STUDENT(?: [^:\s]+)?):[ \t]*")
 
 
 def marker_body(marker: str, content: str) -> str:
-    content = content.strip()
+    content = _quote_senpai_marker_lines(content.strip())
     if not content:
         raise ValueError("marker comment content must not be empty")
     body = f"{marker}\n\n{content}"
     _validate_marker(marker, body)
     return body
+
+
+def _quote_senpai_marker_lines(content: str) -> str:
+    return "\n".join(
+        f"> {line}" if line.startswith("<!-- senpai-") else line
+        for line in content.splitlines()
+    )
 
 
 def role_prefixed_comment(

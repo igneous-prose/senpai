@@ -10,6 +10,7 @@ from types import TracebackType
 from typing import Self
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
+from senpai_agent.github.http import GitHubReadError
 from senpai_agent.mailbox import ControllerEvent
 
 from .core import GitHubMailbox
@@ -32,7 +33,7 @@ class ActiveGitHubWatcher:
         self.known_keys = set(known_keys)
         self.poll_interval_seconds = poll_interval_seconds
         self.map_event = map_event or _advisor_event
-        self.observed_keys: set[str] = set()
+        self.enqueued_keys: set[str] = set()
         self.stop = threading.Event()
         self.error: BaseException | None = None
         self.thread = threading.Thread(
@@ -44,7 +45,16 @@ class ActiveGitHubWatcher:
         try:
             with AdvisorEventStore(self.store_path) as store:
                 while not self.stop.wait(self.poll_interval_seconds):
-                    events = self.mailbox.poll()
+                    try:
+                        events = self.mailbox.poll()
+                    except GitHubReadError as error:
+                        print(
+                            "SENPAI_GITHUB_WATCHER_POLL_ERROR "
+                            f"{type(error).__name__}: {error}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        continue
                     current = {event.dedupe_key for event in events}
                     for event in events:
                         if event.dedupe_key in self.known_keys:
@@ -52,8 +62,8 @@ class ActiveGitHubWatcher:
                         local_event = self.map_event(event)
                         if local_event is None:
                             continue
-                        store.enqueue(local_event)
-                        self.observed_keys.add(local_event.dedupe_key)
+                        if store.enqueue(local_event):
+                            self.enqueued_keys.add(local_event.dedupe_key)
                     self.known_keys = current
         except BaseException as error:  # noqa: BLE001
             self.error = error

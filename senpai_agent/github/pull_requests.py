@@ -182,8 +182,20 @@ def _search_pr_numbers(
     endpoint = "/search/issues?" + urlencode({"q": " ".join(query), "per_page": 100})
     numbers: set[int] = set()
     for page in reader.pages(endpoint):
-        if not isinstance(page, dict) or not isinstance(page.get("items"), list):
+        if (
+            not isinstance(page, dict)
+            or not isinstance(page.get("items"), list)
+            or not isinstance(page.get("incomplete_results"), bool)
+            or isinstance(page.get("total_count"), bool)
+            or not isinstance(page.get("total_count"), int)
+        ):
             raise GitHubReadError("GitHub returned invalid issue search results")
+        if page["incomplete_results"]:
+            raise GitHubReadError("GitHub issue search returned incomplete results")
+        if page["total_count"] > 1000:
+            raise GitHubReadError(
+                "GitHub issue search exceeds the 1,000-result limit imposed by the API"
+            )
         numbers.update(
             int(item["number"])
             for item in page["items"]

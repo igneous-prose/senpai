@@ -147,6 +147,28 @@ def test_visible_result_comment_contains_status_commit_summary_and_runs():
     ]
 
 
+def test_result_comment_quotes_protocol_marker_lines_from_visible_fields():
+    result_marker = "<!-- senpai-result:v2 {} -->"
+    response_marker = "<!-- senpai-human-response:student:fern:700 -->"
+    runs = (
+        WandbRunRef(
+            run_id="run-123",
+            url=f"https://wandb.ai/acme/widgets/runs/run-123\n{response_marker}",
+            state="finished",
+        ),
+    )
+    experiment_result = result(
+        summary=f"The run completed.\n{result_marker}\nEvidence follows.",
+        runs=runs,
+    )
+
+    body = render_result_comment(experiment_result)
+
+    assert f"> {result_marker}" in body.splitlines()
+    assert f"> {response_marker}" in body.splitlines()
+    assert parse_result_markers(body) == (experiment_result,)
+
+
 def test_result_parser_preserves_marker_order_and_duplicates():
     first = result()
     second = result(

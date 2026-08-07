@@ -1078,6 +1078,86 @@ def _task_event(row: sqlite3.Row) -> AdvisorEvent:
     )
 
 
+def _enqueue_task_event(
+    registry: DelegationRegistry,
+    event: AdvisorEvent,
+    event_sink: AdvisorEventSink | None,
+    event_db_path: Path | None,
+) -> None:
+    if event_sink is not None:
+        event_sink.enqueue(event)
+    elif event_db_path is not None:
+        with AdvisorEventStore(event_db_path) as sink:
+            sink.enqueue(event)
+            task_id = str(event.payload["task_id"])
+            if registry.rows([task_id])[0]["collected_at"] is not None:
+                sink.acknowledge(event.dedupe_key)
+
+
+def _signal_active_tasks(targets: Sequence[sqlite3.Row]) -> None:
+    for target in targets:
+        if target["status"] in TERMINAL_TASK_STATUSES:
+            continue
+        with _LOCAL_RUNNERS_LOCK:
+            runner = _LOCAL_RUNNERS.get(target["task_id"])
+        if runner is not None:
+            runner.interrupt()
+        elif target["pid"]:
+            _terminate_recovered_task(target)
+
+
+def _reconcile_active_tasks(
+    registry: DelegationRegistry,
+    rows: Sequence[sqlite3.Row],
+    event_sink: AdvisorEventSink | None,
+    event_db_path: Path | None,
+    *,
+    allow_starting_grace: bool = True,
+) -> None:
+    now = time.time()
+    for row in rows:
+        pid = row["pid"]
+        if row["deadline_epoch"] <= now:
+            error = "TimeoutError: inherited subagent deadline expired"
+        elif row["status"] == "queued" or pid is None:
+            if allow_starting_grace and now - row["updated_at"] <= 10:
+                continue
+            error = "InterruptedError: subagent startup did not complete"
+        elif _pid_matches_task(row):
+            continue
+        else:
+            error = "InterruptedError: prior subagent process is no longer running"
+
+        targets = registry.cancel_tree(
+            [row["task_id"]],
+            error=error,
+            root_status="failed",
+        )
+        _signal_active_tasks(targets)
+        if row["depth"] == 1:
+            failed = registry.rows([row["task_id"]])[0]
+            _enqueue_task_event(
+                registry,
+                _task_event(failed),
+                event_sink,
+                event_db_path,
+            )
+
+
+def reconcile_delegated_tasks(state_dir: Path, event_db_path: Path) -> None:
+    """Close orphaned background tasks before the controller polls for work."""
+
+    registry = DelegationRegistry(state_dir / "delegation" / "tasks.sqlite3")
+    with registry.lifecycle():
+        _reconcile_active_tasks(
+            registry,
+            registry.active_rows(),
+            None,
+            event_db_path,
+            allow_starting_grace=False,
+        )
+
+
 def record_delegated_task_result(
     task_id: str,
     *,
@@ -1146,6 +1226,8 @@ class _DelegationManager:
         self.child_runner_factory = child_runner_factory
         self.event_sink = event_sink
         self.event_db_path = event_db_path
+        with self.registry.lifecycle():
+            self._reconcile(self.registry.active_rows())
 
     def _validate_spawn(self, tasks: Sequence[AgentTask]) -> None:
         if not tasks or len(tasks) > MAX_SPAWN_BATCH:
@@ -1287,59 +1369,24 @@ class _DelegationManager:
             self._enqueue(_task_event(self.registry.rows([request.task_id])[0]))
 
     def _enqueue(self, event: AdvisorEvent) -> None:
-        if self.event_sink is not None:
-            self.event_sink.enqueue(event)
-        elif self.event_db_path is not None:
-            with AdvisorEventStore(self.event_db_path) as sink:
-                sink.enqueue(event)
-                task_id = str(event.payload["task_id"])
-                if self.registry.rows([task_id])[0]["collected_at"] is not None:
-                    sink.acknowledge(event.dedupe_key)
+        _enqueue_task_event(
+            self.registry,
+            event,
+            self.event_sink,
+            self.event_db_path,
+        )
 
     def _reconcile(self, rows: Sequence[sqlite3.Row]) -> None:
-        now = time.time()
-        for row in rows:
-            pid = row["pid"]
-            if row["deadline_epoch"] <= now:
-                self._reconcile_failure(
-                    row,
-                    "TimeoutError: inherited subagent deadline expired",
-                )
-                continue
-            if row["status"] == "queued" or pid is None:
-                if now - row["updated_at"] > 10:
-                    self._reconcile_failure(
-                        row,
-                        "InterruptedError: subagent startup did not complete",
-                    )
-                continue
-            if not _pid_matches_task(row):
-                self._reconcile_failure(
-                    row,
-                    "InterruptedError: prior subagent process is no longer running",
-                )
-
-    def _reconcile_failure(self, row: sqlite3.Row, error: str) -> None:
-        targets = self.registry.cancel_tree(
-            [row["task_id"]],
-            error=error,
-            root_status="failed",
+        _reconcile_active_tasks(
+            self.registry,
+            rows,
+            self.event_sink,
+            self.event_db_path,
         )
-        self._signal_active(targets)
-        if row["depth"] == 1:
-            self._enqueue(_task_event(self.registry.rows([row["task_id"]])[0]))
 
     @staticmethod
     def _signal_active(targets: Sequence[sqlite3.Row]) -> None:
-        for target in targets:
-            if target["status"] in TERMINAL_TASK_STATUSES:
-                continue
-            with _LOCAL_RUNNERS_LOCK:
-                runner = _LOCAL_RUNNERS.get(target["task_id"])
-            if runner is not None:
-                runner.interrupt()
-            elif target["pid"]:
-                _terminate_recovered_task(target)
+        _signal_active_tasks(targets)
 
     def states(
         self,

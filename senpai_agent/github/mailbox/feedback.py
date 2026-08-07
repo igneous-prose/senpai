@@ -56,8 +56,11 @@ def student_pr_feedback_events(
                 continue
             if (
                 surface == "inline_comment"
-                and int(item["pull_request_review_id"])
-                not in submitted_review_ids
+                and (
+                    item.get("pull_request_review_id") is None
+                    or int(item["pull_request_review_id"])
+                    not in submitted_review_ids
+                )
             ):
                 continue
             trusted = trusted_feedback(

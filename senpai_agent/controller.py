@@ -48,6 +48,20 @@ from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergen
 
 
 _EDGE_TRIGGERED_EVENT_KINDS = frozenset({"research_base_changed"})
+_PROMPT_TEMPLATE_VARIABLES = frozenset(
+    {
+        "ADVISOR_BRANCH",
+        "GH_REPO",
+        "GPUS_PER_STUDENT",
+        "PROBLEM_DIR",
+        "RESEARCH_TAG",
+        "STUDENT_NAME",
+        "STUDENT_NAMES",
+        "TARGET_REPO_URL",
+        "WANDB_ENTITY",
+        "WANDB_PROJECT",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +86,7 @@ class TurnRunner(Protocol):
         *,
         conversation_id: UUID,
         event_keys: frozenset[str],
+        visible_event_keys: frozenset[str] = frozenset(),
     ) -> TurnResult: ...
 
 
@@ -127,6 +142,7 @@ class OpenHandsTurnRunner:
         *,
         conversation_id: UUID,
         event_keys: frozenset[str],
+        visible_event_keys: frozenset[str] = frozenset(),
     ) -> TurnResult:
         from senpai_agent.openhands_runner import local_event_db_path, run_openhands
 
@@ -200,13 +216,13 @@ class OpenHandsTurnRunner:
         with ActiveGitHubWatcher(
             self.github_mailbox,
             store_path,
-            known_keys=event_keys,
+            known_keys=visible_event_keys | event_keys,
             poll_interval_seconds=self.active_poll_interval_seconds,
             map_event=map_event,
         ) as watcher:
             exit_code = run_turn()
         with AdvisorEventStore(store_path) as store:
-            delivered = store.acknowledged(tuple(watcher.observed_keys))
+            delivered = store.acknowledged(tuple(watcher.enqueued_keys))
         return TurnResult(
             exit_code=exit_code,
             delivered_event_keys=frozenset(delivered),
@@ -378,11 +394,15 @@ class Controller:
                             "openhands-turn",
                             self.turn_timeout_seconds,
                         )
+                        batch_event_keys = frozenset(
+                            event.dedupe_key for event in batch_events
+                        )
                         result = self.turns.run(
                             prompt,
                             conversation_id=conversation_id,
-                            event_keys=frozenset(
-                                event.dedupe_key for event in batch_events
+                            event_keys=batch_event_keys,
+                            visible_event_keys=(
+                                frozenset(self._visible) | batch_event_keys
                             ),
                         )
                     except ConversationRecoveryExhausted as error:
@@ -628,11 +648,17 @@ def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) ->
     workspace = Path(env["SENPAI_OPENHANDS_WORKSPACE"]).resolve()
     instructions = workspace / "instructions" / f"prompt-{role}.md"
     program = workspace / "program.md"
+    template_env = {
+        key: env[key] for key in _PROMPT_TEMPLATE_VARIABLES if key in env
+    }
+    role_prompt = Template(read_agent_markdown(instructions)).safe_substitute(
+        template_env
+    )
     prompt = (
         "# Research programme\n\n"
         f"{read_agent_markdown(program).strip()}\n\n"
         f"# {role.title()} task\n\n"
-        f"{Template(read_agent_markdown(instructions)).safe_substitute(env).strip()}"
+        f"{role_prompt.strip()}"
     )
     encoded_extra = env.get("EXTRA_INSTRUCTIONS_B64")
     if encoded_extra:
@@ -674,6 +700,7 @@ def controller_main(
     if progress is not None:
         progress.update("startup", 300)
 
+    from senpai_agent.delegation import reconcile_delegated_tasks
     from senpai_agent.openhands_runner import (
         parse_runner_args,
         read_role_instructions,
@@ -706,6 +733,11 @@ def controller_main(
     if runner_config.github_token is None:
         raise RuntimeError("controller worker requires GitHub credentials")
     scrub_model_credentials(os.environ, runner_config)
+    reconcile_delegated_tasks(
+        getattr(runner_config, "delegation_root_state_dir", None)
+        or runner_config.state_dir,
+        runner_config.state_dir / f"{role}-events.sqlite3",
+    )
     github_mailbox = GitHubMailbox(
         repo=runner_config.github_repo,
         token=runner_config.github_token,

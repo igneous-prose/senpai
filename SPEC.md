@@ -184,9 +184,10 @@ the OpenHands turn succeeds. A crash or nonzero first turn therefore retries
 the complete programme and assignment prompt instead of incorrectly
 continuing from instructions that were never delivered.
 
-Student state is ephemeral by default. Losing it is acceptable after the
-assignment ends because the PR, branch, typed result, W&B runs, and Weave trace
-are durable. The advisor state is persisted by the deployment.
+Role state uses pod-local storage and survives controller or container restarts
+within the same pod. Replacing or rescheduling a pod starts fresh local state;
+the PR, branch, typed result, W&B runs, and Weave trace remain the durable
+handoff.
 
 No default path may be relative to the current workspace. Senpai removes only
 its generated PR Markdown artifacts after 24 hours. It does not delete

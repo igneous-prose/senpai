@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self
@@ -198,6 +199,9 @@ class _RunTrainingExecutor(ToolExecutor[RunTrainingAction, TrainingResultObserva
     def __init__(self, training: TrainingSupervisor, monitor_store: MonitorStore):
         self.training = training
         self.monitor_store = monitor_store
+        self._lock = threading.Lock()
+        self._in_flight: set[str] = set()
+        self._interrupt_generation = 0
 
     def __call__(
         self,
@@ -207,20 +211,35 @@ class _RunTrainingExecutor(ToolExecutor[RunTrainingAction, TrainingResultObserva
         if conversation is None:
             raise ValueError("run_training requires its student conversation")
         require_clean_training_worktree(self.training.workspace)
+        with self._lock:
+            interrupt_generation = self._interrupt_generation
         result = self.training.run_training(action.spec)
-        self.monitor_store.register(
-            TrainingMonitorSpec(
-                training_id=result.training_id,
-                conversation_id=conversation.id,
+        with self._lock:
+            self._in_flight.add(result.training_id)
+            interrupted = interrupt_generation != self._interrupt_generation
+        try:
+            if interrupted:
+                self.training.cancel_training(result.training_id)
+            self.monitor_store.register(
+                TrainingMonitorSpec(
+                    training_id=result.training_id,
+                    conversation_id=conversation.id,
+                )
             )
-        )
-        return TrainingResultObservation.from_result(result)
+            return TrainingResultObservation.from_result(result)
+        finally:
+            with self._lock:
+                self._in_flight.discard(result.training_id)
 
     def close(self) -> None:
         return
 
     def interrupt(self) -> None:
-        self.training.close()
+        with self._lock:
+            self._interrupt_generation += 1
+            training_ids = tuple(self._in_flight)
+        for training_id in training_ids:
+            self.training.cancel_training(training_id)
 
 
 class _GetTrainingStatusExecutor(

@@ -29,6 +29,7 @@ from senpai_agent.delegation import (
     SpawnAgentsTool,
     cancel_pending_descendants,
     configure_delegation,
+    reconcile_delegated_tasks,
 )
 
 
@@ -371,6 +372,62 @@ def test_dead_replayed_task_becomes_failed_and_is_never_respawned(tmp_path):
             first.tasks[0].task_id
         ]
     release.set()
+
+
+def test_controller_startup_reconciles_a_dead_background_task_and_enqueues_its_wake(
+    tmp_path,
+):
+    parent = parent_conversation()
+    registry = DelegationRegistry(tmp_path / "state" / "delegation" / "tasks.sqlite3")
+    rows, _created = registry.reserve(
+        operation_key=f"{parent.id}:orphaned-child",
+        tree_id="orphaned-tree",
+        parent_conversation_id=str(parent.id),
+        parent_task_id=None,
+        depth=1,
+        specs=[AgentTask(key="orphan", task="Recover after restart")],
+        deadlines=[time.time() + 60],
+    )
+    task_id = rows[0]["task_id"]
+    registry.mark_running(task_id, 999_999_999)
+
+    reconcile_delegated_tasks(
+        tmp_path / "state",
+        tmp_path / "events.sqlite3",
+    )
+
+    failed = registry.rows([task_id])[0]
+    assert failed["status"] == "failed"
+    assert "no longer running" in failed["error"]
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as events:
+        pending = events.pending()
+    assert [event.payload["task_id"] for event in pending] == [task_id]
+
+
+def test_controller_startup_immediately_fails_a_preexisting_queued_task(tmp_path):
+    registry = DelegationRegistry(tmp_path / "state" / "delegation" / "tasks.sqlite3")
+    rows, _created = registry.reserve(
+        operation_key="conversation:queued-before-restart",
+        tree_id="queued-tree",
+        parent_conversation_id="conversation",
+        parent_task_id=None,
+        depth=1,
+        specs=[AgentTask(key="queued", task="Never launched")],
+        deadlines=[time.time() + 60],
+    )
+    task_id = rows[0]["task_id"]
+
+    reconcile_delegated_tasks(
+        tmp_path / "state",
+        tmp_path / "events.sqlite3",
+    )
+
+    failed = registry.rows([task_id])[0]
+    assert failed["status"] == "failed"
+    assert "startup did not complete" in failed["error"]
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as events:
+        pending = events.pending()
+    assert [event.payload["task_id"] for event in pending] == [task_id]
 
 
 def test_cancel_is_targeted_and_releases_the_child(tmp_path):

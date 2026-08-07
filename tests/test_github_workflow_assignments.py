@@ -320,12 +320,14 @@ def test_repair_routing_rejects_a_stale_revision_before_writing():
 
 def test_repair_routing_fails_if_github_does_not_apply_the_write():
     fake = FakeGitHub(
-        pull_request(),
+        pull_request(
+            labels={"schmidhuber", "student:student-one", "status:wip"}
+        ),
         comments=[comment(1, render_result_comment(experiment_result()))],
-        ignore_label_put=True,
+        ignore_label_mutations=True,
     )
 
-    with pytest.raises(ReconciliationError, match="label set"):
+    with pytest.raises(ReconciliationError, match="label state"):
         workflow(fake).repair_assignment_routing(
             7,
             assignment_id=ASSIGNMENT_ID,
@@ -335,7 +337,7 @@ def test_repair_routing_fails_if_github_does_not_apply_the_write():
             blockers=set(),
         )
 
-    assert len(fake.mutations) == 1
+    assert len(fake.mutations) == 2
 
 
 def test_repair_routing_rejects_review_without_exact_terminal_result():
