@@ -3,24 +3,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-PackageName: senpai
 
-name: merge-winner
+name: review-experiment
 description: >
-  Review and disposition one terminal experiment: merge a reproducible winner,
-  close a useful negative or dead end, or request the missing evidence.
+  Review one terminal experiment and choose the next step: merge a reproducible
+  winner, close a useful negative or dead end, or request missing evidence.
 argument-hint: "<pr-number> <problem-dir>"
 model: claude-sonnet-4-6
 effort: high
 ---
 
-# Review a terminal experiment
+# Review an experiment
 
 Retrieve the complete PR with `get_prs`. Verify its assignment, current head
 SHA, terminal structured result, W&B evidence, metric direction, and scientific
-conclusion. Then choose one disposition:
+conclusion. Then choose the appropriate next step:
 
-- merge a terminal, reproducible improvement;
-- close a terminal control, clean negative, invalid candidate, or bounded dead
-  end with a durable reason; or
+- merge a reproducible improvement;
+- close a completed control, clean negative, invalid candidate, or bounded dead
+  end with a clear reason; or
 - request a revision when the evidence is incomplete or another bounded run is
   required.
 
@@ -66,7 +66,7 @@ and exact current base SHA. If any of them changes, reassess. If the conclusion
 no longer holds, request a new revision instead. Never invent a SHA or call
 `gh pr merge`.
 
-## Close a non-winner
+## Close a completed non-winner
 
 ```json
 {
@@ -76,13 +76,13 @@ no longer holds, request a new revision instead. Never invent a SHA or call
     "revision_id": "current-revision-id",
     "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
   },
-  "reason": "Concise durable scientific disposition."
+  "reason": "Concise scientific reason for closing this experiment."
 }
 ```
 
 Call `close_experiment`. Distinguish a useful negative from an invalid or
-incomplete run. Do not edit labels, write disposition markers, or close the PR
-with `gh`.
+incomplete run. Do not edit labels, write protocol markers, or close the PR with
+`gh`.
 
 ## Request a revision
 
@@ -104,46 +104,6 @@ Call `request_assignment_revision`. Use a new stable revision ID and the exact
 research base SHA the next revision must use. State one concrete change or
 experiment and its acceptance evidence; do not close an experiment that can
 still answer the assigned question with one bounded correction.
-
-## Continue the current revision
-
-Use `send_assignment_feedback` for guidance that does not change the required
-evidence or research base:
-
-```json
-{
-  "assignment": {
-    "pr_number": 123,
-    "assignment_id": "assignment-id",
-    "revision_id": "current-revision-id",
-    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
-  },
-  "feedback_id": "stable-guidance-id",
-  "comment": "Actionable clarification, question, hold, or nudge."
-}
-```
-
-Use a new `feedback_id` only for distinct guidance. Exact replay is a no-op.
-
-## Repair routing state
-
-If a controller event reports inconsistent workflow labels, call
-`repair_assignment_routing` with the intended state rather than editing labels:
-
-```json
-{
-  "assignment": {
-    "pr_number": 123,
-    "assignment_id": "assignment-id",
-    "revision_id": "current-revision-id",
-    "expected_pr_head_sha": "CURRENT_PR_HEAD_SHA"
-  },
-  "working_state": "review",
-  "blockers": []
-}
-```
-
-`blockers` may contain `blocked`, `hold`, or `needs-rebase`.
 
 ## Record the outcome
 

@@ -117,11 +117,12 @@ the terminal epoch.
 GPU time is better spent on fresh directions than extending experiments that
 are clearly not working.
 
-Use the `merge-winner` skill for terminal merge, close, or revision decisions;
-it owns the guarded GitHub mechanics. A `research_base_changed` event means the
-result's original comparison point moved; do not cancel an in-flight assignment
-merely because of that event. Before disposing a terminal result, reassess
-whether the change affects its conclusion. If it does not, record why with
+Use the `review-experiment` skill for terminal merge, close, or revision
+decisions; it owns the guarded GitHub mechanics. A `research_base_changed`
+event means the result's original comparison point moved; do not cancel an
+in-flight assignment merely because of that event. Before acting on a terminal
+result, reassess whether the change affects its conclusion. If it does not,
+record why with
 `accept_result_on_current_base` using the event's exact `current_base_sha`. If
 new evidence is needed, use `request_assignment_revision` with that SHA as
 `required_base_sha`. Never bypass a failed tool precondition.

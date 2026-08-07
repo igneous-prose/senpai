@@ -92,7 +92,7 @@ def test_create_assignment_uses_the_created_branch_head_for_the_pr(
         )
 
     monkeypatch.setattr(
-        "senpai_agent.github_tools.create_assignment_branch",
+        "senpai_agent.github_tools.advisor.git_workflow.create_assignment_branch",
         create_branch,
     )
     tool = CreateAssignmentTool.create(runtime(workflow, tmp_path))[0]
@@ -138,7 +138,7 @@ def test_create_assignment_rejects_students_outside_the_launch_before_mutation(
 ):
     workflow = RecordingWorkflow()
     monkeypatch.setattr(
-        "senpai_agent.github_tools.create_assignment_branch",
+        "senpai_agent.github_tools.advisor.git_workflow.create_assignment_branch",
         lambda *_args, **_kwargs: pytest.fail("git mutation reached"),
     )
     tool = CreateAssignmentTool.create(runtime(workflow, tmp_path))[0]
@@ -175,7 +175,10 @@ def test_publish_advisor_branch_uses_configured_branch_and_distinct_shas(
             head_sha=kwargs["expected_local_sha"],
         )
 
-    monkeypatch.setattr("senpai_agent.github_tools.push_assignment_branch", push)
+    monkeypatch.setattr(
+        "senpai_agent.github_tools.advisor.git_workflow.push_assignment_branch",
+        push,
+    )
     tool = PublishAdvisorBranchTool.create(
         runtime(workflow, tmp_path)
     )[0]

@@ -7,6 +7,7 @@ from openhands.sdk.tool import Tool, resolve_tool
 from pydantic import SecretStr
 
 from github_workflow_support import FakeGitHub, pull_request, workflow
+from senpai_agent import github_tools as github_tools_module
 from senpai_agent.github import PRManifestEntry, PRRetrievalResult
 from senpai_agent.github_tools import (
     GetPRsAction,
@@ -38,6 +39,18 @@ STUDENT_GITHUB_TOOLS = {
     "respond_to_human_issue",
     "submit_experiment_result",
 }
+
+
+def test_github_tools_package_preserves_public_contract_types():
+    expected = {
+        "GetPRsObservation",
+        "PRManifestObservation",
+        "GitHubMutationObservation",
+        "GitHubCredentials",
+    }
+
+    assert expected <= set(github_tools_module.__all__)
+    assert expected <= set(dir(github_tools_module))
 
 @pytest.mark.parametrize(
     ("role", "expected"),

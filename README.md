@@ -214,12 +214,6 @@ The structured result records its terminal status, exact result commit, W&B run 
 
 Trusted collaborator comments, submitted reviews, and inline review comments are delivered automatically to the relevant student; feedback from untrusted authors and unrecognized bots is ignored. `get_prs` can still retrieve the complete discussion explicitly. If the configured research base changes while an experiment is running, Senpai emits `research_base_changed` with the assignment's `required_base_sha` and the live `current_base_sha` without cancelling the assignment. When reviewing its terminal result, the advisor either requests a revision on the current base or records why that exact result remains valid with `accept_result_on_current_base`; `merge_experiment` still verifies the live SHA immediately before merging.
 
-GitHub mutations use separate, operation-specific, role-scoped tools without a
-union wrapper. Version 2 removes the former multi-operation tool and nested
-action wrapper. This is a breaking schema
-change with no compatibility alias or event-log migration: stop old workers and
-start with fresh OpenHands conversation state when upgrading.
-
 `get_prs` returns complete PR bodies and discussions. Up to five PRs are returned in context by default; larger selections become a Markdown artifact outside the target checkout so long histories do not pollute the main conversation.
 
 ## Long-running training and monitoring
@@ -297,7 +291,7 @@ OpenHands receives these as progressively disclosed skills; their bodies are loa
 | [Bootstrap a target](plugins/senpai/skills/bootstrap-target/SKILL.md) | Build `program.md` and the advisor/student overlays from a new ML repository. |
 | [Assign an experiment](plugins/senpai/skills/assign-experiment/SKILL.md) | Turn a hypothesis into a typed student branch and draft PR. |
 | [Submit experiment results](plugins/senpai/skills/submit-experiment-results/SKILL.md) | Commit the tested implementation and publish a structured, evidence-backed result. |
-| [Review an experiment](plugins/senpai/skills/merge-winner/SKILL.md) | Merge a reproducible winner, close a useful negative, or request the missing evidence. |
+| [Review an experiment](plugins/senpai/skills/review-experiment/SKILL.md) | Merge a reproducible winner, close a useful negative, or request the missing evidence. |
 | [Handle human Issues](plugins/senpai/skills/check-human-issues/SKILL.md) | Respond to authenticated human-to-agent messages delivered through GitHub Issues. |
 
 ### Evidence and research

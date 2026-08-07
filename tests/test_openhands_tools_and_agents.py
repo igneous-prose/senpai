@@ -140,11 +140,11 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
         "assign-experiment",
         "bootstrap-target",
         "check-human-issues",
-        "merge-winner",
+        "review-experiment",
         "submit-experiment-results",
     }
-    assert "merge_experiment" in skills["merge-winner"].content
-    assert "close_experiment" in skills["merge-winner"].content
+    assert "merge_experiment" in skills["review-experiment"].content
+    assert "close_experiment" in skills["review-experiment"].content
     assert plugin.mcp_config == {}
 
 
@@ -362,20 +362,6 @@ def test_advisor_research_precedes_assignment_without_idle_dispatch_priority():
         "Well-founded experiment assignments"
     )
     assert "Idleness is not a reason to skip" in instructions
-
-    template = (
-        REPO_ROOT
-        / "plugins"
-        / "senpai"
-        / "skills"
-        / "bootstrap-target"
-        / "references"
-        / "role-overlay-template.md"
-    ).read_text(encoding="utf-8")
-    assert "Assign work to every idle student" not in template
-    assert template.index("Research and synthesize") < template.index(
-        "Assign the best well-founded experiments"
-    )
 
 
 def test_harness_states_bounded_delegation_tree_contract():

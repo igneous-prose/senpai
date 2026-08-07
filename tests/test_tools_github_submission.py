@@ -104,11 +104,11 @@ def test_submit_result_preflights_before_any_git_mutation(
     workflow = RejectingWorkflow()
     pushes = []
     monkeypatch.setattr(
-        "senpai_agent.github_tools.push_assignment_branch",
+        "senpai_agent.github_tools.runtime.git_workflow.push_assignment_branch",
         lambda *args, **kwargs: pushes.append((args, kwargs)),
     )
     monkeypatch.setattr(
-        "senpai_agent.github_tools.require_commit_contains_base",
+        "senpai_agent.github_tools.runtime.git_workflow.require_commit_contains_base",
         lambda *args, **kwargs: None,
     )
 
@@ -133,11 +133,11 @@ def test_stale_submission_finishes_the_obsolete_conversation_without_pushing(
     workflow = StaleWorkflow()
     pushes = []
     monkeypatch.setattr(
-        "senpai_agent.github_tools.push_assignment_branch",
+        "senpai_agent.github_tools.runtime.git_workflow.push_assignment_branch",
         lambda *args, **kwargs: pushes.append((args, kwargs)),
     )
     monkeypatch.setattr(
-        "senpai_agent.github_tools.require_commit_contains_base",
+        "senpai_agent.github_tools.runtime.git_workflow.require_commit_contains_base",
         lambda *args, **kwargs: None,
     )
     conversation = SimpleNamespace(
@@ -177,9 +177,12 @@ def test_submit_result_pushes_the_validated_local_head_before_github_mutation(
         )
 
     workflow = Workflow()
-    monkeypatch.setattr("senpai_agent.github_tools.push_assignment_branch", push)
     monkeypatch.setattr(
-        "senpai_agent.github_tools.require_commit_contains_base",
+        "senpai_agent.github_tools.runtime.git_workflow.push_assignment_branch",
+        push,
+    )
+    monkeypatch.setattr(
+        "senpai_agent.github_tools.runtime.git_workflow.require_commit_contains_base",
         lambda *_args, **_kwargs: order.append("ancestry"),
     )
 
@@ -222,10 +225,13 @@ def test_submit_result_holds_one_workflow_lock_across_the_full_transaction(
         )
 
     monkeypatch.setattr(
-        "senpai_agent.github_tools.require_commit_contains_base",
+        "senpai_agent.github_tools.runtime.git_workflow.require_commit_contains_base",
         ancestry,
     )
-    monkeypatch.setattr("senpai_agent.github_tools.push_assignment_branch", push)
+    monkeypatch.setattr(
+        "senpai_agent.github_tools.runtime.git_workflow.push_assignment_branch",
+        push,
+    )
 
     student_tool(workflow, tmp_path)(submit_action())
 
@@ -279,12 +285,15 @@ def test_submit_result_retries_only_bounded_post_push_head_mismatches(
             head_sha=kwargs["expected_local_sha"],
         )
 
-    monkeypatch.setattr("senpai_agent.github_tools.push_assignment_branch", push)
     monkeypatch.setattr(
-        "senpai_agent.github_tools.require_commit_contains_base",
+        "senpai_agent.github_tools.runtime.git_workflow.push_assignment_branch",
+        push,
+    )
+    monkeypatch.setattr(
+        "senpai_agent.github_tools.runtime.git_workflow.require_commit_contains_base",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr("senpai_agent.github_tools.time.sleep", sleeps.append)
+    monkeypatch.setattr("senpai_agent.github_tools.runtime.time.sleep", sleeps.append)
     call = lambda: student_tool(workflow, tmp_path)(submit_action())
 
     if raises:

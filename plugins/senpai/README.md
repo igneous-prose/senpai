@@ -32,11 +32,6 @@ no MCP server. The Python runtime binds the authenticated role and adds the
 canonical `ADVISOR:` or `STUDENT:` prefix to Senpai-authored GitHub comments;
 tool payloads contain only the unprefixed message text.
 
-Version 2 removes the former multi-operation GitHub tool and its nested action
-schema. This is an intentionally breaking change with no alias or event-log
-adapter. Start version 2 with fresh OpenHands conversation state; a persisted
-conversation containing the removed action type is not resumable.
-
 Keep Senpai-owned workflow skills here rather than relying on a provider's user
 skill directory. Never commit secret values. The plugin remains the source of
 truth for reusable workflow guidance, while Python remains the source of truth

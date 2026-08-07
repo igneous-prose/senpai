@@ -26,9 +26,6 @@ Check GitHub Issues tagged `human` for messages from the research team, and resp
   `STUDENT`
 - **$1** — Either `ADVISOR` or `STUDENT`
 
-The runtime adds the authenticated role prefix (`ADVISOR:` or `STUDENT:`) to
-the posted comment.
-
 ## How it works
 
 Human researchers communicate with agents through GitHub Issues. Issues are
@@ -63,8 +60,7 @@ already handled.
 }
 ```
 
-For a student, use `"response": "STUDENT $0: <your response>"`. Never mutate
-the issue through `gh` or `curl`.
+Never mutate the issue through `gh` or `curl`.
 
 4. **Never close human issues.** Only the human does that.
 

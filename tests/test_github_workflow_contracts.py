@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+from pathlib import Path
 from typing import cast
 from urllib.error import URLError
 
@@ -21,6 +22,18 @@ from github_workflow_support import (
     pull_request,
     workflow,
 )
+
+
+def test_github_modules_stay_small_and_domain_focused():
+    agent_package = Path(__file__).parents[1] / "senpai_agent"
+    oversized = {
+        str(path.relative_to(agent_package)): lines
+        for package_name in ("github_tools", "github_workflow")
+        for path in (agent_package / package_name).rglob("*.py")
+        if (lines := len(path.read_text().splitlines())) > 300
+    }
+
+    assert oversized == {}
 
 
 def test_pull_request_returns_an_immutable_typed_snapshot():
