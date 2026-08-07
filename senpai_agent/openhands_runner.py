@@ -82,7 +82,7 @@ DEFAULT_FAST_MODEL = "openai/gpt-5.6-luna"
 DEFAULT_FRONTIER_MODEL = "openai/gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "xhigh"
 DEFAULT_FAST_REASONING_EFFORT = "high"
-DEFAULT_FRONTIER_REASONING_EFFORT = "ultra"
+DEFAULT_FRONTIER_REASONING_EFFORT = "max"
 WANDB_INFERENCE_BASE_URL = "https://api.inference.wandb.ai/v1"
 REASONING_EFFORTS = (
     "low",
@@ -90,9 +90,10 @@ REASONING_EFFORTS = (
     "high",
     "xhigh",
     "max",
-    "ultra",
     "none",
 )
+# Input-only compatibility for live configs; RunnerConfig stores max.
+_REASONING_EFFORT_INPUTS = (*REASONING_EFFORTS, "ultra")
 SENPAI_AGENT_NAMES = ("bash-runner", "general-purpose", "explore", "search")
 SENPAI_AGENT_DIR = Path(__file__).resolve().parents[1] / ".agents" / "agents"
 PROVIDER_API_KEY_ENVS = {
@@ -115,25 +116,25 @@ class RunnerArgs:
     reasoning_effort: str | None = field(
         default=None,
         alias="--reasoning-effort",
-        choices=REASONING_EFFORTS,
+        choices=_REASONING_EFFORT_INPUTS,
     )
     smart_model: str | None = field(default=None, alias="--smart-model")
     smart_reasoning_effort: str | None = field(
         default=None,
         alias="--smart-reasoning-effort",
-        choices=REASONING_EFFORTS,
+        choices=_REASONING_EFFORT_INPUTS,
     )
     fast_model: str | None = field(default=None, alias="--fast-model")
     fast_reasoning_effort: str | None = field(
         default=None,
         alias="--fast-reasoning-effort",
-        choices=REASONING_EFFORTS,
+        choices=_REASONING_EFFORT_INPUTS,
     )
     frontier_model: str | None = field(default=None, alias="--frontier-model")
     frontier_reasoning_effort: str | None = field(
         default=None,
         alias="--frontier-reasoning-effort",
-        choices=REASONING_EFFORTS,
+        choices=_REASONING_EFFORT_INPUTS,
     )
     workspace: str | None = field(default=None, alias="--workspace")
     state_dir: str | None = field(default=None, alias="--state-dir")
@@ -207,6 +208,16 @@ def parse_runner_args(argv: Sequence[str] | None = None) -> RunnerArgs:
 
 def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
     provider, _, model_name = model.lower().partition("/")
+    supports_openai_pro = provider == "openai" and (
+        model_name == "gpt-5.6" or model_name.startswith("gpt-5.6-")
+    )
+    if reasoning_effort == "ultra":
+        if not supports_openai_pro:
+            raise ValueError(
+                f"reasoning effort {reasoning_effort!r} is unsupported for "
+                f"model {model!r}; use 'max' with an openai/gpt-5.6 model"
+            )
+        reasoning_effort = "max"
     if reasoning_effort not in REASONING_EFFORTS:
         choices = ", ".join(REASONING_EFFORTS)
         raise ValueError(
@@ -220,16 +231,55 @@ def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
                 f"model {model!r}; use 'high' or 'max'"
             )
         return reasoning_effort
-    supports_extended_effort = provider == "openai" and (
-        model_name == "gpt-5.6" or model_name.startswith("gpt-5.6-")
-    )
-    if reasoning_effort in {"max", "ultra"} and not supports_extended_effort:
+    if reasoning_effort == "max" and not supports_openai_pro:
         raise ValueError(
             f"reasoning effort {reasoning_effort!r} is unsupported for model "
             f"{model!r}; "
             "use an openai/gpt-5.6 model or select a lower effort"
         )
-    return "max" if reasoning_effort == "ultra" else reasoning_effort
+    return reasoning_effort
+
+
+def _uses_openai_pro_mode(model: str, reasoning_effort: str | None) -> bool:
+    return (
+        reasoning_effort is not None
+        and model.split("/", 1)[0].lower() == "openai"
+        and openhands_reasoning_effort(reasoning_effort, model) == "max"
+    )
+
+
+def _openai_pro_reasoning(
+    model: str,
+    reasoning_effort: str | None,
+) -> dict[str, str] | None:
+    if not _uses_openai_pro_mode(model, reasoning_effort):
+        return None
+    return {
+        "effort": "max",
+        "mode": "pro",
+        "summary": "auto",
+        "context": "all_turns",
+    }
+
+
+def apply_reasoning_profile(llm: LLM) -> LLM:
+    """Canonicalize effort and replace only Senpai's reasoning request body."""
+
+    reasoning_effort = openhands_reasoning_effort(
+        llm.reasoning_effort,
+        llm.model,
+    )
+    extra_body = dict(llm.litellm_extra_body or {})
+    if reasoning := _openai_pro_reasoning(llm.model, reasoning_effort):
+        extra_body["reasoning"] = reasoning
+    else:
+        extra_body.pop("reasoning", None)
+    return llm.model_copy(
+        update={
+            "reasoning_effort": reasoning_effort,
+            "litellm_extra_body": extra_body,
+        }
+    )
 
 
 def model_provider(model: str) -> str:
@@ -521,7 +571,7 @@ def resolve_config(
         )
         or DEFAULT_REASONING_EFFORT
     )
-    openhands_reasoning_effort(reasoning_effort, model)
+    reasoning_effort = openhands_reasoning_effort(reasoning_effort, model)
     api_key_env = (
         env_value(args.api_key_env, env, "SENPAI_OPENHANDS_API_KEY_ENV")
         or infer_api_key_env(
@@ -554,7 +604,10 @@ def resolve_config(
         )
         or smart_default_effort
     )
-    openhands_reasoning_effort(smart_reasoning_effort, smart_model)
+    smart_reasoning_effort = openhands_reasoning_effort(
+        smart_reasoning_effort,
+        smart_model,
+    )
 
     fast_default_model = (
         DEFAULT_FAST_MODEL
@@ -579,7 +632,10 @@ def resolve_config(
         )
         or DEFAULT_FAST_REASONING_EFFORT
     )
-    openhands_reasoning_effort(fast_reasoning_effort, fast_model)
+    fast_reasoning_effort = openhands_reasoning_effort(
+        fast_reasoning_effort,
+        fast_model,
+    )
 
     frontier_model = (
         env_value(
@@ -599,7 +655,10 @@ def resolve_config(
         )
         or DEFAULT_FRONTIER_REASONING_EFFORT
     )
-    openhands_reasoning_effort(frontier_reasoning_effort, frontier_model)
+    frontier_reasoning_effort = openhands_reasoning_effort(
+        frontier_reasoning_effort,
+        frontier_model,
+    )
 
     smart_api_key_env = profile_api_key_env(
         smart_model,
@@ -828,15 +887,9 @@ def openai_responses_configuration(
         "responses_use_previous_response_id": True,
         "responses_compact_threshold": 200_000,
     }
-    if reasoning_effort == "ultra":
-        openhands_reasoning_effort(reasoning_effort, model)
+    if reasoning := _openai_pro_reasoning(model, reasoning_effort):
         configuration["litellm_extra_body"] = {
-            "reasoning": {
-                "effort": "max",
-                "mode": "pro",
-                "summary": "auto",
-                "context": "all_turns",
-            }
+            "reasoning": reasoning,
         }
     return configuration
 
@@ -1189,7 +1242,12 @@ def run_openhands(
                     config.reasoning_effort, config.model
                 ),
                 "reasoning_mode": (
-                    "pro" if config.reasoning_effort == "ultra" else "standard"
+                    "pro"
+                    if _uses_openai_pro_mode(
+                        config.model,
+                        config.reasoning_effort,
+                    )
+                    else "standard"
                 ),
                 "agent": config.agent_name,
                 "enable_browser": config.enable_browser,
@@ -1243,9 +1301,8 @@ def run_openhands(
                 definition,
                 work_dir=config.workspace,
             )(llm)
-            openhands_reasoning_effort(
-                agent.llm.reasoning_effort,
-                agent.llm.model,
+            agent = agent.model_copy(
+                update={"llm": apply_reasoning_profile(agent.llm)}
             )
             agent = with_role_and_project_context(
                 agent,
@@ -1255,8 +1312,8 @@ def run_openhands(
             )
             agent = with_tool_concurrency(agent, MAX_PARALLEL_AGENTS)
             if (
-                llm.responses_use_previous_response_id
-                or llm.uses_anthropic_compaction()
+                agent.llm.responses_use_previous_response_id
+                or agent.llm.uses_anthropic_compaction()
             ):
                 agent = agent.model_copy(update={"condenser": None})
         else:
