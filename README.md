@@ -214,6 +214,14 @@ The structured result records its terminal status, exact result commit, W&B run 
 
 Trusted collaborator comments, submitted reviews, and inline review comments are delivered automatically to the relevant student; feedback from untrusted authors and unrecognized bots is ignored. `get_prs` can still retrieve the complete discussion explicitly. If the configured research base changes while an experiment is running, Senpai emits `research_base_changed` with the assignment's `required_base_sha` and the live `current_base_sha` without cancelling the assignment. When reviewing its terminal result, the advisor either requests a revision on the current base or records why that exact result remains valid with `accept_result_on_current_base`; `merge_experiment` still verifies the live SHA immediately before merging.
 
+Before each assignment or PR-feedback turn, the student controller authenticates
+and hydrates the exact assignment head and recorded baseline into
+`refs/senpai/assignment/` without resetting the checkout. A revision can
+atomically record an explicitly accepted live baseline SHA. Divergent local
+history and dirty work are preserved and reported once; an unchanged assignment
+reminder does not repeatedly wake the model, while changed refs, local work, or
+new feedback still do.
+
 `get_prs` returns complete PR bodies and discussions. Up to five PRs are returned in context by default; larger selections become a Markdown artifact outside the target checkout so long histories do not pollute the main conversation.
 
 ## Long-running training and monitoring
