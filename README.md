@@ -115,7 +115,7 @@ smart_reasoning_effort: xhigh
 fast_model: openai/gpt-5.6-luna
 fast_reasoning_effort: high
 frontier_model: openai/gpt-5.6-sol
-frontier_reasoning_effort: ultra
+frontier_reasoning_effort: max
 
 pvc_claim_name: your-existing-pvc
 pvc_mount_path: /mnt/data
@@ -255,8 +255,8 @@ child runs in a fresh OpenHands conversation and separate process group.
 | [Bash Runner](.agents/agents/bash-runner.md) | Tests, builds, linters, dependency commands, Git inspection, and noisy CLI work. It returns counts and actionable failures rather than raw logs. | `fast`. |
 
 The model tier is independent of the agent specialization. With the default
-`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at the `ultra`
-profile, sent to the Responses API as `max` effort with `reasoning.mode: pro`
+`agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at `max`, sent
+to the Responses API with `reasoning.mode: pro`
 with the general-purpose terminal and code-editing toolset. Pair `frontier`
 with `agent=search` when the hard task is external or publication research.
 
