@@ -17,7 +17,7 @@ from senpai_agent.delegation import (
     DelegateAgentObservation,
     DelegateAgentTool,
 )
-from senpai_agent.github_tools import SubmitExperimentResultAction
+from senpai_agent.github.tools import SubmitExperimentResultAction
 from senpai_agent.tools import (
     MonitorTrainingAction,
     TrainingResultObservation,

@@ -2,7 +2,7 @@ from typing import cast
 
 import pytest
 
-from senpai_agent.github_workflow import (
+from senpai_agent.github.workflow import (
     PullHeadMismatchError,
     ReconciliationError,
     StaleAssignmentRevisionError,

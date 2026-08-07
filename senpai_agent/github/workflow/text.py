@@ -3,7 +3,7 @@
 import re
 from typing import Literal
 
-from senpai_agent.github_workflow.errors import WorkflowPreconditionError
+from senpai_agent.github.workflow.errors import WorkflowPreconditionError
 from senpai_agent.models import AssignmentRecord, render_assignment_marker
 
 

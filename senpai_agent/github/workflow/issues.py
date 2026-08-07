@@ -1,9 +1,9 @@
 """Reply exactly once to a trusted human issue message."""
 
-from senpai_agent.github_workflow.errors import WorkflowPreconditionError
-from senpai_agent.github_workflow.responses import MutationResult
-from senpai_agent.github_workflow.text import marker_body
-from senpai_agent.github_workflow.validation import (
+from senpai_agent.github.workflow.errors import WorkflowPreconditionError
+from senpai_agent.github.workflow.responses import MutationResult
+from senpai_agent.github.workflow.text import marker_body
+from senpai_agent.github.workflow.validation import (
     positive_message_id,
     positive_number,
     validate_labels,

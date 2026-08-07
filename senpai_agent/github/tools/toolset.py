@@ -9,7 +9,7 @@ from pathlib import Path
 from openhands.sdk.tool import ToolDefinition
 
 from senpai_agent.github import PRRetrievalResult, get_prs
-from senpai_agent.github_workflow import GitHubWorkflow
+from senpai_agent.github.workflow import GitHubWorkflow
 
 from .definitions import (
     AcceptResultOnCurrentBaseTool,

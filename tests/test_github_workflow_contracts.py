@@ -6,7 +6,7 @@ from urllib.error import URLError
 import pytest
 from pydantic import SecretStr
 
-from senpai_agent.github_workflow import (
+from senpai_agent.github.workflow import (
     GitHubAPIError,
     GitHubTransportError,
     GitHubWorkflow,
@@ -24,16 +24,23 @@ from github_workflow_support import (
 )
 
 
-def test_github_modules_stay_small_and_domain_focused():
+def test_github_code_uses_one_small_module_tree():
     agent_package = Path(__file__).parents[1] / "senpai_agent"
+    modules = [
+        *(agent_package / "github").rglob("*.py"),
+        agent_package / "git_workflow.py",
+    ]
     oversized = {
         str(path.relative_to(agent_package)): lines
-        for package_name in ("github_tools", "github_workflow")
-        for path in (agent_package / package_name).rglob("*.py")
+        for path in modules
         if (lines := len(path.read_text().splitlines())) > 300
     }
+    stray_github_paths = sorted(
+        path.name for path in agent_package.glob("github_*")
+    )
 
     assert oversized == {}
+    assert stray_github_paths == []
 
 
 def test_pull_request_returns_an_immutable_typed_snapshot():

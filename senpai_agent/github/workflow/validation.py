@@ -1,13 +1,13 @@
 """Workflow invariants shared by GitHub operations."""
 
-from senpai_agent.github_workflow.errors import (
+from senpai_agent.github.workflow.errors import (
     PullHeadMismatchError,
     ReconciliationError,
     StaleAssignmentRevisionError,
     StaleResearchBaseError,
     WorkflowPreconditionError,
 )
-from senpai_agent.github_workflow.responses import (
+from senpai_agent.github.workflow.responses import (
     PullRequestSnapshot,
     ResultComment,
 )

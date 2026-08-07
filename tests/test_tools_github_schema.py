@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from senpai_agent.github_tools import (
+from senpai_agent.github.tools import (
     AcceptResultOnCurrentBaseTool,
     CloseExperimentTool,
     CreateAssignmentTool,

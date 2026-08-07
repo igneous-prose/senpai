@@ -7,7 +7,7 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError
 
-from senpai_agent.github_workflow.errors import ReconciliationError
+from senpai_agent.github.workflow.errors import ReconciliationError
 from senpai_agent.models import AssignmentRecord, Contract, ExperimentResult
 
 

@@ -7,9 +7,9 @@ from openhands.sdk.tool import Tool, resolve_tool
 from pydantic import SecretStr
 
 from github_workflow_support import FakeGitHub, pull_request, workflow
-from senpai_agent import github_tools as github_tools_module
+from senpai_agent.github import tools as github_tools_module
 from senpai_agent.github import PRManifestEntry, PRRetrievalResult
-from senpai_agent.github_tools import (
+from senpai_agent.github.tools import (
     GetPRsAction,
     GetPRsTool,
     GitHubToolRuntime,
@@ -18,7 +18,7 @@ from senpai_agent.github_tools import (
     clear_github_credentials,
     configure_github_credentials,
 )
-from senpai_agent.github_workflow import MutationResult
+from senpai_agent.github.workflow import MutationResult
 from senpai_agent.tools import register_senpai_tools
 
 

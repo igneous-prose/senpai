@@ -2,13 +2,13 @@
 
 from typing import Literal
 
-from senpai_agent.github_workflow.errors import (
+from senpai_agent.github.workflow.errors import (
     ReconciliationError,
     WorkflowPreconditionError,
 )
-from senpai_agent.github_workflow.responses import MutationResult
-from senpai_agent.github_workflow.text import marker_body
-from senpai_agent.github_workflow.validation import (
+from senpai_agent.github.workflow.responses import MutationResult
+from senpai_agent.github.workflow.text import marker_body
+from senpai_agent.github.workflow.validation import (
     require_assignment_result,
     require_assignment_snapshot,
     require_current_revision,

@@ -2,7 +2,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from senpai_agent.github_workflow import (
+from senpai_agent.github.workflow import (
     ReconciliationError,
     StaleAssignmentRevisionError,
     StaleResearchBaseError,

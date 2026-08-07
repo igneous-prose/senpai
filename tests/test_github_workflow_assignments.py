@@ -3,7 +3,7 @@ from threading import Event
 
 import pytest
 
-from senpai_agent.github_workflow import (
+from senpai_agent.github.workflow import (
     MutationResult,
     ReconciliationError,
     WorkflowPreconditionError,

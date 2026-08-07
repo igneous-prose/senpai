@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from senpai_agent.github_workflow import WorkflowPreconditionError
+from senpai_agent.github.workflow import WorkflowPreconditionError
 from github_workflow_support import (
     REPO,
     FakeGitHub,

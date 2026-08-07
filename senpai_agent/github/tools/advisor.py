@@ -28,7 +28,7 @@ from .runtime import GitHubToolRuntime
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
-    from senpai_agent.github_workflow import GitHubWorkflow
+    from senpai_agent.github.workflow import GitHubWorkflow
 
 
 class CreateAssignmentExecutor(

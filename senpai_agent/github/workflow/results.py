@@ -1,16 +1,16 @@
 """Publish experiment results and recover stale concurrent submissions."""
 
-from senpai_agent.github_workflow.errors import (
+from senpai_agent.github.workflow.errors import (
     ReconciliationError,
     StaleAssignmentRevisionError,
     WorkflowPreconditionError,
 )
-from senpai_agent.github_workflow.responses import (
+from senpai_agent.github.workflow.responses import (
     MutationResult,
     PullRequestSnapshot,
     SubmitResultPreflight,
 )
-from senpai_agent.github_workflow.validation import (
+from senpai_agent.github.workflow.validation import (
     require_assignment_result,
     require_exact_labels,
     require_open,

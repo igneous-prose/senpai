@@ -1,18 +1,18 @@
 """Revise assignments and send guidance within a revision."""
 
-from senpai_agent.github_workflow.errors import (
+from senpai_agent.github.workflow.errors import (
     ReconciliationError,
     StaleAssignmentRevisionError,
     StaleResearchBaseError,
     WorkflowPreconditionError,
 )
-from senpai_agent.github_workflow.responses import MutationResult
-from senpai_agent.github_workflow.text import (
+from senpai_agent.github.workflow.responses import MutationResult
+from senpai_agent.github.workflow.text import (
     marker_body,
     replace_assignment_marker,
     role_prefixed_comment,
 )
-from senpai_agent.github_workflow.validation import (
+from senpai_agent.github.workflow.validation import (
     require_active_assignment_routing,
     require_current_revision,
     require_exact_labels,

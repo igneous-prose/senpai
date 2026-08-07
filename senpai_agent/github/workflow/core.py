@@ -10,12 +10,12 @@ from urllib.parse import quote
 
 from pydantic import SecretStr
 
-from senpai_agent.github_workflow.errors import (
+from senpai_agent.github.workflow.errors import (
     GitHubAPIError,
     GitHubTransportError,
     ReconciliationError,
 )
-from senpai_agent.github_workflow.responses import (
+from senpai_agent.github.workflow.responses import (
     DraftMutationResponse,
     GitRefResponse,
     HttpResponse,
@@ -24,8 +24,8 @@ from senpai_agent.github_workflow.responses import (
     PullRequestSnapshot,
     validated_response,
 )
-from senpai_agent.github_workflow.transport import UrllibTransport
-from senpai_agent.github_workflow.validation import (
+from senpai_agent.github.workflow.transport import UrllibTransport
+from senpai_agent.github.workflow.validation import (
     positive_number,
     require_assignment_identity,
     require_head,

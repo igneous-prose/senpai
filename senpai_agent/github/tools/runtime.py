@@ -14,7 +14,7 @@ from openhands.sdk.tool import ToolAnnotations, ToolExecutor
 from pydantic import SecretStr
 
 from senpai_agent import git_workflow
-from senpai_agent.github_workflow import (
+from senpai_agent.github.workflow import (
     GitHubWorkflow,
     MutationResult,
     PullHeadMismatchError,

@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import SecretStr
 
-from senpai_agent.github_workflow import (
+from senpai_agent.github.workflow import (
     GitHubTransportError,
     GitHubWorkflow,
     HttpResponse,

@@ -1,6 +1,6 @@
 from pydantic import SecretStr
 
-from senpai_agent.github_mailbox import GitHubMailbox
+from senpai_agent.github.mailbox import GitHubMailbox
 
 
 def issue(

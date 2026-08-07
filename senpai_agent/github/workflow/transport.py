@@ -4,8 +4,8 @@ import json
 from urllib import request
 from urllib.error import HTTPError, URLError
 
-from senpai_agent.github_workflow.errors import GitHubTransportError
-from senpai_agent.github_workflow.responses import HttpResponse
+from senpai_agent.github.workflow.errors import GitHubTransportError
+from senpai_agent.github.workflow.responses import HttpResponse
 
 
 class UrllibTransport:

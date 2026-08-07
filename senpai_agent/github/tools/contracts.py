@@ -10,7 +10,7 @@ from openhands.sdk.llm import TextContent
 from openhands.sdk.tool import Action, Observation
 from pydantic import BaseModel, ConfigDict, Field
 
-from senpai_agent.github_workflow import MutationResult
+from senpai_agent.github.workflow import MutationResult
 from senpai_agent.models import ExperimentResult
 
 

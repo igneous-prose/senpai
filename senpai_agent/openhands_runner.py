@@ -71,7 +71,7 @@ from simple_parsing import ArgumentParser, field
 from simple_parsing.helpers import flag
 
 from senpai_agent.agent_markdown import read_agent_markdown, strip_spdx_header
-from senpai_agent.github_tools import (
+from senpai_agent.github.tools import (
     clear_github_credentials,
     configure_github_credentials,
 )
