@@ -395,19 +395,20 @@ spawn_agents(
   tasks: [{
     key: str | null = null,
     task: str,
-    agent: general-purpose | explore | search | bash-runner = general-purpose,
+    agent: general-purpose | explore | search_general_web |
+           search_research_publications | bash-runner = general-purpose,
     model: fast | smart | frontier = smart,
     include_context: bool = false,
-    search_mode: general-web | research-publications | null = null,
   }],
 ) -> {tasks: [{task_id, key, status, agent, model, result?, error?}]}
 
 await_agents(
   task_ids: [str],
-  join: all | first | quorum = all,
+  join: all | first | quorum | change = all,
   quorum: int | null = null,
   timeout_seconds: float,
-) -> {join, satisfied, timed_out, tasks: [{task_id, key, status, agent, model, result?, error?}]}
+) -> {join, satisfied, timed_out, changed_task_ids, waited_seconds, guidance,
+      tasks: [{task_id, key, status, agent, model, result?, error?}]}
 
 agent_status(
   task_ids: [str] | null = null,
@@ -430,10 +431,14 @@ it never launches duplicate children. Reusing a batch key with a different
 task specification fails clearly.
 
 `await_agents` is the only blocking delegation operation. `all` waits for every
-selected task to reach a terminal state, `first` waits for any one, and
-`quorum` waits for the requested number. Its timeout is required and capped at
-300 seconds; expiry returns `satisfied=false` plus the current records without
-cancelling unfinished work. `agent_status` is a non-blocking snapshot. With no
+selected task to reach a terminal state, `first` waits for any one, `quorum`
+waits for the requested number, and `change` returns when any selected task
+changes state or immediately when one has an uncollected terminal result. Its
+timeout is required and capped at 300 seconds; expiry returns
+`satisfied=false`, current records, elapsed time, and next-step guidance without
+cancelling unfinished work. Any terminal results included in that response are
+marked collected so a later event does not repeat them. `agent_status` is a
+non-blocking snapshot. With no
 task IDs, it returns up to eight direct tasks that are active or have an
 uncollected terminal result; explicit task IDs can retrieve older history.
 `cancel_agents` terminates selected pending or running process groups and
@@ -458,7 +463,7 @@ This makes chains such as Explore -> Explore impossible without constraining a
 later research phase to the first batch's lifetime budget.
 
 The tree inherits one absolute root-turn deadline. Each task also has a tier
-runtime cap: 300 seconds for `fast`, 600 for `smart`, and 1,500 for `frontier`.
+runtime cap: 600 seconds for `fast`, 1,800 for `smart`, and 3,600 for `frontier`.
 The effective deadline is the earlier of that cap and the inherited root
 deadline. Reaching it interrupts the complete process group and records a
 terminal timeout; no descendant survives the tree deadline.
@@ -479,16 +484,17 @@ combinations fail clearly. The built-in file agents inherit the selected
 profile's effort.
 
 `explore` searches code, data, PR artifacts, and durable history and returns
-concise conclusions with paths and line numbers. `search` requires exactly one
-mode: `general-web` uses Exa's general index with agent-oriented defaults,
-while `research-publications` uses Exa's publication index and primary papers.
+concise conclusions with paths and line numbers. `search_general_web` uses
+Exa's general index with agent-oriented defaults, while
+`search_research_publications` uses Exa's publication index and primary papers.
 `general-purpose` handles mixed terminal investigation, code editing, task
 tracking, tests, and one controlled level of leaf delegation. It is the default
 frontier agent, so a frontier task is generalist unless the caller deliberately
-selects `explore`, `search`, or `bash-runner`. `bash-runner` has only the
-terminal and runs tests, builds, linters, formatters, dependency commands, Git
-inspection, or system checks. It normally uses the fast model and returns
-counts and actionable failures rather than raw command output.
+selects `explore`, one of the explicit search forms, or `bash-runner`.
+`bash-runner` has only the terminal and runs tests, builds, linters, formatters,
+dependency commands, Git inspection, or system checks. It normally uses the
+fast model and returns counts and actionable failures rather than raw command
+output.
 
 With `include_context=false`, the child receives the merged system prompt and
 task and may search the parent's durable history path. With
