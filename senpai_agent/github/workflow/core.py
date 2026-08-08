@@ -222,15 +222,27 @@ class WorkflowCore:
                 "labels cannot be both added and removed: "
                 + ", ".join(sorted(overlap))
             )
-        desired = tuple(sorted((set(snapshot.labels) | add) - remove))
-        if snapshot.labels == desired:
+        current = set(snapshot.labels)
+        to_add = add - current
+        to_remove = remove & current
+        desired = tuple(sorted((current | add) - remove))
+        if not to_add and not to_remove:
             return False, desired
-        self._mutate(
-            "PUT",
-            f"/repos/{self._repo}/issues/{number}/labels",
-            json_body={"labels": list(desired)},
-            expected_statuses={200},
-        )
+        labels_path = f"/repos/{self._repo}/issues/{number}/labels"
+        if to_add:
+            self._mutate(
+                "POST",
+                labels_path,
+                json_body={"labels": sorted(to_add)},
+                expected_statuses={200},
+            )
+        for label in sorted(to_remove):
+            self._mutate(
+                "DELETE",
+                f"{labels_path}/{quote(label, safe='')}",
+                json_body=None,
+                expected_statuses={200, 404},
+            )
         return True, desired
 
     def _request(

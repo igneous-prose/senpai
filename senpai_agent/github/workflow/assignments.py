@@ -12,7 +12,7 @@ from senpai_agent.github.workflow.validation import (
     require_assignment_result,
     require_assignment_snapshot,
     require_current_revision,
-    require_exact_labels,
+    require_label_update,
     require_open,
 )
 from senpai_agent.models import AssignmentRecord, render_assignment_marker
@@ -124,7 +124,11 @@ class AssignmentMixin:
             raise ReconciliationError(
                 "assignment pull request content did not converge"
             )
-        require_exact_labels(after, desired_labels)
+        require_label_update(
+            after,
+            required=desired_labels,
+            forbidden=remove,
+        )
         return MutationResult(
             changed=created or content_changed or draft_changed or labels_changed,
             resource_url=after.url,
@@ -223,7 +227,7 @@ class AssignmentMixin:
             raise ReconciliationError(
                 "GitHub did not reach the requested assignment draft state"
             )
-        require_exact_labels(after, desired)
+        require_label_update(after, required=desired, forbidden=remove)
         return MutationResult(
             changed=draft_changed or labels_changed,
             resource_url=after.url,

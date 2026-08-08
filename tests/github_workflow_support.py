@@ -178,14 +178,14 @@ class FakeGitHub:
         comments: list[dict[str, object]] | None = None,
         issue: dict[str, object] | None = None,
         comment_page_size: int = 100,
-        ignore_label_put: bool = False,
+        ignore_label_mutations: bool = False,
         branch_heads: dict[str, str] | None = None,
     ):
         self.pr = pr
         self.comments = list(comments or [])
         self.issue = issue
         self.comment_page_size = comment_page_size
-        self.ignore_label_put = ignore_label_put
+        self.ignore_label_mutations = ignore_label_mutations
         self.branch_heads = branch_heads or {str(pr["base_ref"]): BASE_SHA}
         self.requests: list[tuple[str, str, object | None, dict[str, str]]] = []
 
@@ -296,11 +296,24 @@ class FakeGitHub:
             existing["body"] = body
             return HttpResponse(200, existing)
 
-        if method == "PUT" and path == labels_path:
-            labels = set(cast(dict[str, list[str]], json_body)["labels"])
-            if not self.ignore_label_put:
-                self.pr["labels"] = labels
-            return HttpResponse(200, [{"name": label} for label in sorted(labels)])
+        if method == "POST" and path == labels_path:
+            labels = cast(set[str], self.pr["labels"])
+            if not self.ignore_label_mutations:
+                labels.update(cast(dict[str, list[str]], json_body)["labels"])
+            return HttpResponse(
+                200,
+                [{"name": label} for label in sorted(labels)],
+            )
+
+        label_prefix = f"{labels_path}/"
+        if method == "DELETE" and path.startswith(label_prefix):
+            labels = cast(set[str], self.pr["labels"])
+            if not self.ignore_label_mutations:
+                labels.discard(unquote(path.removeprefix(label_prefix)))
+            return HttpResponse(
+                200,
+                [{"name": label} for label in sorted(labels)],
+            )
 
         if method == "POST" and path == "/graphql":
             query = cast(str, cast(dict[str, object], json_body)["query"])

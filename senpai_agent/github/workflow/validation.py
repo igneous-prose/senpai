@@ -278,12 +278,17 @@ def require_labels(
         )
 
 
-def require_exact_labels(
+def require_label_update(
     snapshot: PullRequestSnapshot,
-    desired: tuple[str, ...],
+    *,
+    required: tuple[str, ...],
+    forbidden: set[str],
 ) -> None:
-    if snapshot.labels != desired:
-        raise ReconciliationError("GitHub did not reach the requested label set")
+    labels = set(snapshot.labels)
+    missing = set(required) - labels
+    retained = forbidden & labels
+    if missing or retained:
+        raise ReconciliationError("GitHub did not reach the requested label state")
 
 
 def validate_labels(labels: set[str]) -> None:

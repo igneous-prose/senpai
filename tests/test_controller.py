@@ -42,8 +42,17 @@ class Turns:
         self.outcomes = list(outcomes)
         self.calls = []
 
-    def run(self, prompt, *, conversation_id, event_keys):
-        self.calls.append((prompt, conversation_id, event_keys))
+    def run(
+        self,
+        prompt,
+        *,
+        conversation_id,
+        event_keys,
+        visible_event_keys=frozenset(),
+    ):
+        self.calls.append(
+            (prompt, conversation_id, event_keys, visible_event_keys)
+        )
         outcome = self.outcomes.pop(0) if self.outcomes else TurnResult(exit_code=0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -92,7 +101,9 @@ def test_first_turn_combines_programme_role_template_and_runtime_identity(
     instructions.mkdir(parents=True)
     (workspace / "program.md").write_text(HTML_HEADER + "Minimize test error.")
     (instructions / "prompt-student.md").write_text(
-        HTML_HEADER + "Work as $STUDENT_NAME on $ADVISOR_BRANCH."
+        HTML_HEADER
+        + "Work as $STUDENT_NAME on $ADVISOR_BRANCH in $WANDB_PROJECT. "
+        + "Never expose $WANDB_API_KEY."
     )
 
     prompt = _full_prompt(
@@ -103,6 +114,7 @@ def test_first_turn_combines_programme_role_template_and_runtime_identity(
             "ADVISOR_BRANCH": "research",
             "WANDB_ENTITY": "acme",
             "WANDB_PROJECT": "cfd",
+            "WANDB_API_KEY": "live-secret",
             "STUDENT_NAME": "fern",
             "EXTRA_INSTRUCTIONS_B64": b64encode(
                 (HTML_HEADER + "Use typed tools.").encode()
@@ -111,7 +123,9 @@ def test_first_turn_combines_programme_role_template_and_runtime_identity(
     )
 
     assert "# Research programme\n\nMinimize test error." in prompt
-    assert "# Student task\n\nWork as fern on research." in prompt
+    assert "# Student task\n\nWork as fern on research in cfd." in prompt
+    assert "$WANDB_API_KEY" in prompt
+    assert "live-secret" not in prompt
     assert "# Additional launch instructions\n\nUse typed tools." in prompt
     assert "Role: student; repository: acme/widgets" in prompt
     assert "SPDX-" not in prompt
@@ -182,6 +196,11 @@ def test_post_turn_poll_at_reminder_boundary_only_delivers_new_state(
         frozenset({original.dedupe_key}),
         frozenset({changed.dedupe_key}),
         frozenset({original.dedupe_key}),
+    ]
+    assert [call[3] for call in turns.calls] == [
+        frozenset({original.dedupe_key}),
+        frozenset({original.dedupe_key, changed.dedupe_key}),
+        frozenset({original.dedupe_key, changed.dedupe_key}),
     ]
 
 
@@ -257,6 +276,67 @@ def test_still_actionable_event_is_redelivered_after_one_poll_interval(
         frozenset({event.dedupe_key}),
         frozenset({event.dedupe_key}),
     ]
+
+
+def test_older_visible_event_does_not_lose_its_reminder_to_another_turn(
+    monkeypatch,
+):
+    older = review_event(17)
+    newer = review_event(18)
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+
+    class PersistentMailbox(Mailbox):
+        def poll(self):
+            self.calls += 1
+            return (older,) if self.calls <= 2 else (older, newer)
+
+    class WatcherAwareTurns(Turns):
+        def run(
+            self,
+            prompt,
+            *,
+            conversation_id,
+            event_keys,
+            visible_event_keys=frozenset(),
+        ):
+            result = super().run(
+                prompt,
+                conversation_id=conversation_id,
+                event_keys=event_keys,
+                visible_event_keys=visible_event_keys,
+            )
+            if (
+                event_keys == frozenset({newer.dedupe_key})
+                and older.dedupe_key not in visible_event_keys
+            ):
+                return TurnResult(
+                    exit_code=result.exit_code,
+                    delivered_event_keys=frozenset({older.dedupe_key}),
+                )
+            return result
+
+    turns = WatcherAwareTurns()
+    Controller(
+        role="advisor",
+        mailbox=PersistentMailbox([]),
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=20,
+        jitter_seconds=0,
+        event_reminder_seconds=30,
+    ).run(max_cycles=3)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({older.dedupe_key}),
+        frozenset({newer.dedupe_key}),
+        frozenset({older.dedupe_key}),
+    ]
+    assert turns.calls[1][3] == frozenset(
+        {older.dedupe_key, newer.dedupe_key}
+    )
 
 
 def test_fast_poll_defaults_to_ten_minute_level_trigger_reminders(monkeypatch):

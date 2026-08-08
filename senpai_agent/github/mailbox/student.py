@@ -60,15 +60,19 @@ def student_events(
 ) -> tuple[ControllerEvent, ...]:
     assert mailbox.student_name is not None
     assignment_label = f"student:{mailbox.student_name}"
-    assigned = [
+    relevant = [
         pull
         for pull in pulls
         if assignment_label in label_names(pull)
-        and "status:wip" in label_names(pull)
+        and {"status:wip", "status:review"} & label_names(pull)
     ]
-    if len(assigned) > 1:
-        numbers = sorted(int(pull["number"]) for pull in assigned)
-        return (
+    wip = [pull for pull in relevant if "status:wip" in label_names(pull)]
+
+    events: list[ControllerEvent] = []
+    duplicate_wip = len(wip) > 1
+    if duplicate_wip:
+        numbers = sorted(int(pull["number"]) for pull in wip)
+        events.append(
             ControllerEvent(
                 kind="duplicate_assignment",
                 dedupe_key=(
@@ -79,20 +83,30 @@ def student_events(
                     "student": mailbox.student_name,
                     "pull_requests": numbers,
                 },
-            ),
-            *human_issue_events(mailbox, issues),
+            )
         )
 
-    events: list[ControllerEvent] = []
-    if assigned:
-        pull = assigned[0]
+    for pull in relevant:
         try:
+            student_labels = {
+                label
+                for label in label_names(pull)
+                if label.startswith("student:")
+            }
+            if student_labels != {assignment_label}:
+                raise ValueError(
+                    "assigned PR must contain exactly one student label"
+                )
             markers = parse_assignment_markers(str(pull.get("body") or ""))
             if len(markers) != 1:
                 raise ValueError(
                     "assigned PR must contain exactly one Senpai assignment marker"
                 )
             assignment = markers[0]
+            if assignment.student != mailbox.student_name:
+                raise ValueError(
+                    "assignment marker student does not match the student label"
+                )
             _validate_assignment_route(
                 pull,
                 assignment,
@@ -112,33 +126,38 @@ def student_events(
                     },
                 )
             )
-        else:
-            feedback = student_pr_feedback_events(mailbox, pull, assignment)
-            prior_revision_pending = any(
-                event.payload["assignment_id"] != assignment.assignment_id
-                or event.payload["revision_id"] != assignment.revision_id
-                for event in feedback
-            )
-            if "status:wip" in label_names(pull) and not prior_revision_pending:
-                events.append(
-                    ControllerEvent(
-                        kind="student_assignment",
-                        dedupe_key=(
-                            f"student_assignment:{assignment.assignment_id}:"
-                            f"{assignment.revision_id}:"
-                            f"{assignment.base_ref}:{assignment.head_ref}:"
-                            f"{assignment.base_sha}:"
-                            f"{object_value(pull['head'])['sha']!s}"
-                        ),
-                        payload={
-                            **pull_payload(pull),
-                            "assignment_id": assignment.assignment_id,
-                            "revision_id": assignment.revision_id,
-                            "base_ref": assignment.base_ref,
-                            "base_sha": assignment.base_sha,
-                        },
-                    )
+            continue
+
+        feedback = student_pr_feedback_events(mailbox, pull, assignment)
+        prior_revision_pending = any(
+            event.payload["assignment_id"] != assignment.assignment_id
+            or event.payload["revision_id"] != assignment.revision_id
+            for event in feedback
+        )
+        if (
+            "status:wip" in label_names(pull)
+            and not duplicate_wip
+            and not prior_revision_pending
+        ):
+            events.append(
+                ControllerEvent(
+                    kind="student_assignment",
+                    dedupe_key=(
+                        f"student_assignment:{assignment.assignment_id}:"
+                        f"{assignment.revision_id}:"
+                        f"{assignment.base_ref}:{assignment.head_ref}:"
+                        f"{assignment.base_sha}:"
+                        f"{object_value(pull['head'])['sha']!s}"
+                    ),
+                    payload={
+                        **pull_payload(pull),
+                        "assignment_id": assignment.assignment_id,
+                        "revision_id": assignment.revision_id,
+                        "base_ref": assignment.base_ref,
+                        "base_sha": assignment.base_sha,
+                    },
                 )
-            events.extend(feedback)
+            )
+        events.extend(feedback)
     events.extend(human_issue_events(mailbox, issues))
     return tuple(events)

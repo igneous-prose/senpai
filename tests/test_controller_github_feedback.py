@@ -121,8 +121,17 @@ class Turns:
         self.exit_codes = iter(exit_codes)
         self.calls = []
 
-    def run(self, prompt, *, conversation_id, event_keys):
-        self.calls.append((prompt, conversation_id, event_keys))
+    def run(
+        self,
+        prompt,
+        *,
+        conversation_id,
+        event_keys,
+        visible_event_keys=frozenset(),
+    ):
+        self.calls.append(
+            (prompt, conversation_id, event_keys, visible_event_keys)
+        )
         return TurnResult(exit_code=next(self.exit_codes, 0))
 
 
@@ -270,7 +279,7 @@ def test_trusted_feedback_from_each_github_surface_is_ordered_and_routable(
     assert events[2].payload["line"] == 42
 
 
-def test_review_ready_pull_does_not_route_feedback_to_the_student(monkeypatch):
+def test_review_ready_pull_routes_feedback_to_its_assignment_conversation(monkeypatch):
     mailbox = student_mailbox(
         monkeypatch,
         feedback_responses(
@@ -279,7 +288,69 @@ def test_review_ready_pull_does_not_route_feedback_to_the_student(monkeypatch):
         status="status:review",
     )
 
-    assert mailbox.poll() == ()
+    events = mailbox.poll()
+
+    assert [event.kind for event in events] == ["student_pr_feedback"]
+    assert events[0].payload["assignment_id"] == "assignment-17"
+    assert events[0].payload["revision_id"] == "revision-2"
+
+
+def test_student_does_not_launch_a_doubly_labeled_assignment(monkeypatch):
+    mailbox = student_mailbox(monkeypatch, feedback_responses())
+    pull = mailbox._pulls()[0]
+    pull["labels"].append({"name": "student:student-2"})
+
+    events = mailbox.poll()
+
+    assert [event.kind for event in events] == ["malformed_assignment"]
+    assert "exactly one student label" in events[0].payload["error"]
+
+
+def test_student_does_not_launch_an_assignment_marked_for_another_student(
+    monkeypatch,
+):
+    mailbox = student_mailbox(monkeypatch, feedback_responses())
+    pull = mailbox._pulls()[0]
+    pull["body"] = render_assignment_marker(
+        AssignmentRecord(
+            repo="acme/widgets",
+            assignment_id="assignment-17",
+            revision_id="revision-2",
+            student="student-2",
+            base_ref="research",
+            base_sha="b" * 40,
+            head_ref="student/candidate",
+            head_sha="a" * 40,
+        )
+    )
+
+    events = mailbox.poll()
+
+    assert [event.kind for event in events] == ["malformed_assignment"]
+    assert "marker student does not match" in events[0].payload["error"]
+
+
+def test_inline_comment_without_a_review_id_does_not_poison_feedback_poll(
+    monkeypatch,
+):
+    mailbox = student_mailbox(
+        monkeypatch,
+        feedback_responses(
+            inline_comments=[
+                feedback(
+                    301,
+                    "Detached inline comment.",
+                    pull_request_review_id=None,
+                    path="train.py",
+                    line=42,
+                )
+            ]
+        ),
+    )
+
+    events = mailbox.poll()
+
+    assert [event.kind for event in events] == ["student_assignment"]
 
 
 def test_untrusted_people_bots_and_automation_comments_are_not_feedback(
@@ -380,7 +451,7 @@ def test_feedback_stays_pending_and_bound_until_a_student_turn_succeeds(
     run_student_controller(tmp_path, revised, turns)
     assert [
         next(iter(event_keys)).split(":", 1)[0]
-        for _, _, event_keys in turns.calls
+        for _, _, event_keys, _ in turns.calls
     ] == ["student_pr_feedback", "student_assignment"]
 
     restarted = student_mailbox(
@@ -421,7 +492,7 @@ def test_controller_drains_feedback_batches_oldest_first_after_success(
             for key in event_keys
             if key.startswith("student_pr_feedback:")
         )
-        for _, _, event_keys in turns.calls
+        for _, _, event_keys, _ in turns.calls
     ]
     assert feedback_batches == [[140, 141], [142, 143], [144]]
     assert not any(event.kind == "student_pr_feedback" for event in mailbox.poll())

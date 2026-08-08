@@ -52,6 +52,7 @@ def test_github_tools_package_preserves_public_contract_types():
     assert expected <= set(github_tools_module.__all__)
     assert expected <= set(dir(github_tools_module))
 
+
 @pytest.mark.parametrize(
     ("role", "expected"),
     [("advisor", ADVISOR_GITHUB_TOOLS), ("student", STUDENT_GITHUB_TOOLS)],
@@ -142,6 +143,7 @@ def test_both_roles_can_respond_to_a_verified_human_message(
                     if role == "advisor"
                     else {"team", "student:student-one"}
                 ),
+                "responder": "advisor" if role == "advisor" else "student-one",
             },
         )
     ]

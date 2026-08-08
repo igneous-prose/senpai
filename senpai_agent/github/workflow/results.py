@@ -12,7 +12,7 @@ from senpai_agent.github.workflow.responses import (
 )
 from senpai_agent.github.workflow.validation import (
     require_assignment_result,
-    require_exact_labels,
+    require_label_update,
     require_open,
     require_result_identity,
 )
@@ -105,7 +105,11 @@ class ResultMixin:
             raise ReconciliationError(
                 "GitHub did not mark the pull request ready for review"
             )
-        require_exact_labels(after, desired_labels)
+        require_label_update(
+            after,
+            required=desired_labels,
+            forbidden={"status:wip"},
+        )
         return MutationResult(
             changed=result_changed or ready_changed or labels_changed,
             resource_url=after.url,

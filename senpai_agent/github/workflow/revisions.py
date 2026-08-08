@@ -15,7 +15,7 @@ from senpai_agent.github.workflow.text import (
 from senpai_agent.github.workflow.validation import (
     require_active_assignment_routing,
     require_current_revision,
-    require_exact_labels,
+    require_label_update,
     require_open,
 )
 from senpai_agent.models import (
@@ -150,7 +150,11 @@ class RevisionMixin:
             raise ReconciliationError(
                 "GitHub did not convert the pull request to draft"
             )
-        require_exact_labels(after, desired_labels)
+        require_label_update(
+            after,
+            required=desired_labels,
+            forbidden={"status:review"},
+        )
         return MutationResult(
             changed=assignment_changed
             or marker_changed

@@ -1,5 +1,7 @@
 """Reply exactly once to a trusted human issue message."""
 
+from urllib.parse import quote
+
 from senpai_agent.github.workflow.errors import WorkflowPreconditionError
 from senpai_agent.github.workflow.responses import MutationResult
 from senpai_agent.github.workflow.text import marker_body
@@ -19,6 +21,7 @@ class HumanIssueMixin:
         *,
         human_message_id: int,
         audience_labels: set[str],
+        responder: str,
         response: str,
     ) -> MutationResult:
         """Reply once to one verified human-authored GitHub issue message."""
@@ -31,6 +34,15 @@ class HumanIssueMixin:
         validate_labels(audience_labels)
         if not audience_labels:
             raise ValueError("audience_labels must not be empty")
+        responder = responder.strip()
+        if self._role == "advisor":
+            if responder != "advisor":
+                raise ValueError("advisor responder must be 'advisor'")
+            responder_key = responder
+        else:
+            if not responder:
+                raise ValueError("student responder must not be empty")
+            responder_key = f"student:{quote(responder, safe='')}"
 
         issue = self._human_issue(number, audience_labels=audience_labels)
         source_author = self._human_message_author(
@@ -43,7 +55,9 @@ class HumanIssueMixin:
                 "human message must not be authored by the authenticated actor"
             )
 
-        marker = f"<!-- senpai-human-response:{human_message_id} -->"
+        marker = (
+            f"<!-- senpai-human-response:{responder_key}:{human_message_id} -->"
+        )
         comment_body = marker_body(marker, body)
         changed, verified = self._upsert_marker_comment(
             number,

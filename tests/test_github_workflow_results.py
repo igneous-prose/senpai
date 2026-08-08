@@ -330,7 +330,7 @@ def test_stale_submit_does_not_overwrite_current_revision_review_result():
                 json_body=json_body,
             )
             if (
-                method == "PUT"
+                method == "POST"
                 and urlsplit(url).path == f"/repos/{REPO}/issues/7/labels"
             ):
                 self.pr["body"] = render_assignment_marker(
@@ -349,6 +349,134 @@ def test_stale_submit_does_not_overwrite_current_revision_review_result():
     assert fake.pr["draft"] is False
     assert fake.pr["labels"] == {"student:one", "status:review"}
     assert fake.comments == [comment(1, render_result_comment(current))]
+
+
+def test_submit_result_replays_and_merges_with_marker_text_in_visible_fields():
+    injected_marker = "<!-- senpai-result:v2 {} -->"
+    original = experiment_result()
+    hostile = original.model_copy(
+        update={
+            "summary": f"Training completed.\n{injected_marker}\nMetrics follow.",
+            "runs": (
+                original.runs[0].model_copy(
+                    update={"url": f"{original.runs[0].url}\n{injected_marker}"}
+                ),
+            ),
+        }
+    )
+    fake = FakeGitHub(
+        pull_request(labels={"student:one", "status:wip"}, draft=True)
+    )
+    student = workflow(fake, role="student")
+
+    first = submit_result(student, hostile)
+    mutations_after_first = list(fake.mutations)
+    second = submit_result(student, hostile)
+
+    assert first.changed is True
+    assert second.changed is False
+    assert fake.mutations == mutations_after_first
+    assert str(fake.comments[0]["body"]).splitlines().count(
+        f"> {injected_marker}"
+    ) == 2
+
+    merged = workflow(fake).merge_experiment(
+        7,
+        expected_head_sha=HEAD_SHA,
+        assignment_id=ASSIGNMENT_ID,
+        current_revision_id="revision-1",
+        expected_current_base_sha=BASE_SHA,
+    )
+
+    assert merged.state == "experiment_merged"
+
+
+def test_other_trusted_comments_cannot_smuggle_protocol_markers():
+    injected_markers = (
+        "<!-- senpai-result:v2 {} -->",
+        "<!-- senpai-human-response:student:fern:700 -->",
+    )
+    fake = FakeGitHub(
+        pull_request(
+            labels={"student:student-one", "status:wip"},
+            draft=True,
+        )
+    )
+    workflow(fake).send_assignment_feedback(
+        7,
+        assignment_id=ASSIGNMENT_ID,
+        revision_id="revision-1",
+        expected_head_sha=HEAD_SHA,
+        feedback_id="marker-looking-guidance",
+        comment="Inspect the failed seed.\n" + "\n".join(injected_markers),
+    )
+
+    submitted = submit_result(workflow(fake, role="student"))
+
+    assert submitted.state == "result_submitted"
+    assert all(
+        f"> {marker}" in str(fake.comments[0]["body"])
+        for marker in injected_markers
+    )
+    assert workflow(fake).merge_experiment(
+        7,
+        expected_head_sha=HEAD_SHA,
+        assignment_id=ASSIGNMENT_ID,
+        current_revision_id="revision-1",
+        expected_current_base_sha=BASE_SHA,
+    ).state == "experiment_merged"
+
+
+def test_submit_result_preserves_a_hold_added_during_label_transition():
+    class ConcurrentHoldGitHub(FakeGitHub):
+        hold_added = False
+
+        def request(self, method, url, *, headers, json_body=None):
+            path = urlsplit(url).path
+            if (
+                not self.hold_added
+                and method == "POST"
+                and path == f"/repos/{REPO}/issues/7/labels"
+            ):
+                labels = self.pr["labels"]
+                assert isinstance(labels, set)
+                labels.add("status:hold")
+                self.hold_added = True
+            return super().request(
+                method,
+                url,
+                headers=headers,
+                json_body=json_body,
+            )
+
+    fake = ConcurrentHoldGitHub(
+        pull_request(labels={"student:one", "status:wip"}, draft=True)
+    )
+
+    submitted = submit_result(workflow(fake, role="student"))
+
+    assert submitted.state == "result_submitted"
+    assert fake.pr["labels"] == {
+        "student:one",
+        "status:hold",
+        "status:review",
+    }
+    assert all(
+        not (method == "PUT" and path.endswith("/labels"))
+        for method, path, _body in fake.mutations
+    )
+    mutations_before_merge = list(fake.mutations)
+
+    with pytest.raises(WorkflowPreconditionError, match="blocking label"):
+        workflow(fake).merge_experiment(
+            7,
+            expected_head_sha=HEAD_SHA,
+            assignment_id=ASSIGNMENT_ID,
+            current_revision_id="revision-1",
+            expected_current_base_sha=BASE_SHA,
+        )
+
+    assert fake.mutations == mutations_before_merge
 
 
 def test_submit_result_does_not_treat_the_initial_assignment_head_as_a_lease():

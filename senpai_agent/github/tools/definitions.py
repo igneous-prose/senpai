@@ -70,6 +70,7 @@ class RespondToHumanIssueExecutor(
             human_message_id=action.human_message_id,
             response=action.response,
             audience_labels=self.runtime.human_issue_audience(),
+            responder=self.runtime.human_issue_responder(),
         )
         return GitHubMutationObservation.from_result(result)
 

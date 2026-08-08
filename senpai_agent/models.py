@@ -361,6 +361,13 @@ def render_result_marker(result: ExperimentResult) -> str:
     return f"<!-- senpai-result:v1 {_marker_payload(result)} -->"
 
 
+def _quote_senpai_marker_lines(value: str) -> str:
+    return "\n".join(
+        f"> {line}" if line.startswith("<!-- senpai-") else line
+        for line in value.splitlines()
+    )
+
+
 def render_result_comment(result: ExperimentResult) -> str:
     lines = [
         render_result_marker(result),
@@ -368,14 +375,14 @@ def render_result_comment(result: ExperimentResult) -> str:
         f"Status: {result.status.value}",
         f"Commit: `{result.commit_sha}`",
         "",
-        result.summary,
+        _quote_senpai_marker_lines(result.summary),
     ]
     if result.runs:
         lines.extend(
             [
                 "",
                 "W&B runs:",
-                *(f"- {run.url}" for run in result.runs),
+                *(f"- {_quote_senpai_marker_lines(run.url)}" for run in result.runs),
             ]
         )
     return "\n".join(lines)

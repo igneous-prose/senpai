@@ -22,6 +22,7 @@ def test_respond_to_issue_writes_one_verified_idempotent_reply():
         7,
         human_message_id=700,
         audience_labels={"team"},
+        responder="advisor",
         response="I will investigate this now.",
     )
     mutations_after_first = list(fake.mutations)
@@ -29,6 +30,7 @@ def test_respond_to_issue_writes_one_verified_idempotent_reply():
         7,
         human_message_id=700,
         audience_labels={"team"},
+        responder="advisor",
         response="I will investigate this now.",
     )
 
@@ -38,7 +40,7 @@ def test_respond_to_issue_writes_one_verified_idempotent_reply():
     assert fake.comments == [
         comment(
             1,
-            "<!-- senpai-human-response:700 -->\n\n"
+            "<!-- senpai-human-response:advisor:700 -->\n\n"
             "ADVISOR: I will investigate this now.",
         )
     ]
@@ -56,6 +58,7 @@ def test_respond_to_issue_accepts_a_specific_human_comment():
         7,
         human_message_id=42,
         audience_labels={"team"},
+        responder="fern",
         response="STUDENT fern: I included memory in the comparison.",
     )
 
@@ -64,6 +67,64 @@ def test_respond_to_issue_accepts_a_specific_human_comment():
     assert cast(str, fake.comments[-1]["body"]).endswith(
         "\n\nSTUDENT: I included memory in the comparison."
     )
+
+
+def test_advisor_and_two_student_replies_to_one_human_message_coexist():
+    fake = FakeGitHub(pull_request(), issue=human_issue())
+    advisor = workflow(fake, role="advisor")
+    fern = workflow(fake, role="student")
+    sage = workflow(fake, role="student")
+
+    advisor.respond_to_issue(
+        7,
+        human_message_id=700,
+        audience_labels={"team"},
+        responder="advisor",
+        response="I will compare the candidate runs.",
+    )
+    fern.respond_to_issue(
+        7,
+        human_message_id=700,
+        audience_labels={"team"},
+        responder="fern",
+        response="I will inspect the training logs.",
+    )
+    sage.respond_to_issue(
+        7,
+        human_message_id=700,
+        audience_labels={"team"},
+        responder="sage",
+        response="I will compare memory use.",
+    )
+    mutations_after_replies = list(fake.mutations)
+
+    assert advisor.respond_to_issue(
+        7,
+        human_message_id=700,
+        audience_labels={"team"},
+        responder="advisor",
+        response="I will compare the candidate runs.",
+    ).changed is False
+    assert fern.respond_to_issue(
+        7,
+        human_message_id=700,
+        audience_labels={"team"},
+        responder="fern",
+        response="I will inspect the training logs.",
+    ).changed is False
+    assert sage.respond_to_issue(
+        7,
+        human_message_id=700,
+        audience_labels={"team"},
+        responder="sage",
+        response="I will compare memory use.",
+    ).changed is False
+    assert [cast(str, item["body"]).splitlines()[0] for item in fake.comments] == [
+        "<!-- senpai-human-response:advisor:700 -->",
+        "<!-- senpai-human-response:student:fern:700 -->",
+        "<!-- senpai-human-response:student:sage:700 -->",
+    ]
+    assert fake.mutations == mutations_after_replies
 
 
 @pytest.mark.parametrize(
@@ -135,6 +196,7 @@ def test_respond_to_issue_rejects_untrusted_sources_before_writing(
             7,
             human_message_id=message_id,
             audience_labels={"team"},
+            responder="advisor",
             response="ADVISOR: bounded response",
         )
 
@@ -165,6 +227,7 @@ def test_respond_to_issue_rechecks_audience_after_writing():
             7,
             human_message_id=700,
             audience_labels={"team"},
+            responder="advisor",
             response="ADVISOR: bounded response",
         )
 

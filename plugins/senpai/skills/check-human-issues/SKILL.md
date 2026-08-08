@@ -6,14 +6,10 @@
 name: check-human-issues
 description: >
   Check and respond to GitHub Issues from the human researcher team.
-  Runs in a forked context (no access to main conversation). Use this skill whenever you need to: check for human
-  messages, respond to human issues, poll for team communications,
-  check GitHub issues. Also triggers for: "any human messages?",
-  "check issues", "respond to humans".
+  Use this skill whenever you need to handle a human_issue event, respond to
+  human issues, or check team communications. Also triggers for: "any human
+  messages?", "check issues", "respond to humans".
 argument-hint: "<name> <ADVISOR|STUDENT>"
-context: fork
-model: claude-opus-4-8
-effort: high
 ---
 
 # check-human-issues
@@ -66,8 +62,10 @@ Never mutate the issue through `gh` or `curl`.
 
 ## Return format
 
-When you're done, return a structured summary of the issues you checked and responded to:
+When you're done, record a structured summary of the issues you checked and
+responded to in the current conversation:
 
 ### New research directives from the human researcher team
 
-If there are research directives in the issues, include them in detail in your summary so the parent agent can incorporate them into planning.
+If there are research directives in the issues, include them in detail so they
+remain available for subsequent planning in this conversation.
