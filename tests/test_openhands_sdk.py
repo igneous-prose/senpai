@@ -109,6 +109,7 @@ def test_supported_reasoning_effort_is_preserved(
         ("max", "openai/gpt-5.60"),
         ("medium", "wandb/zai-org/GLM-5.2"),
         ("extreme", "openai/gpt-5.6-sol"),
+        ("ultra", "openai/gpt-5.6-sol"),
     ],
 )
 def test_unsupported_reasoning_effort_fails_instead_of_being_rewritten(
@@ -231,7 +232,6 @@ def test_openai_max_uses_pro_mode_on_the_wire():
     [
         ("xhigh", "max", "max", True),
         ("max", "xhigh", "xhigh", False),
-        ("xhigh", "ultra", "max", True),
     ],
 )
 def test_file_agent_reasoning_override_replaces_the_parent_request_profile(
