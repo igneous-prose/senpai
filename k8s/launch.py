@@ -181,12 +181,6 @@ def _supports_openai_pro(model: str) -> bool:
     return normalized == "openai/gpt-5.6" or normalized.startswith("openai/gpt-5.6-")
 
 
-def _canonical_reasoning_effort(model: str, effort: str) -> str:
-    """Normalize the retired spelling only for its original GPT-5.6 scope."""
-
-    return "max" if effort == "ultra" and _supports_openai_pro(model) else effort
-
-
 def validate_model_config(args: Args) -> None:
     profiles = {
         "student": (args.student_model, args.student_reasoning_effort),
@@ -201,23 +195,18 @@ def validate_model_config(args: Args) -> None:
         )
     for name, (model, effort) in profiles.items():
         model_provider(model)
-        canonical_effort = _canonical_reasoning_effort(model, effort)
-        if effort == "ultra" and canonical_effort == "ultra":
-            sys.exit(
-                f"ERROR: --{name}_reasoning_effort={effort} is unsupported for {model}"
-            )
-        if canonical_effort not in REASONING_EFFORTS:
+        if effort not in REASONING_EFFORTS:
             choices = ", ".join(sorted(REASONING_EFFORTS))
             sys.exit(f"ERROR: --{name}_reasoning_effort must be one of: {choices}")
         normalized_model = model.lower()
         if normalized_model == "wandb/zai-org/glm-5.2":
-            if canonical_effort not in {"high", "max"}:
+            if effort not in {"high", "max"}:
                 sys.exit(
                     f"ERROR: --{name}_reasoning_effort={effort} is "
                     f"unsupported for {model}"
                 )
             continue
-        if canonical_effort == "max" and not _supports_openai_pro(model):
+        if effort == "max" and not _supports_openai_pro(model):
             sys.exit(
                 f"ERROR: --{name}_reasoning_effort={effort} is unsupported for {model}"
             )
@@ -232,25 +221,13 @@ def role_model_config(args: Args, role: str) -> dict[str, str]:
     )
     return {
         "SENPAI_OPENHANDS_MODEL": model,
-        "SENPAI_OPENHANDS_REASONING_EFFORT": _canonical_reasoning_effort(
-            model,
-            reasoning_effort,
-        ),
+        "SENPAI_OPENHANDS_REASONING_EFFORT": reasoning_effort,
         "SENPAI_OPENHANDS_SMART_MODEL": args.smart_model,
-        "SENPAI_OPENHANDS_SMART_REASONING_EFFORT": _canonical_reasoning_effort(
-            args.smart_model,
-            args.smart_reasoning_effort,
-        ),
+        "SENPAI_OPENHANDS_SMART_REASONING_EFFORT": args.smart_reasoning_effort,
         "SENPAI_OPENHANDS_FAST_MODEL": args.fast_model,
-        "SENPAI_OPENHANDS_FAST_REASONING_EFFORT": _canonical_reasoning_effort(
-            args.fast_model,
-            args.fast_reasoning_effort,
-        ),
+        "SENPAI_OPENHANDS_FAST_REASONING_EFFORT": args.fast_reasoning_effort,
         "SENPAI_OPENHANDS_FRONTIER_MODEL": args.frontier_model,
-        "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": _canonical_reasoning_effort(
-            args.frontier_model,
-            args.frontier_reasoning_effort,
-        ),
+        "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": args.frontier_reasoning_effort,
     }
 
 

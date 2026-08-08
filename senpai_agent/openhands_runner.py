@@ -92,8 +92,6 @@ REASONING_EFFORTS = (
     "max",
     "none",
 )
-# Input-only compatibility for live configs; RunnerConfig stores max.
-_REASONING_EFFORT_INPUTS = (*REASONING_EFFORTS, "ultra")
 SENPAI_AGENT_NAMES = ("bash-runner", "general-purpose", "explore", "search")
 SENPAI_AGENT_DIR = Path(__file__).resolve().parents[1] / ".agents" / "agents"
 PROVIDER_API_KEY_ENVS = {
@@ -116,25 +114,25 @@ class RunnerArgs:
     reasoning_effort: str | None = field(
         default=None,
         alias="--reasoning-effort",
-        choices=_REASONING_EFFORT_INPUTS,
+        choices=REASONING_EFFORTS,
     )
     smart_model: str | None = field(default=None, alias="--smart-model")
     smart_reasoning_effort: str | None = field(
         default=None,
         alias="--smart-reasoning-effort",
-        choices=_REASONING_EFFORT_INPUTS,
+        choices=REASONING_EFFORTS,
     )
     fast_model: str | None = field(default=None, alias="--fast-model")
     fast_reasoning_effort: str | None = field(
         default=None,
         alias="--fast-reasoning-effort",
-        choices=_REASONING_EFFORT_INPUTS,
+        choices=REASONING_EFFORTS,
     )
     frontier_model: str | None = field(default=None, alias="--frontier-model")
     frontier_reasoning_effort: str | None = field(
         default=None,
         alias="--frontier-reasoning-effort",
-        choices=_REASONING_EFFORT_INPUTS,
+        choices=REASONING_EFFORTS,
     )
     workspace: str | None = field(default=None, alias="--workspace")
     state_dir: str | None = field(default=None, alias="--state-dir")
@@ -211,13 +209,6 @@ def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
     supports_openai_pro = provider == "openai" and (
         model_name == "gpt-5.6" or model_name.startswith("gpt-5.6-")
     )
-    if reasoning_effort == "ultra":
-        if not supports_openai_pro:
-            raise ValueError(
-                f"reasoning effort {reasoning_effort!r} is unsupported for "
-                f"model {model!r}; use 'max' with an openai/gpt-5.6 model"
-            )
-        reasoning_effort = "max"
     if reasoning_effort not in REASONING_EFFORTS:
         choices = ", ".join(REASONING_EFFORTS)
         raise ValueError(
@@ -263,7 +254,7 @@ def _openai_pro_reasoning(
 
 
 def apply_reasoning_profile(llm: LLM) -> LLM:
-    """Canonicalize effort and replace only Senpai's reasoning request body."""
+    """Validate effort and replace only Senpai's reasoning request body."""
 
     reasoning_effort = openhands_reasoning_effort(
         llm.reasoning_effort,
