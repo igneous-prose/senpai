@@ -325,7 +325,7 @@ OpenHands receives these as progressively disclosed skills; their bodies are loa
 
 The repository also contains two reusable optimization case studies:
 
-- [LLM inference optimization](LLM-INFERENCE-OPTIMIZATION-SENPAI-GUIDE.md)
+- [LLM inference optimization](literature_and_guidance/LLM-INFERENCE-OPTIMIZATION-SENPAI-GUIDE.md)
 - [LLM training optimization](LLM-TRAINING-OPTIMIZATION-GUIDE.md)
 
 ## Architecture and durability
