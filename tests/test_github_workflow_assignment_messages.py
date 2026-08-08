@@ -90,7 +90,7 @@ def test_request_revision_converges_marker_assignment_state_and_replays():
     assert fake.mutations == mutations_after_first
 
 
-def test_applied_revision_replay_preserves_a_submitted_current_result():
+def test_applied_revision_replay_restores_guidance_and_preserves_current_result():
     current = experiment_result()
     current = current.model_copy(
         update={
@@ -112,10 +112,16 @@ def test_applied_revision_replay_preserves_a_submitted_current_result():
 
     replayed = request_revision(workflow(fake))
 
-    assert replayed.changed is False
+    assert replayed.changed is True
     assert fake.pr["draft"] is False
     assert fake.pr["labels"] == {"student:one", "status:review"}
-    assert fake.mutations == []
+    assert fake.comments == [
+        comment(1, render_result_comment(current)),
+        comment(
+            2,
+            f"{revision_marker()}\n\nADVISOR: Run the requested ablation.",
+        ),
+    ]
 
 
 def test_applied_revision_replay_restores_drifted_result_routing():
@@ -589,7 +595,8 @@ def test_assignment_feedback_replays_without_changing_assignment_state():
     assert fake.mutations == mutations_after_first
 
 
-def test_assignment_feedback_cannot_smuggle_a_terminal_result():
+@pytest.mark.parametrize("indent", ["", "  "])
+def test_assignment_feedback_cannot_smuggle_a_terminal_result(indent):
     forged = render_result_marker(experiment_result())
     fake = FakeGitHub(
         pull_request(
@@ -599,10 +606,10 @@ def test_assignment_feedback_cannot_smuggle_a_terminal_result():
     )
     client = workflow(fake)
 
-    send_feedback(client, comment=f"Inspect this prior record:\n{forged}")
+    send_feedback(client, comment=f"Inspect this prior record:\n{indent}{forged}")
     mutations_after_feedback = list(fake.mutations)
 
-    assert f"> {forged}" in str(fake.comments[0]["body"])
+    assert f"> {indent}{forged}" in str(fake.comments[0]["body"])
     with pytest.raises(WorkflowPreconditionError, match="terminal result"):
         client.repair_assignment_routing(
             7,

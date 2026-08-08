@@ -158,8 +158,8 @@ def test_visible_result_comment_contains_status_commit_summary_and_runs():
 
 
 def test_result_comment_quotes_protocol_marker_lines_from_visible_fields():
-    result_marker = "<!-- senpai-result:v2 {} -->"
-    response_marker = "<!-- senpai-human-response:student:fern:700 -->"
+    result_marker = "  <!-- senpai-result:v2 {} -->"
+    response_marker = "\t<!-- senpai-human-response:student:fern:700 -->"
     runs = (
         WandbRunRef(
             run_id="run-123",

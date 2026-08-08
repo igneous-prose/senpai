@@ -58,21 +58,37 @@ def advisor_events(
             for student in students:
                 active_by_student.setdefault(student, []).append(number)
         payload = pull_payload(pull)
-        if "status:review" in labels:
-            events.append(
-                ControllerEvent(
-                    kind="review_ready",
-                    dedupe_key=f"review_ready:{number}:{head_sha}",
-                    payload=payload,
-                )
-            )
+        assignment = None
         if {"status:wip", "status:review"} & labels:
             try:
-                assignments = parse_assignment_markers(str(pull.get("body") or ""))
+                assignments = parse_assignment_markers(
+                    str(pull.get("body") or "")
+                )
             except ValueError:
                 assignments = []
             if len(assignments) == 1:
-                active_assignments.append((pull, assignments[0]))
+                assignment = assignments[0]
+                active_assignments.append((pull, assignment))
+        if "status:review" in labels:
+            dedupe_key = f"review_ready:{number}:{head_sha}"
+            review_payload = payload
+            if assignment is not None:
+                dedupe_key = (
+                    f"review_ready:{number}:{assignment.assignment_id}:"
+                    f"{assignment.revision_id}:{head_sha}"
+                )
+                review_payload = {
+                    **payload,
+                    "assignment_id": assignment.assignment_id,
+                    "revision_id": assignment.revision_id,
+                }
+            events.append(
+                ControllerEvent(
+                    kind="review_ready",
+                    dedupe_key=dedupe_key,
+                    payload=review_payload,
+                )
+            )
         reasons: list[str] = []
         if "status:blocked" in labels:
             reasons.append("blocked")

@@ -165,6 +165,19 @@ class SubmitExperimentResultExecutor(
                     expected_result_head_sha=commit_sha,
                     result=action.result,
                 )
+                git_workflow.require_commit_contains_base(
+                    self.runtime.workspace,
+                    commit_sha=commit_sha,
+                    base_sha=preflight.assignment.base_sha,
+                )
+                git_workflow.push_assignment_branch(
+                    self.runtime.workspace,
+                    branch=action.branch,
+                    expected_remote_sha=action.remote_branch_sha_before_push,
+                    expected_local_sha=commit_sha,
+                    token=self.runtime.git_token,
+                )
+                result = self._submit_after_push(number, action.result)
             except StaleAssignmentRevisionError as error:
                 if conversation is not None:
                     conversation.state.execution_status = (
@@ -174,19 +187,6 @@ class SubmitExperimentResultExecutor(
                     f"{error} Ending this stale turn so the controller can resume "
                     "the current assignment revision."
                 ) from error
-            git_workflow.require_commit_contains_base(
-                self.runtime.workspace,
-                commit_sha=commit_sha,
-                base_sha=preflight.assignment.base_sha,
-            )
-            git_workflow.push_assignment_branch(
-                self.runtime.workspace,
-                branch=action.branch,
-                expected_remote_sha=action.remote_branch_sha_before_push,
-                expected_local_sha=commit_sha,
-                token=self.runtime.git_token,
-            )
-            result = self._submit_after_push(number, action.result)
             return GitHubMutationObservation.from_result(result)
 
     def _submit_after_push(

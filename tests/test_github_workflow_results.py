@@ -518,6 +518,44 @@ def test_submit_result_stops_if_assignment_revision_changes_after_comment():
     assert len(fake.comments) == 1
 
 
+def test_submit_result_restores_wip_if_revision_changes_after_comment():
+    class RevisingGitHub(FakeGitHub):
+        def request(self, method, url, *, headers, json_body=None):
+            response = super().request(
+                method,
+                url,
+                headers=headers,
+                json_body=json_body,
+            )
+            if (
+                method == "POST"
+                and urlsplit(url).path == f"/repos/{REPO}/issues/7/comments"
+            ):
+                self.pr["body"] = render_assignment_marker(
+                    assignment_record(revision_id="revision-2")
+                )
+            return response
+
+    fake = RevisingGitHub(
+        pull_request(
+            labels={"student:one", "status:review", "status:hold", "keep"},
+            draft=False,
+        )
+    )
+
+    with pytest.raises(StaleAssignmentRevisionError, match="revision_id"):
+        submit_result(workflow(fake))
+
+    assert fake.pr["draft"] is True
+    assert fake.pr["labels"] == {
+        "student:one",
+        "status:wip",
+        "status:hold",
+        "keep",
+    }
+    assert len(fake.comments) == 1
+
+
 def test_submit_result_restores_new_revision_to_wip_after_ready_race():
     class RevisionDuringReadyGitHub(FakeGitHub):
         def request(self, method, url, *, headers, json_body=None):

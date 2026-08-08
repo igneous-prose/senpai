@@ -82,17 +82,17 @@ class ResultMixin:
         result_changed, _ = self._upsert_result_comment(number, result=result)
         current = self._pull_at_head(number, expected_head_sha)
         require_open(current)
-        require_assignment_result(current, result)
-        ready_changed = self._set_draft(current, draft=False)
-        labels_changed, desired_labels = self._set_labels(
-            number,
-            current,
-            add={"status:review"},
-            remove={"status:wip"},
-        )
-        after = self._pull_at_head(number, expected_head_sha)
-        require_open(after)
         try:
+            require_assignment_result(current, result)
+            ready_changed = self._set_draft(current, draft=False)
+            labels_changed, desired_labels = self._set_labels(
+                number,
+                current,
+                add={"status:review"},
+                remove={"status:wip"},
+            )
+            after = self._pull_at_head(number, expected_head_sha)
+            require_open(after)
             require_assignment_result(after, result)
         except StaleAssignmentRevisionError:
             self._reconcile_current_result_routing(

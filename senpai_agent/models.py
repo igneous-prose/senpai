@@ -369,7 +369,7 @@ def render_result_marker(result: ExperimentResult) -> str:
 
 def _quote_senpai_marker_lines(value: str) -> str:
     return "\n".join(
-        f"> {line}" if line.startswith("<!-- senpai-") else line
+        f"> {line}" if line.lstrip().startswith("<!-- senpai-") else line
         for line in value.splitlines()
     )
 

@@ -54,11 +54,17 @@ def mailbox(monkeypatch, pulls, *, students=()):
     return value
 
 
-def assignment(*, base_sha="b" * 40, base_ref="research", number=17):
+def assignment(
+    *,
+    base_sha="b" * 40,
+    base_ref="research",
+    number=17,
+    revision_id="revision-2",
+):
     return AssignmentRecord(
         repo="acme/widgets",
         assignment_id=f"assignment-{number}",
-        revision_id="revision-2",
+        revision_id=revision_id,
         student="student-1",
         base_ref=base_ref,
         base_sha=base_sha,
@@ -88,6 +94,30 @@ def test_review_label_wakes_the_advisor_and_releases_the_student_slot(monkeypatc
     assert events[0].payload["number"] == 17
     assert events[1].payload == {"student": "student-1"}
     assert events[2].payload == {"student": "student-2"}
+
+
+def test_new_review_revision_at_the_same_head_wakes_the_advisor(monkeypatch):
+    reviewed_pull = pull(
+        labels=("research", "student:student-1", "status:review"),
+        body=render_assignment_marker(assignment(revision_id="revision-1")),
+        head_sha="7" * 40,
+    )
+    advisor = mailbox(monkeypatch, [reviewed_pull])
+
+    first = next(event for event in advisor.poll() if event.kind == "review_ready")
+    reviewed_pull["body"] = render_assignment_marker(
+        assignment(revision_id="revision-2")
+    )
+    second = next(event for event in advisor.poll() if event.kind == "review_ready")
+
+    assert first.dedupe_key == (
+        f"review_ready:17:assignment-17:revision-1:{'7' * 40}"
+    )
+    assert second.dedupe_key == (
+        f"review_ready:17:assignment-17:revision-2:{'7' * 40}"
+    )
+    assert first.payload["revision_id"] == "revision-1"
+    assert second.payload["revision_id"] == "revision-2"
 
 
 @pytest.mark.parametrize(

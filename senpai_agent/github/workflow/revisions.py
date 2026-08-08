@@ -89,14 +89,34 @@ class RevisionMixin:
         else:
             applied_revision = True
 
+        marker = render_revision_marker(
+            RevisionRecord(
+                repo=self._repo,
+                pr_number=number,
+                assignment_id=assignment.assignment_id,
+                revision_id=new_revision_id,
+                requested_head_sha=expected_head_sha,
+            )
+        )
+        rendered_comment = marker_body(marker, comment)
+        marker_comments = self._marker_comments(number, marker)
+        if len(marker_comments) > 1:
+            raise ReconciliationError(
+                f"GitHub contains multiple comments for marker {marker!r}"
+            )
         if applied_revision and self._has_result_for_snapshot(before, assignment_id):
+            marker_changed, _ = self._upsert_marker_comment(
+                number,
+                marker=marker,
+                body=rendered_comment,
+            )
             routing_changed = self._restore_current_result_review(
                 before,
                 assignment_id=assignment_id,
                 expected_head_sha=expected_head_sha,
             )
             return MutationResult(
-                changed=routing_changed,
+                changed=marker_changed or routing_changed,
                 resource_url=before.url,
                 state="revision_requested",
                 version=before.head_sha,
@@ -112,21 +132,6 @@ class RevisionMixin:
             raise WorkflowPreconditionError(
                 f"student:{assignment.student} already has active assignment "
                 f"PR(s): {', '.join(f'#{active_number}' for active_number in conflicts)}"
-            )
-        marker = render_revision_marker(
-            RevisionRecord(
-                repo=self._repo,
-                pr_number=number,
-                assignment_id=assignment.assignment_id,
-                revision_id=new_revision_id,
-                requested_head_sha=expected_head_sha,
-            )
-        )
-        rendered_comment = marker_body(marker, comment)
-        marker_comments = self._marker_comments(number, marker)
-        if len(marker_comments) > 1:
-            raise ReconciliationError(
-                f"GitHub contains multiple comments for marker {marker!r}"
             )
         revised_assignment = assignment.model_copy(
             update={
