@@ -55,6 +55,26 @@ def test_create_assignment_converges_one_draft_pull_request_and_replays():
     assert fake.mutations == mutations_after_first
 
 
+def test_create_assignment_rejects_an_unapplied_draft_mutation():
+    assignment = assignment_record()
+    visible_body = "Run the bounded learning-rate experiment."
+    fake = FakeGitHub(
+        pull_request(
+            labels={"schmidhuber", "student:student-one", "status:wip"},
+            draft=False,
+            body=f"{render_assignment_marker(assignment)}\n\n{visible_body}",
+        ),
+        ignore_draft_mutations=True,
+    )
+
+    with pytest.raises(ReconciliationError, match="not draft"):
+        workflow(fake).create_assignment(
+            assignment,
+            title="Try lower learning rate",
+            body=visible_body,
+        )
+
+
 def test_create_assignment_does_not_repurpose_a_foreign_pull_request():
     foreign_body = render_assignment_marker(
         assignment_record(assignment_id="someone-elses-assignment")
@@ -284,6 +304,26 @@ def test_repair_routing_restores_wip_draft_state_without_label_changes():
 
     assert result.changed is True
     assert fake.pr["draft"] is True
+
+
+def test_repair_routing_rejects_an_unapplied_draft_mutation():
+    fake = FakeGitHub(
+        pull_request(
+            labels={"schmidhuber", "student:student-one", "status:wip"},
+            draft=False,
+        ),
+        ignore_draft_mutations=True,
+    )
+
+    with pytest.raises(ReconciliationError, match="draft state"):
+        workflow(fake).repair_assignment_routing(
+            7,
+            assignment_id=ASSIGNMENT_ID,
+            current_revision_id="revision-1",
+            expected_head_sha=HEAD_SHA,
+            working_state="wip",
+            blockers=set(),
+        )
 
 
 def test_repair_routing_rejects_a_stale_head_before_writing():

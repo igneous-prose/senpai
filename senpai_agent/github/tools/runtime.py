@@ -110,6 +110,17 @@ class GitHubToolRuntime:
                 f"student {student!r} is outside this launch; choose one of: {allowed}"
             )
 
+    def require_current_student(self, student: str) -> None:
+        """Bind a submitted result to this student runtime."""
+
+        if self.role != "student" or not self.student_name:
+            raise RuntimeError("submit_experiment_result requires a student name")
+        if student != self.student_name:
+            raise PermissionError(
+                f"result student {student!r} does not match this runtime's "
+                f"student {self.student_name!r}"
+            )
+
     def human_issue_audience(self) -> set[str]:
         """Return the only Issue audience labels this role may answer."""
 
@@ -142,6 +153,7 @@ class SubmitExperimentResultExecutor(
         action: SubmitExperimentResultAction,
         conversation: LocalConversation | None = None,
     ) -> GitHubMutationObservation:
+        self.runtime.require_current_student(action.result.assignment.student)
         number = action.result.assignment.pr_number
         commit_sha = action.result.commit_sha
         with self.runtime.workflow.serialized_assignment_mutation():
@@ -153,6 +165,19 @@ class SubmitExperimentResultExecutor(
                     expected_result_head_sha=commit_sha,
                     result=action.result,
                 )
+                git_workflow.require_commit_contains_base(
+                    self.runtime.workspace,
+                    commit_sha=commit_sha,
+                    base_sha=preflight.assignment.base_sha,
+                )
+                git_workflow.push_assignment_branch(
+                    self.runtime.workspace,
+                    branch=action.branch,
+                    expected_remote_sha=action.remote_branch_sha_before_push,
+                    expected_local_sha=commit_sha,
+                    token=self.runtime.git_token,
+                )
+                result = self._submit_after_push(number, action.result)
             except StaleAssignmentRevisionError as error:
                 if conversation is not None:
                     conversation.state.execution_status = (
@@ -162,19 +187,6 @@ class SubmitExperimentResultExecutor(
                     f"{error} Ending this stale turn so the controller can resume "
                     "the current assignment revision."
                 ) from error
-            git_workflow.require_commit_contains_base(
-                self.runtime.workspace,
-                commit_sha=commit_sha,
-                base_sha=preflight.assignment.base_sha,
-            )
-            git_workflow.push_assignment_branch(
-                self.runtime.workspace,
-                branch=action.branch,
-                expected_remote_sha=action.remote_branch_sha_before_push,
-                expected_local_sha=commit_sha,
-                token=self.runtime.git_token,
-            )
-            result = self._submit_after_push(number, action.result)
             return GitHubMutationObservation.from_result(result)
 
     def _submit_after_push(

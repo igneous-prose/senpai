@@ -12,6 +12,7 @@ from senpai_agent.models import (
     ResultMarkerError,
     ResultStatus,
     WandbRunRef,
+    authoritative_marker_line,
     experiment_result_digest,
     parse_assignment_markers,
     parse_research_base_acceptance_markers,
@@ -21,6 +22,15 @@ from senpai_agent.models import (
     render_result_comment,
     render_result_marker,
 )
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r", "\x85", "\u2028"])
+def test_authoritative_marker_line_uses_parser_line_boundaries(separator: str):
+    marker = render_result_marker(result())
+
+    assert authoritative_marker_line(f"Visible prose{separator}{marker}") == (
+        "Visible prose"
+    )
 
 
 def test_assignment_marker_round_trips_as_one_line():
@@ -148,8 +158,8 @@ def test_visible_result_comment_contains_status_commit_summary_and_runs():
 
 
 def test_result_comment_quotes_protocol_marker_lines_from_visible_fields():
-    result_marker = "<!-- senpai-result:v2 {} -->"
-    response_marker = "<!-- senpai-human-response:student:fern:700 -->"
+    result_marker = "  <!-- senpai-result:v2 {} -->"
+    response_marker = "\t<!-- senpai-human-response:student:fern:700 -->"
     runs = (
         WandbRunRef(
             run_id="run-123",
@@ -167,6 +177,30 @@ def test_result_comment_quotes_protocol_marker_lines_from_visible_fields():
     assert f"> {result_marker}" in body.splitlines()
     assert f"> {response_marker}" in body.splitlines()
     assert parse_result_markers(body) == (experiment_result,)
+
+
+def test_result_comment_quotes_protocol_markers_in_visible_fields():
+    prior_marker = render_result_marker(
+        result(
+            assignment_id="assignment-prior",
+            summary="Prior terminal evidence.",
+        )
+    )
+    current = result(
+        summary=f"Compare against the prior record.\n{prior_marker}",
+        runs=(
+            WandbRunRef(
+                run_id="run-123",
+                url=f"https://wandb.ai/acme/widgets/runs/run-123\n{prior_marker}",
+                state="finished",
+            ),
+        ),
+    )
+
+    body = render_result_comment(current)
+
+    assert body.splitlines().count(f"> {prior_marker}") == 2
+    assert parse_result_markers(body) == (current,)
 
 
 def test_result_parser_preserves_marker_order_and_duplicates():

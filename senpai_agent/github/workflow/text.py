@@ -21,7 +21,7 @@ def marker_body(marker: str, content: str) -> str:
 
 def _quote_senpai_marker_lines(content: str) -> str:
     return "\n".join(
-        f"> {line}" if line.startswith("<!-- senpai-") else line
+        f"> {line}" if line.lstrip().startswith("<!-- senpai-") else line
         for line in content.splitlines()
     )
 
@@ -64,5 +64,10 @@ def _validate_marker(marker: str, body: str) -> None:
         or not marker.endswith("-->")
     ):
         raise ValueError("marker must be one hidden Senpai marker")
-    if body.splitlines().count(marker) != 1:
-        raise ValueError("comment body must contain the marker exactly once")
+    protocol_lines = [
+        line
+        for line in body.splitlines()
+        if line.lstrip().startswith("<!-- senpai-")
+    ]
+    if protocol_lines != [marker]:
+        raise ValueError("comment body must contain exactly its intended marker")

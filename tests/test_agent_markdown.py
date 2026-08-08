@@ -69,6 +69,17 @@ def test_sanitize_markdown_changes_runtime_copies_only(tmp_path: Path):
     assert source.read_text(encoding="utf-8").startswith("<!--\nSPDX-")
 
 
+def test_human_issue_skill_keeps_the_single_intent_response_contract():
+    content = (
+        PLUGIN_DIR / "skills" / "check-human-issues" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "respond_to_human_issue" in content
+    assert "without a role prefix" in content
+    assert "github_transition" not in content
+    assert "STUDENT $0" not in content
+
+
 def test_agent_context_installer_builds_loadable_sanitized_runtime_copies(
     tmp_path: Path,
 ):

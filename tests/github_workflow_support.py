@@ -179,14 +179,18 @@ class FakeGitHub:
         issue: dict[str, object] | None = None,
         comment_page_size: int = 100,
         ignore_label_mutations: bool = False,
+        ignore_draft_mutations: bool = False,
         branch_heads: dict[str, str] | None = None,
+        actor_login: str = "senpai-bot",
     ):
         self.pr = pr
         self.comments = list(comments or [])
         self.issue = issue
         self.comment_page_size = comment_page_size
         self.ignore_label_mutations = ignore_label_mutations
+        self.ignore_draft_mutations = ignore_draft_mutations
         self.branch_heads = branch_heads or {str(pr["base_ref"]): BASE_SHA}
+        self.actor_login = actor_login
         self.requests: list[tuple[str, str, object | None, dict[str, str]]] = []
 
     @property
@@ -215,6 +219,9 @@ class FakeGitHub:
         issue_path = f"/repos/{REPO}/issues/7"
         comments_path = f"/repos/{REPO}/issues/7/comments"
         labels_path = f"/repos/{REPO}/issues/7/labels"
+
+        if method == "GET" and path == "/user":
+            return HttpResponse(200, {"login": self.actor_login})
 
         if method == "GET" and path == pull_path:
             return HttpResponse(200, self._pull_payload())
@@ -318,13 +325,15 @@ class FakeGitHub:
         if method == "POST" and path == "/graphql":
             query = cast(str, cast(dict[str, object], json_body)["query"])
             if "convertPullRequestToDraft" in query:
-                self.pr["draft"] = True
+                requested_draft = True
                 field = "convertPullRequestToDraft"
             elif "markPullRequestReadyForReview" in query:
-                self.pr["draft"] = False
+                requested_draft = False
                 field = "markPullRequestReadyForReview"
             else:
                 raise AssertionError(f"Unexpected GraphQL mutation: {query}")
+            if not self.ignore_draft_mutations:
+                self.pr["draft"] = requested_draft
             return HttpResponse(
                 200,
                 {
@@ -332,7 +341,7 @@ class FakeGitHub:
                         field: {
                             "pullRequest": {
                                 "id": self.pr["node_id"],
-                                "isDraft": self.pr["draft"],
+                                "isDraft": requested_draft,
                             }
                         }
                     }

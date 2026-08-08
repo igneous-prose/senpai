@@ -25,6 +25,7 @@ from senpai_agent.github.tools import (
     SendAssignmentFeedbackTool,
 )
 from senpai_agent.github.workflow import MutationResult
+from senpai_agent.models import DispositionRecord, render_disposition_marker
 
 
 class RecordingWorkflow:
@@ -267,7 +268,17 @@ def test_publish_advisor_branch_uses_configured_branch_and_distinct_shas(
                 reason="The hypothesis was falsified.",
             ),
             "close_experiment",
-            {"reason": "The hypothesis was falsified."},
+            {
+                "marker": render_disposition_marker(
+                    DispositionRecord(
+                        repo="acme/widgets",
+                        pr_number=17,
+                        assignment_id="assignment-17",
+                        head_sha="a" * 40,
+                    )
+                ),
+                "reason": "The hypothesis was falsified.",
+            },
         ),
     ],
 )

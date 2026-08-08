@@ -11,12 +11,13 @@ from senpai_agent.github.workflow.responses import (
     SubmitResultPreflight,
 )
 from senpai_agent.github.workflow.validation import (
+    require_assignment_identity,
     require_assignment_result,
     require_label_update,
     require_open,
     require_result_identity,
 )
-from senpai_agent.models import ExperimentResult
+from senpai_agent.models import AssignmentRecord, ExperimentResult
 
 
 class ResultMixin:
@@ -81,24 +82,23 @@ class ResultMixin:
         result_changed, _ = self._upsert_result_comment(number, result=result)
         current = self._pull_at_head(number, expected_head_sha)
         require_open(current)
-        require_assignment_result(current, result)
-        ready_changed = self._set_draft(current, draft=False)
-        labels_changed, desired_labels = self._set_labels(
-            number,
-            current,
-            add={"status:review"},
-            remove={"status:wip"},
-        )
-        after = self._pull_at_head(number, expected_head_sha)
-        require_open(after)
         try:
+            require_assignment_result(current, result)
+            ready_changed = self._set_draft(current, draft=False)
+            labels_changed, desired_labels = self._set_labels(
+                number,
+                current,
+                add={"status:review"},
+                remove={"status:wip"},
+            )
+            after = self._pull_at_head(number, expected_head_sha)
+            require_open(after)
             require_assignment_result(after, result)
         except StaleAssignmentRevisionError:
-            self._recover_stale_submit_routing(
+            self._reconcile_current_result_routing(
                 number,
                 assignment_id=result.assignment.assignment_id,
                 expected_head_sha=expected_head_sha,
-                stale_result=result,
             )
             raise
         if after.draft:
@@ -117,16 +117,16 @@ class ResultMixin:
             version=after.head_sha,
         )
 
-    def _recover_stale_submit_routing(
+    def _reconcile_current_result_routing(
         self,
         number: int,
         *,
         assignment_id: str,
         expected_head_sha: str,
-        stale_result: ExperimentResult,
-    ) -> None:
-        """Undo stale review routing without clobbering newer valid evidence."""
+    ) -> tuple[PullRequestSnapshot, AssignmentRecord, bool, bool]:
+        """Route the current assignment from its current durable result."""
 
+        changed = False
         for _attempt in range(3):
             current, assignment = self._assigned_pull_at_head(
                 number,
@@ -134,58 +134,57 @@ class ResultMixin:
                 expected_head_sha=expected_head_sha,
             )
             require_open(current)
-            if assignment.revision_id == stale_result.assignment.revision_id:
-                return
-            if self._has_result_for_snapshot(current, assignment_id):
-                return
-
-            self._set_draft(current, draft=True)
+            has_result = self._has_result_for_snapshot(current, assignment_id)
+            changed |= self._set_draft(current, draft=not has_result)
             current, refreshed = self._assigned_pull_at_head(
                 number,
                 assignment_id=assignment_id,
                 expected_head_sha=expected_head_sha,
             )
+            require_open(current)
             if refreshed != assignment:
                 continue
-            if self._has_result_for_snapshot(current, assignment_id):
-                self._restore_current_result_review(
-                    current,
-                    assignment_id=assignment_id,
-                    expected_head_sha=expected_head_sha,
-                )
-                return
+            if self._has_result_for_snapshot(current, assignment_id) is not has_result:
+                continue
 
-            self._set_labels(
+            labels_changed, _ = self._set_labels(
                 number,
                 current,
-                add={"status:wip"},
-                remove={"status:review"},
+                add={"status:review" if has_result else "status:wip"},
+                remove={"status:wip" if has_result else "status:review"},
             )
+            changed |= labels_changed
             after, verified = self._assigned_pull_at_head(
                 number,
                 assignment_id=assignment_id,
                 expected_head_sha=expected_head_sha,
             )
+            require_open(after)
             if verified != assignment:
                 continue
-            if self._has_result_for_snapshot(after, assignment_id):
-                self._restore_current_result_review(
-                    after,
-                    assignment_id=assignment_id,
-                    expected_head_sha=expected_head_sha,
-                )
-                return
-            if (
+            if self._has_result_for_snapshot(after, assignment_id) is not has_result:
+                continue
+            if has_result:
+                if (
+                    after.draft
+                    or "status:review" not in after.labels
+                    or "status:wip" in after.labels
+                ):
+                    raise ReconciliationError(
+                        "current-revision result did not remain reviewable during "
+                        "current-assignment routing"
+                    )
+            elif not (
                 after.draft
                 and "status:wip" in after.labels
                 and "status:review" not in after.labels
             ):
-                return
-            raise ReconciliationError(
-                "GitHub did not restore the current assignment revision to WIP"
-            )
+                raise ReconciliationError(
+                    "GitHub did not restore the current assignment revision to WIP"
+                )
+            return after, verified, has_result, changed
         raise ReconciliationError(
-            "assignment revision kept changing during stale-submit recovery"
+            "assignment or result kept changing during current-assignment routing"
         )
 
     def _has_result_for_snapshot(
@@ -213,33 +212,30 @@ class ResultMixin:
         *,
         assignment_id: str,
         expected_head_sha: str,
-    ) -> None:
+    ) -> bool:
         """Keep a concurrently submitted current-revision result reviewable."""
 
-        self._set_draft(snapshot, draft=False)
-        current, assignment = self._assigned_pull_at_head(
-            snapshot.number,
+        expected_assignment = require_assignment_identity(
+            snapshot,
+            repo=self._repo,
             assignment_id=assignment_id,
-            expected_head_sha=expected_head_sha,
         )
-        if not self._has_result_for_snapshot(current, assignment_id):
-            raise ReconciliationError(
-                "current-revision result disappeared during stale-submit recovery"
+        after, verified, has_result, changed = (
+            self._reconcile_current_result_routing(
+                snapshot.number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
             )
-        self._set_labels(
-            snapshot.number,
-            current,
-            add={"status:review"},
-            remove={"status:wip"},
         )
-        after, verified = self._assigned_pull_at_head(
-            snapshot.number,
-            assignment_id=assignment_id,
-            expected_head_sha=expected_head_sha,
-        )
-        if verified != assignment or not self._has_result_for_snapshot(
-            after, assignment_id
+        if (
+            verified != expected_assignment
+            or not has_result
+            or after.draft
+            or "status:review" not in after.labels
+            or "status:wip" in after.labels
         ):
             raise ReconciliationError(
-                "current-revision result changed during stale-submit recovery"
+                "current-revision result did not remain reviewable during "
+                "current-assignment routing"
             )
+        return changed

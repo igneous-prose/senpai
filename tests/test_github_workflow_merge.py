@@ -8,7 +8,11 @@ from senpai_agent.github.workflow import (
     StaleResearchBaseError,
     WorkflowPreconditionError,
 )
-from senpai_agent.models import render_assignment_marker, render_result_comment
+from senpai_agent.models import (
+    render_assignment_marker,
+    render_result_comment,
+    render_result_marker,
+)
 from github_workflow_support import (
     ASSIGNMENT_ID,
     BASE_SHA,
@@ -259,6 +263,58 @@ def test_merge_consumes_exact_durable_research_base_acceptance():
 
     assert result.state == "experiment_merged"
     assert fake.pr["merged"] is True
+
+
+@pytest.mark.parametrize("separator", ["\n\n", "\r", "\x85", "\u2028"])
+def test_merge_rejects_an_acceptance_below_another_protocol_marker(separator):
+    current_base_sha = "c" * 40
+    fake = FakeGitHub(
+        mergeable_pull(),
+        comments=[result_comment()],
+        branch_heads={"schmidhuber": current_base_sha},
+    )
+    client = workflow(fake)
+    accept_result(client, expected_current_base_sha=current_base_sha)
+    acceptance = fake.comments[-1]
+    acceptance["body"] = (
+        f"<!-- senpai-assignment-feedback:v1 {{}} -->{separator}"
+        + str(acceptance["body"])
+    )
+
+    with pytest.raises(StaleResearchBaseError, match="no durable acceptance"):
+        merge_experiment(client, expected_current_base_sha=current_base_sha)
+
+    assert fake.pr["merged"] is False
+
+
+def test_result_replay_preserves_a_durable_acceptance_with_legacy_marker_prose():
+    current_base_sha = "c" * 40
+    fake = FakeGitHub(
+        mergeable_pull(),
+        comments=[result_comment()],
+        branch_heads={"schmidhuber": current_base_sha},
+    )
+    advisor = workflow(fake)
+    accept_result(advisor, expected_current_base_sha=current_base_sha)
+    acceptance = fake.comments[-1]
+    acceptance["body"] = (
+        str(acceptance["body"])
+        + "\n\nLegacy quoted evidence:\n"
+        + render_result_marker(experiment_result())
+    )
+    acceptance_body = acceptance["body"]
+
+    workflow(fake, role="student").submit_result(
+        7,
+        expected_head_sha=HEAD_SHA,
+        result=experiment_result(),
+    )
+
+    assert acceptance["body"] == acceptance_body
+    assert merge_experiment(
+        advisor,
+        expected_current_base_sha=current_base_sha,
+    ).state == "experiment_merged"
 
 
 def test_merge_treats_identical_duplicate_results_as_one():

@@ -197,6 +197,7 @@ class IssueSearchResponse(NumberedResponse):
 
 
 class DraftPullRequestResponse(GitHubResponse):
+    id: RequiredString
     is_draft: StrictBool = Field(alias="isDraft")
 
 

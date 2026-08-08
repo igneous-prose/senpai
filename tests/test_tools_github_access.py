@@ -13,6 +13,7 @@ from senpai_agent.github.tools import (
     GetPRsAction,
     GetPRsTool,
     GitHubToolRuntime,
+    GitHubWorkflowToolSet,
     RespondToHumanIssueAction,
     RespondToHumanIssueTool,
     clear_github_credentials,
@@ -92,6 +93,17 @@ def test_registered_github_toolset_exposes_only_role_owned_tools(
     assert "github_transition" not in expected
     assert "github-secret" not in json.dumps(spec.model_dump())
     assert all("github-secret" not in repr(tool.executor) for tool in resolved)
+
+
+def test_toolset_rejects_a_runtime_role_mismatch(tmp_path: Path):
+    with pytest.raises(ValueError, match="workflow role"):
+        GitHubWorkflowToolSet.create(
+            workflow=workflow(FakeGitHub(pull_request())),
+            role="student",
+            student_name="student-one",
+            state_dir=tmp_path / "state",
+            workspace=tmp_path,
+        )
 
 
 @pytest.mark.parametrize("role", ["advisor", "student"])

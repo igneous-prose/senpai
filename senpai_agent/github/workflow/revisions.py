@@ -15,7 +15,6 @@ from senpai_agent.github.workflow.text import (
 from senpai_agent.github.workflow.validation import (
     require_active_assignment_routing,
     require_current_revision,
-    require_label_update,
     require_open,
 )
 from senpai_agent.models import (
@@ -78,6 +77,7 @@ class RevisionMixin:
                     f"required research base {assignment.base_ref}@"
                     f"{required_base_sha} does not match live {live_base_sha}"
                 )
+            applied_revision = False
         elif not (
             assignment.revision_id == new_revision_id
             and assignment.base_sha == required_base_sha
@@ -86,18 +86,9 @@ class RevisionMixin:
                 f"assignment revision is {assignment.revision_id!r}, expected "
                 f"current {current_revision_id!r} or applied {new_revision_id!r}"
             )
-        conflicts = tuple(
-            active_number
-            for active_number in self._active_student_assignment_numbers(
-                assignment.student
-            )
-            if active_number != number
-        )
-        if conflicts:
-            raise WorkflowPreconditionError(
-                f"student:{assignment.student} already has active assignment "
-                f"PR(s): {', '.join(f'#{active_number}' for active_number in conflicts)}"
-            )
+        else:
+            applied_revision = True
+
         marker = render_revision_marker(
             RevisionRecord(
                 repo=self._repo,
@@ -112,6 +103,35 @@ class RevisionMixin:
         if len(marker_comments) > 1:
             raise ReconciliationError(
                 f"GitHub contains multiple comments for marker {marker!r}"
+            )
+        if applied_revision and self._has_result_for_snapshot(before, assignment_id):
+            marker_changed, _ = self._upsert_marker_comment(
+                number,
+                marker=marker,
+                body=rendered_comment,
+            )
+            routing_changed = self._restore_current_result_review(
+                before,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
+            )
+            return MutationResult(
+                changed=marker_changed or routing_changed,
+                resource_url=before.url,
+                state="revision_requested",
+                version=before.head_sha,
+            )
+        conflicts = tuple(
+            active_number
+            for active_number in self._active_student_assignment_numbers(
+                assignment.student
+            )
+            if active_number != number
+        )
+        if conflicts:
+            raise WorkflowPreconditionError(
+                f"student:{assignment.student} already has active assignment "
+                f"PR(s): {', '.join(f'#{active_number}' for active_number in conflicts)}"
             )
         revised_assignment = assignment.model_copy(
             update={
@@ -137,29 +157,19 @@ class RevisionMixin:
             marker=marker,
             body=rendered_comment,
         )
-        draft_changed = self._set_draft(current, draft=True)
-        labels_changed, desired_labels = self._set_labels(
-            number,
-            current,
-            add={"status:wip"},
-            remove={"status:review"},
-        )
-        after = self._pull_at_head(number, expected_head_sha)
-        require_open(after)
-        if not after.draft:
-            raise ReconciliationError(
-                "GitHub did not convert the pull request to draft"
+        after, current_assignment, _has_result, routing_changed = (
+            self._reconcile_current_result_routing(
+                number,
+                assignment_id=assignment_id,
+                expected_head_sha=expected_head_sha,
             )
-        require_label_update(
-            after,
-            required=desired_labels,
-            forbidden={"status:review"},
         )
+        if current_assignment != revised_assignment:
+            raise ReconciliationError(
+                "assignment revision changed while routing the revision request"
+            )
         return MutationResult(
-            changed=assignment_changed
-            or marker_changed
-            or draft_changed
-            or labels_changed,
+            changed=assignment_changed or marker_changed or routing_changed,
             resource_url=after.url,
             state="revision_requested",
             version=after.head_sha,

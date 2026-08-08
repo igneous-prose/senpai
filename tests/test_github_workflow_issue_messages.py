@@ -1,9 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from typing import cast
 from urllib.parse import urlsplit
 
 import pytest
 
-from senpai_agent.github.workflow import WorkflowPreconditionError
+from senpai_agent.github.workflow import MutationResult, WorkflowPreconditionError
 from github_workflow_support import (
     REPO,
     FakeGitHub,
@@ -64,6 +66,9 @@ def test_respond_to_issue_accepts_a_specific_human_comment():
 
     assert result.changed is True
     assert len(fake.comments) == 2
+    assert cast(str, fake.comments[-1]["body"]).startswith(
+        "<!-- senpai-human-response:student:fern:42 -->"
+    )
     assert cast(str, fake.comments[-1]["body"]).endswith(
         "\n\nSTUDENT: I included memory in the comparison."
     )
@@ -125,6 +130,49 @@ def test_advisor_and_two_student_replies_to_one_human_message_coexist():
         "<!-- senpai-human-response:student:sage:700 -->",
     ]
     assert fake.mutations == mutations_after_replies
+
+
+def test_human_issue_responses_share_the_workflow_mutation_lock(monkeypatch):
+    client = workflow(FakeGitHub(pull_request(), issue=human_issue()))
+    first_entered = Event()
+    second_entered = Event()
+    release_first = Event()
+
+    def hold_response(*_args, **_kwargs):
+        if not first_entered.is_set():
+            first_entered.set()
+            assert release_first.wait(1)
+        else:
+            second_entered.set()
+        return MutationResult(False, "https://github.test/issues/7", "test")
+
+    monkeypatch.setattr(type(client), "_respond_to_issue", hold_response)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(
+            client.respond_to_issue,
+            7,
+            human_message_id=700,
+            audience_labels={"team"},
+            responder="advisor",
+            response="First response.",
+        )
+        assert first_entered.wait(1)
+        second = executor.submit(
+            client.respond_to_issue,
+            7,
+            human_message_id=700,
+            audience_labels={"team"},
+            responder="advisor",
+            response="Second response.",
+        )
+        overlapped = second_entered.wait(0.1)
+        release_first.set()
+        first.result(timeout=1)
+        second.result(timeout=1)
+
+    assert not overlapped
+    assert second_entered.is_set()
 
 
 @pytest.mark.parametrize(

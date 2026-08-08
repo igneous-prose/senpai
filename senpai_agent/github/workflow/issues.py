@@ -26,6 +26,24 @@ class HumanIssueMixin:
     ) -> MutationResult:
         """Reply once to one verified human-authored GitHub issue message."""
 
+        with self._assignment_lifecycle_lock:
+            return self._respond_to_issue(
+                number,
+                human_message_id=human_message_id,
+                audience_labels=audience_labels,
+                responder=responder,
+                response=response,
+            )
+
+    def _respond_to_issue(
+        self,
+        number: int,
+        *,
+        human_message_id: int,
+        audience_labels: set[str],
+        responder: str,
+        response: str,
+    ) -> MutationResult:
         number = positive_number(number)
         human_message_id = positive_message_id(human_message_id)
         body = response.strip()
@@ -55,9 +73,7 @@ class HumanIssueMixin:
                 "human message must not be authored by the authenticated actor"
             )
 
-        marker = (
-            f"<!-- senpai-human-response:{responder_key}:{human_message_id} -->"
-        )
+        marker = f"<!-- senpai-human-response:{responder_key}:{human_message_id} -->"
         comment_body = marker_body(marker, body)
         changed, verified = self._upsert_marker_comment(
             number,
