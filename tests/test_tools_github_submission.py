@@ -119,6 +119,38 @@ def test_submit_result_preflights_before_any_git_mutation(
     assert pushes == []
 
 
+def test_submit_result_rejects_another_students_assignment_before_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    workflow = RecordingWorkflow()
+    action = submit_action()
+    action = action.model_copy(
+        update={
+            "result": action.result.model_copy(
+                update={
+                    "assignment": action.result.assignment.model_copy(
+                        update={"student": "student-two"}
+                    )
+                }
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "senpai_agent.github.tools.runtime.git_workflow.push_assignment_branch",
+        lambda *_args, **_kwargs: pytest.fail("git push reached"),
+    )
+    monkeypatch.setattr(
+        "senpai_agent.github.tools.runtime.git_workflow.require_commit_contains_base",
+        lambda *_args, **_kwargs: pytest.fail("ancestry check reached"),
+    )
+
+    with pytest.raises(PermissionError, match="does not match this runtime"):
+        student_tool(workflow, tmp_path)(action)
+
+    assert workflow.events == []
+
+
 def test_stale_submission_finishes_the_obsolete_conversation_without_pushing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

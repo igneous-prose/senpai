@@ -18,6 +18,7 @@ from github_workflow_support import (
     API_URL,
     HEAD_SHA,
     REPO,
+    AmbiguousMutationGitHub,
     FakeGitHub,
     pull_request,
     workflow,
@@ -123,3 +124,64 @@ def test_network_failure_raises_a_token_safe_transport_error(monkeypatch):
 
     assert "never-show-this" not in str(raised.value)
     assert "never-show-this" not in repr(raised.value)
+
+
+def test_draft_mutation_recovers_an_ambiguous_response_after_application():
+    fake = AmbiguousMutationGitHub(
+        pull_request(draft=False),
+        fail_method="POST",
+        fail_path="/graphql",
+    )
+    client = workflow(fake)
+
+    changed = client._set_draft(client.pull_request(7), draft=True)
+
+    assert changed is True
+    assert fake.pr["draft"] is True
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"errors": [{"message": "denied"}]}, "returned errors"),
+        ({"data": {"convertPullRequestToDraft": {}}}, "invalid GraphQL"),
+        (
+            {
+                "data": {
+                    "convertPullRequestToDraft": {
+                        "pullRequest": {"id": "other", "isDraft": True}
+                    }
+                }
+            },
+            "wrong pull request",
+        ),
+        (
+            {
+                "data": {
+                    "convertPullRequestToDraft": {
+                        "pullRequest": {"id": "PR_node_7", "isDraft": False}
+                    }
+                }
+            },
+            "wrong draft state",
+        ),
+    ],
+    ids=("errors", "malformed", "wrong-pull", "wrong-state"),
+)
+def test_draft_mutation_rejects_invalid_graphql_results(payload, message):
+    class GraphQLResultGitHub(FakeGitHub):
+        def request(self, method, url, *, headers, json_body=None):
+            if method == "POST" and url.endswith("/graphql"):
+                return HttpResponse(200, payload)
+            return super().request(
+                method,
+                url,
+                headers=headers,
+                json_body=json_body,
+            )
+
+    fake = GraphQLResultGitHub(pull_request(draft=False))
+    client = workflow(fake)
+
+    with pytest.raises(ReconciliationError, match=message):
+        client._set_draft(client.pull_request(7), draft=True)

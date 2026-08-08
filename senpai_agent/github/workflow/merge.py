@@ -59,6 +59,7 @@ class MergeMixin:
         terminal_result = self._require_result(
             number,
             assignment_id=assignment_id,
+            revision_id=current_revision_id,
             expected_head_sha=expected_head_sha,
         )
         assignment = require_assignment_result(before, terminal_result)
@@ -134,6 +135,7 @@ class MergeMixin:
             self._require_result(
                 number,
                 assignment_id=assignment_id,
+                revision_id=current_revision_id,
                 expected_head_sha=expected_head_sha,
             ),
             phase="immediately before merge",
@@ -153,6 +155,7 @@ class MergeMixin:
             self._require_result(
                 number,
                 assignment_id=assignment_id,
+                revision_id=current_revision_id,
                 expected_head_sha=expected_head_sha,
             ),
             phase="immediately after merge",
@@ -169,6 +172,7 @@ class MergeMixin:
             self._require_result(
                 number,
                 assignment_id=assignment_id,
+                revision_id=current_revision_id,
                 expected_head_sha=expected_head_sha,
             ),
             phase="final merge reconciliation",

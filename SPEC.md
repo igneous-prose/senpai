@@ -348,8 +348,10 @@ commit, upserts the typed result, marks the PR ready, reconciles
 `status:review`, and verifies all postconditions. The label itself is the
 cross-node notification. A schema-valid result is immutable for its assignment
 revision and head: canonical-identical duplicates are one idempotent result,
-while different evidence must use a new commit or revision. Distinct valid
-results at the same identity fail closed.
+while different evidence must use a new commit or revision. Result records are
+append-only across revision/head identities, and gates select only the record
+for the live assignment; stale workers therefore cannot rewrite newer evidence.
+Distinct valid results at the same identity fail closed.
 
 Research-base movement is a general property of concurrent research, not a
 target-specific benchmark rule. A changed base does not cancel an in-flight

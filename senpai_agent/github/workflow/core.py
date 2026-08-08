@@ -92,7 +92,6 @@ class WorkflowCore:
     @contextmanager
     def serialized_assignment_mutation(self) -> Iterator[None]:
         """Serialize a coupled local mutation with this workflow's transitions.
-
         This closes races among Senpai operations sharing this workflow instance.
         GitHub's merge API has no base-SHA compare-and-swap; external writers still
         require strict branch protection or a merge queue.
@@ -202,6 +201,10 @@ class WorkflowCore:
             mutation_payload,
             f"GraphQL {mutation} result",
         )
+        if mutation_result.pull_request.id != snapshot.node_id:
+            raise ReconciliationError(
+                f"GitHub GraphQL {mutation} returned the wrong pull request"
+            )
         if mutation_result.pull_request.is_draft is not draft:
             raise ReconciliationError(
                 f"GitHub GraphQL {mutation} returned the wrong draft state"
@@ -276,7 +279,7 @@ class WorkflowCore:
         method: str,
         url: str,
         *,
-        json_body: object,
+        json_body: object | None,
         expected_statuses: set[int],
     ) -> HttpResponse | None:
         """Issue a mutation; an ambiguous transport failure is verified by caller."""

@@ -14,6 +14,7 @@ from senpai_agent.models import (
     AssignmentRecord,
     ResearchBaseAcceptanceRecord,
     ResultMarkerError,
+    authoritative_marker_line,
     experiment_result_digest,
     parse_assignment_markers,
     parse_research_base_acceptance_markers,
@@ -234,22 +235,22 @@ def has_research_base_acceptance(
             continue
         if author.casefold() != actor.casefold():
             continue
-        for line in str(comment.get("body") or "").splitlines():
-            try:
-                results = parse_result_markers(line)
-            except ResultMarkerError:
-                continue
-            result_digests.extend(
-                experiment_result_digest(result)
-                for result in results
-                if result_matches_assignment(
-                    result,
-                    repo=mailbox.repo,
-                    pr_number=int(pull["number"]),
-                    assignment=assignment,
-                    head_sha=head_sha,
-                )
+        first_line = authoritative_marker_line(str(comment.get("body") or ""))
+        try:
+            results = parse_result_markers(first_line)
+        except ResultMarkerError:
+            continue
+        result_digests.extend(
+            experiment_result_digest(result)
+            for result in results
+            if result_matches_assignment(
+                result,
+                repo=mailbox.repo,
+                pr_number=int(pull["number"]),
+                assignment=assignment,
+                head_sha=head_sha,
             )
+        )
     distinct_result_digests = set(result_digests)
     if len(distinct_result_digests) != 1:
         return False
@@ -273,7 +274,7 @@ def has_research_base_acceptance(
             continue
         try:
             acceptances = parse_research_base_acceptance_markers(
-                str(comment.get("body") or "")
+                authoritative_marker_line(str(comment.get("body") or ""))
             )
         except ValueError:
             continue

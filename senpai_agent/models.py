@@ -263,6 +263,12 @@ def render_assignment_marker(assignment: AssignmentRecord) -> str:
     return f"<!-- senpai-assignment:v1 {_marker_payload(assignment)} -->"
 
 
+def authoritative_marker_line(comment_body: str) -> str:
+    """Return the only logical line eligible to carry a trusted marker."""
+
+    return next(iter(comment_body.splitlines()), "")
+
+
 def render_revision_marker(revision: RevisionRecord) -> str:
     return f"<!-- senpai-revision:v1 {_marker_payload(revision)} -->"
 

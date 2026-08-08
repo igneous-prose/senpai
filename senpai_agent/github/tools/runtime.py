@@ -110,6 +110,17 @@ class GitHubToolRuntime:
                 f"student {student!r} is outside this launch; choose one of: {allowed}"
             )
 
+    def require_current_student(self, student: str) -> None:
+        """Bind a submitted result to this student runtime."""
+
+        if self.role != "student" or not self.student_name:
+            raise RuntimeError("submit_experiment_result requires a student name")
+        if student != self.student_name:
+            raise PermissionError(
+                f"result student {student!r} does not match this runtime's "
+                f"student {self.student_name!r}"
+            )
+
     def human_issue_audience(self) -> set[str]:
         """Return the only Issue audience labels this role may answer."""
 
@@ -142,6 +153,7 @@ class SubmitExperimentResultExecutor(
         action: SubmitExperimentResultAction,
         conversation: LocalConversation | None = None,
     ) -> GitHubMutationObservation:
+        self.runtime.require_current_student(action.result.assignment.student)
         number = action.result.assignment.pr_number
         commit_sha = action.result.commit_sha
         with self.runtime.workflow.serialized_assignment_mutation():

@@ -442,6 +442,45 @@ def test_malformed_trusted_acceptance_does_not_suppress_change(monkeypatch):
     assert "research_base_changed" in {event.kind for event in advisor.poll()}
 
 
+@pytest.mark.parametrize("separator", ["\n\n", "\r", "\x85", "\u2028"])
+def test_embedded_acceptance_marker_is_not_trusted_protocol_evidence(
+    monkeypatch,
+    separator,
+):
+    advisor = mailbox(
+        monkeypatch,
+        [
+            pull(
+                labels=("research", "student:student-1", "status:review"),
+                body=render_assignment_marker(assignment()),
+                head_sha="7" * 40,
+                comments_url=(
+                    "https://api.github.test/repos/acme/widgets/"
+                    "issues/17/comments"
+                ),
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "c" * 40}},
+    )
+    monkeypatch.setattr(advisor._github, "actor", lambda: "senpai-bot")
+    embedded = acceptance_comment()
+    embedded["body"] = (
+        f"<!-- senpai-assignment-feedback:v1 {{}} -->{separator}"
+        + str(embedded["body"])
+    )
+    monkeypatch.setattr(
+        advisor._github,
+        "objects",
+        lambda _url: [result_comment(), embedded],
+    )
+
+    assert "research_base_changed" in {event.kind for event in advisor.poll()}
+
+
 def test_wip_base_change_does_not_query_acceptance_comments(monkeypatch):
     advisor = mailbox(
         monkeypatch,

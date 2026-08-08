@@ -52,6 +52,7 @@ class ReviewMixin:
             result = self._require_result(
                 number,
                 assignment_id=assignment_id,
+                revision_id=current_revision_id,
                 expected_head_sha=expected_head_sha,
             )
             require_assignment_result(before, result)
@@ -88,6 +89,7 @@ class ReviewMixin:
             current_result = self._require_result(
                 number,
                 assignment_id=assignment_id,
+                revision_id=current_revision_id,
                 expected_head_sha=expected_head_sha,
             )
             require_assignment_result(after, current_result)
