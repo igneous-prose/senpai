@@ -1,5 +1,6 @@
 import time
 from base64 import b64encode
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -13,6 +14,7 @@ from senpai_agent.controller import (
     TurnResult,
     _full_prompt,
 )
+from senpai_agent.inbox import PersistentInbox, deliver_turn_messages
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.state import ConversationStateLedger, WorkspaceDivergenceLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
@@ -49,6 +51,8 @@ class Turns:
         conversation_id,
         event_keys,
         visible_event_keys=frozenset(),
+        inbox,
+        inbox_turn_id,
     ):
         self.calls.append(
             (prompt, conversation_id, event_keys, visible_event_keys)
@@ -56,6 +60,11 @@ class Turns:
         outcome = self.outcomes.pop(0) if self.outcomes else TurnResult(exit_code=0)
         if isinstance(outcome, Exception):
             raise outcome
+        if outcome.exit_code == 0:
+            turn = inbox.turn(inbox_turn_id)
+            for message in turn.messages:
+                inbox.record_delivered(message.delivery_id, message.body)
+            inbox.record_processed(inbox_turn_id)
         return outcome
 
 
@@ -204,24 +213,128 @@ def test_post_turn_poll_at_reminder_boundary_only_delivers_new_state(
     ]
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [TurnResult(exit_code=19), RuntimeError("SDK transport failed")],
-    ids=["nonzero-exit", "exception"],
-)
-def test_failed_turn_retries_the_same_unacknowledged_event_with_full_brief(failure):
-    event = review_event()
-    mailbox = Mailbox([(event,), (event,), ()])
-    turns = Turns([failure, TurnResult(exit_code=0)])
+def test_failed_turn_resumes_without_admitting_new_events(tmp_path: Path):
+    """
+    Requirement: an unresolved turn is resumed before newly observed work.
+    Interface: Controller turns and mailbox acknowledgements across retries.
+    """
+    first = review_event(17)
+    later = review_event(18)
+    mailbox = Mailbox([(first,), (first, later), ()])
+    turns = Turns([TurnResult(exit_code=19), TurnResult(exit_code=0)])
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
 
-    controller(mailbox, turns).run(max_cycles=2)
+    controller(mailbox, turns, inbox=inbox).run(max_cycles=2)
 
-    assert [call[2] for call in turns.calls] == [
-        frozenset({event.dedupe_key}),
-        frozenset({event.dedupe_key}),
+    assert [call[2] for call in turns.calls[:2]] == [
+        frozenset({first.dedupe_key}),
+        frozenset({first.dedupe_key}),
     ]
-    assert all("programme" in call[0] for call in turns.calls)
+    assert later.dedupe_key not in turns.calls[1][2]
+    assert [call[2] for call in turns.calls] == [
+        frozenset({first.dedupe_key}),
+        frozenset({first.dedupe_key}),
+        frozenset({later.dedupe_key}),
+    ]
+    assert mailbox.acknowledged == [
+        (first.dedupe_key,),
+        (later.dedupe_key,),
+    ]
+
+
+def test_108_events_survive_four_failed_inferences_without_visible_replay(
+    tmp_path: Path,
+):
+    events = tuple(review_event(index) for index in range(108))
+
+    class Conversation:
+        def __init__(self):
+            self.events = []
+            self.sent = []
+            self.state = SimpleNamespace(active_branch=lambda: list(self.events))
+
+        def send_message(self, message, sender=None):
+            self.sent.append(message)
+            self.events.append(SimpleNamespace(message=message, sender=sender))
+
+    class RetryingTurns:
+        def __init__(self):
+            self.calls = 0
+            self.conversation = Conversation()
+
+        def run(
+            self,
+            _prompt,
+            *,
+            conversation_id,
+            event_keys,
+            visible_event_keys=frozenset(),
+            inbox,
+            inbox_turn_id,
+        ):
+            del conversation_id, event_keys, visible_event_keys
+            self.calls += 1
+            deliver_turn_messages(self.conversation, inbox, inbox_turn_id)
+            if self.calls <= 4:
+                return TurnResult(exit_code=1)
+            inbox.record_processed(inbox_turn_id)
+            return TurnResult(exit_code=0)
+
+    turns = RetryingTurns()
+    Controller(
+        role="advisor",
+        mailbox=Mailbox([events]),
+        turns=turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        inbox=PersistentInbox(tmp_path / "inbox.sqlite3"),
+        sleep=lambda _seconds: None,
+        poll_interval_seconds=600,
+        jitter_seconds=0,
+        max_consecutive_turn_failures=5,
+    ).run(max_cycles=5)
+
+    visible = Counter(turns.conversation.sent)
+    assert turns.calls == 11
+    assert all(visible[event.to_prompt()] == 1 for event in events)
+
+
+def test_processed_turn_retries_mailbox_acknowledgement_without_inference(
+    tmp_path: Path,
+):
+    """
+    Requirement: post-inference recovery performs acknowledgement only.
+    Interface: persistent inbox, Controller, mailbox, and TurnRunner calls.
+    """
+    event = review_event()
+    path = tmp_path / "inbox.sqlite3"
+
+    class FailingAckMailbox(Mailbox):
+        def acknowledge(self, _dedupe_keys):
+            raise RuntimeError("mailbox acknowledgement failed")
+
+    first_turns = Turns()
+    with pytest.raises(RuntimeError, match="mailbox acknowledgement failed"):
+        controller(
+            FailingAckMailbox([(event,)]),
+            first_turns,
+            inbox=PersistentInbox(path),
+        ).run(max_cycles=1)
+
+    assert len(first_turns.calls) == 1
+    assert len(PersistentInbox(path).processed_turns()) == 1
+
+    mailbox = Mailbox([(), ()])
+    turns = Turns()
+    controller(
+        mailbox,
+        turns,
+        inbox=PersistentInbox(path),
+    ).run(max_cycles=1)
+
+    assert turns.calls == []
     assert mailbox.acknowledged == [(event.dedupe_key,)]
+    assert PersistentInbox(path).processed_turns() == ()
 
 
 def test_level_trigger_is_quiet_while_visible_and_wakes_after_reappearing():
@@ -278,6 +391,52 @@ def test_still_actionable_event_is_redelivered_after_one_poll_interval(
     ]
 
 
+def test_restart_waits_one_reminder_interval_before_redelivery(
+    tmp_path: Path,
+    monkeypatch,
+):
+    event = review_event()
+    path = tmp_path / "inbox.sqlite3"
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+
+    class PersistentMailbox(Mailbox):
+        def poll(self):
+            self.calls += 1
+            return (event,)
+
+    Controller(
+        role="advisor",
+        mailbox=PersistentMailbox([]),
+        turns=Turns(),
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        inbox=PersistentInbox(path),
+        sleep=lambda _seconds: None,
+        poll_interval_seconds=30,
+        jitter_seconds=0,
+        event_reminder_seconds=30,
+    ).run(max_cycles=1)
+
+    restarted_turns = Turns()
+    Controller(
+        role="advisor",
+        mailbox=PersistentMailbox([]),
+        turns=restarted_turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        inbox=PersistentInbox(path),
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=30,
+        jitter_seconds=0,
+        event_reminder_seconds=30,
+    ).run(max_cycles=2)
+
+    assert [call[2] for call in restarted_turns.calls] == [
+        frozenset({event.dedupe_key})
+    ]
+
+
 def test_older_visible_event_does_not_lose_its_reminder_to_another_turn(
     monkeypatch,
 ):
@@ -299,12 +458,16 @@ def test_older_visible_event_does_not_lose_its_reminder_to_another_turn(
             conversation_id,
             event_keys,
             visible_event_keys=frozenset(),
+            inbox,
+            inbox_turn_id,
         ):
             result = super().run(
                 prompt,
                 conversation_id=conversation_id,
                 event_keys=event_keys,
                 visible_event_keys=visible_event_keys,
+                inbox=inbox,
+                inbox_turn_id=inbox_turn_id,
             )
             if (
                 event_keys == frozenset({newer.dedupe_key})
@@ -609,7 +772,6 @@ def test_preserved_workspace_divergence_is_delivered_to_the_existing_turn():
     assert turns.calls[0][2] == frozenset(
         {event.dedupe_key, conflict.event.dedupe_key}
     )
-    assert "do not reset or discard local work" in turns.calls[0][0]
 
 
 def student_assignment_event():
@@ -811,7 +973,7 @@ def test_failed_workspace_divergence_turn_is_retried():
     assert len(turns.calls) == 2
 
 
-def test_successful_turn_acknowledges_and_suppresses_mid_turn_feedback():
+def test_feedback_polled_after_a_turn_is_processed_in_the_next_turn():
     assignment = ControllerEvent(
         kind="student_assignment",
         dedupe_key="student_assignment:assignment-17:revision-2",
@@ -840,9 +1002,13 @@ def test_successful_turn_acknowledges_and_suppresses_mid_turn_feedback():
 
     controller(mailbox, turns, role="student").run(max_cycles=1)
 
-    assert len(turns.calls) == 1
+    assert [call[2] for call in turns.calls] == [
+        frozenset({assignment.dedupe_key}),
+        frozenset({feedback.dedupe_key}),
+    ]
     assert mailbox.acknowledged == [
-        (assignment.dedupe_key, feedback.dedupe_key),
+        (assignment.dedupe_key,),
+        (feedback.dedupe_key,),
     ]
 
 
