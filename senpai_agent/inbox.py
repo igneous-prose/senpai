@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+import time
 import uuid
 from collections.abc import Sequence
 from contextlib import nullcontext
@@ -112,6 +113,7 @@ class PersistentInbox:
                 legacy_prompt_delivery_id TEXT,
                 context_reset_completed INTEGER NOT NULL DEFAULT 1,
                 acknowledged INTEGER NOT NULL DEFAULT 0,
+                inference_attempts INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 processed_at TEXT,
                 acknowledged_at TEXT
@@ -173,6 +175,13 @@ class PersistentInbox:
                 UPDATE inbox_turns
                 SET context_reset_completed = 0
                 WHERE recovery_of IS NOT NULL AND state != 'processed'
+                """
+            )
+        if "inference_attempts" not in turn_columns:
+            self._connection.execute(
+                """
+                ALTER TABLE inbox_turns
+                ADD COLUMN inference_attempts INTEGER NOT NULL DEFAULT 0
                 """
             )
         message_columns = {
@@ -682,6 +691,66 @@ class PersistentInbox:
             )
             return self._turn(database, turn_id)
 
+    def record_inference_attempt(self, turn_id: str) -> InboxTurn:
+        """Persist one attempt immediately before model inference starts."""
+
+        with self._transaction() as database:
+            turn = self._turn(database, turn_id)
+            if turn.state is not DeliveryState.DELIVERED:
+                raise ValueError(
+                    "inference can start only after the complete turn is delivered"
+                )
+            database.execute(
+                """
+                UPDATE inbox_turns
+                SET inference_attempts = inference_attempts + 1
+                WHERE turn_id = ?
+                """,
+                (turn_id,),
+            )
+            return self._turn(database, turn_id)
+
+    def terminal_recovery_due(
+        self,
+        turn_id: str,
+        *,
+        max_attempts: int,
+        max_age_seconds: float,
+        now: float | None = None,
+    ) -> bool:
+        """Return whether one unresolved delivered turn has exhausted its budget."""
+
+        if max_attempts <= 0 or max_age_seconds <= 0:
+            raise ValueError("terminal recovery limits must be positive")
+        current_time = time.time() if now is None else now
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT
+                    state,
+                    recovery_of,
+                    superseded_by,
+                    inference_attempts,
+                    unixepoch(created_at) AS created_epoch
+                FROM inbox_turns
+                WHERE turn_id = ?
+                """,
+                (turn_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown inbox turn {turn_id}")
+        if (
+            DeliveryState(row["state"]) is not DeliveryState.DELIVERED
+            or row["recovery_of"] is not None
+            or row["superseded_by"] is not None
+        ):
+            return False
+        age_seconds = max(0.0, current_time - float(row["created_epoch"]))
+        return (
+            int(row["inference_attempts"]) >= max_attempts
+            or age_seconds >= max_age_seconds
+        )
+
     def processed_turns(self) -> tuple[InboxTurn, ...]:
         with self._lock:
             rows = self._connection.execute(
@@ -717,6 +786,8 @@ class PersistentInbox:
             original = self._turn(database, turn_id)
             if original.superseded_by is not None:
                 return self._turn(database, original.superseded_by)
+            if original.recovery_of is not None:
+                return original
             if original.state is DeliveryState.PROCESSED:
                 return original
 

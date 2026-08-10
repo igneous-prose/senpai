@@ -1445,6 +1445,8 @@ def run_openhands(
                     inbox.record_processed(active_inbox_turn_id)
                     inference_required = False
         if inference_required:
+            if inbox is not None and active_inbox_turn_id is not None:
+                inbox.record_inference_attempt(active_inbox_turn_id)
             with graceful_interrupts(conversation):
                 if not config.child:
                     with (

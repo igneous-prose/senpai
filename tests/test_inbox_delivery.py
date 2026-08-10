@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import time
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -234,6 +235,55 @@ def test_context_reset_preserves_old_turn_and_requeues_one_canonical_copy(
     assert recovery.events[0].delivery_id != old.events[0].delivery_id
     assert inbox.turn(old.turn_id).superseded_by == recovery.turn_id
     assert inbox.turn(old.turn_id).state is DeliveryState.DELIVERED
+
+    repeated_from_recovery = inbox.reset_turn(
+        recovery.turn_id,
+        "a recovery branch must not fork again",
+    )
+    assert repeated_from_recovery.turn_id == recovery.turn_id
+
+
+def test_terminal_recovery_policy_survives_restart_and_bounds_attempts_and_age(
+    tmp_path: Path,
+):
+    """
+    Requirement: an unresolved delivered turn eventually becomes recoverable.
+    Interface: the persistent inbox across process restarts.
+    """
+    path = tmp_path / "inbox.sqlite3"
+    inbox = PersistentInbox(path)
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    deliver_turn_messages(Conversation(), inbox, turn.turn_id)
+
+    for _attempt in range(2):
+        PersistentInbox(path).record_inference_attempt(turn.turn_id)
+    assert not PersistentInbox(path).terminal_recovery_due(
+        turn.turn_id,
+        max_attempts=3,
+        max_age_seconds=10_000,
+    )
+
+    PersistentInbox(path).record_inference_attempt(turn.turn_id)
+    assert PersistentInbox(path).terminal_recovery_due(
+        turn.turn_id,
+        max_attempts=3,
+        max_age_seconds=10_000,
+    )
+
+    age_path = tmp_path / "age-inbox.sqlite3"
+    aged = PersistentInbox(age_path)
+    aged.enqueue(CONVERSATION_ID, "event:age", "aged event")
+    aged_turn = aged.next_turn(CONVERSATION_ID, "aged prompt")
+    assert aged_turn is not None
+    deliver_turn_messages(Conversation(), aged, aged_turn.turn_id)
+    assert PersistentInbox(age_path).terminal_recovery_due(
+        aged_turn.turn_id,
+        max_attempts=99,
+        max_age_seconds=60,
+        now=time.time() + 61,
+    )
 
 
 def test_deliberate_reminder_gets_a_fresh_delivery_identity(tmp_path: Path):

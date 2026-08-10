@@ -49,6 +49,8 @@ from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergen
 
 
 _EDGE_TRIGGERED_EVENT_KINDS = frozenset({"research_base_changed"})
+_MAX_UNRESOLVED_TURN_ATTEMPTS = 3
+_MAX_UNRESOLVED_TURN_AGE_SECONDS = 3 * 60 * 60
 _PROMPT_TEMPLATE_VARIABLES = frozenset(
     {
         "ADVISOR_BRANCH",
@@ -159,12 +161,34 @@ class OpenHandsTurnRunner:
         if (inbox is None) != (inbox_turn_id is None):
             raise ValueError("inbox and inbox turn ID must be provided together")
 
+        active_inbox_turn_id = inbox_turn_id
+        if (
+            inbox is not None
+            and active_inbox_turn_id is not None
+            and inbox.terminal_recovery_due(
+                active_inbox_turn_id,
+                max_attempts=_MAX_UNRESOLVED_TURN_ATTEMPTS,
+                max_age_seconds=_MAX_UNRESOLVED_TURN_AGE_SECONDS,
+            )
+        ):
+            stalled_turn_id = active_inbox_turn_id
+            recovery = inbox.reset_turn(stalled_turn_id, prompt)
+            active_inbox_turn_id = recovery.turn_id
+            print(
+                "SENPAI_TERMINAL_TURN_RECOVERY "
+                f"conversation_id={conversation_id} "
+                f"stalled_turn_id={stalled_turn_id} "
+                f"recovery_turn_id={active_inbox_turn_id}",
+                file=sys.stderr,
+                flush=True,
+            )
+
         def inbox_options() -> dict[str, object]:
-            if inbox is None or inbox_turn_id is None:
+            if inbox is None or active_inbox_turn_id is None:
                 return {}
             return {
                 "inbox": inbox,
-                "inbox_turn_id": inbox_turn_id,
+                "inbox_turn_id": active_inbox_turn_id,
             }
 
         def run_turn() -> int:
