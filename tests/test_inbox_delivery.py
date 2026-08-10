@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from openhands.sdk.event import ActionEvent, ObservationEvent
 
 from senpai_agent.inbox import (
     DeliveryState,
@@ -236,11 +237,13 @@ def test_context_reset_preserves_old_turn_and_requeues_one_canonical_copy(
     assert inbox.turn(old.turn_id).superseded_by == recovery.turn_id
     assert inbox.turn(old.turn_id).state is DeliveryState.DELIVERED
 
-    repeated_from_recovery = inbox.reset_turn(
+    next_generation = inbox.reset_turn(
         recovery.turn_id,
-        "a recovery branch must not fork again",
+        "a later explicit reset gets one new canonical branch",
     )
-    assert repeated_from_recovery.turn_id == recovery.turn_id
+    assert next_generation.turn_id != recovery.turn_id
+    assert next_generation.recovery_generation == 2
+    assert [event.body for event in next_generation.events] == ["canonical event"]
 
 
 def test_terminal_recovery_policy_survives_restart_and_bounds_attempts_and_age(
@@ -284,6 +287,70 @@ def test_terminal_recovery_policy_survives_restart_and_bounds_attempts_and_age(
         max_age_seconds=60,
         now=time.time() + 61,
     )
+
+
+def test_ordinary_tool_action_is_not_a_finished_response(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    conversation = Conversation()
+    deliver_turn_messages(conversation, inbox, turn.turn_id)
+    conversation.events.append(
+        ActionEvent.model_construct(
+            id="action-1",
+            source="agent",
+            tool_name="terminal",
+            tool_call_id="call-1",
+        )
+    )
+
+    assert not turn_has_finished_response(conversation, turn)
+
+
+def test_matched_finish_observation_is_a_finished_response(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    conversation = Conversation()
+    deliver_turn_messages(conversation, inbox, turn.turn_id)
+    conversation.events.extend(
+        [
+            ActionEvent.model_construct(
+                id="finish-action",
+                source="agent",
+                tool_name="finish",
+                tool_call_id="finish-call",
+            ),
+            ObservationEvent.model_construct(
+                id="finish-observation",
+                source="environment",
+                tool_name="finish",
+                tool_call_id="finish-call",
+                action_id="finish-action",
+            ),
+        ]
+    )
+
+    assert turn_has_finished_response(conversation, turn)
+
+
+def test_feedback_after_a_finished_response_reopens_the_turn(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    conversation = Conversation()
+    deliver_turn_messages(conversation, inbox, turn.turn_id)
+    conversation.events.extend(
+        [
+            SimpleNamespace(message="completed answer", sender="agent"),
+            SimpleNamespace(message="hook denied completion", source="environment"),
+        ]
+    )
+
+    assert not turn_has_finished_response(conversation, turn)
 
 
 def test_deliberate_reminder_gets_a_fresh_delivery_identity(tmp_path: Path):

@@ -423,7 +423,11 @@ def test_terminal_turn_recovery_preserves_history_and_excludes_new_events(
 
     def run_openhands(prompt, _config, **kwargs):
         calls.append((prompt, kwargs))
-        recovery = inbox.turn(kwargs["inbox_turn_id"])
+        recovery = inbox.recover_turn(
+            kwargs["inbox_turn_id"],
+            kwargs["recovery_prompt"],
+            max_generations=1,
+        )
         assert recovery.recovery_of == original.turn_id
         assert [event.event_key for event in recovery.events] == ["event:old"]
         assert inbox.pending_count(conversation_id) == 1
@@ -448,10 +452,9 @@ def test_terminal_turn_recovery_preserves_history_and_excludes_new_events(
     assert result.exit_code == 0
     assert len(calls) == 1
     assert calls[0][0] == "unchanged controller prompt"
-    assert "reset_context" not in calls[0][1]
+    assert "complete current research brief" in calls[0][1]["recovery_prompt"]
     recovery = inbox.turn(inbox.turn(original.turn_id).superseded_by)
     assert recovery.state is DeliveryState.PROCESSED
-    assert inbox.reset_turn(recovery.turn_id, "must not fork").turn_id == recovery.turn_id
 
 
 def test_context_recovery_attempt_is_not_retried(
