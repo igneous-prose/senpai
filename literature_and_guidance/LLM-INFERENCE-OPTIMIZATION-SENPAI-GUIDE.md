@@ -596,11 +596,12 @@ Try:
 - launch-overhead reduction,
 - host-loop removal.
 
-Treat work ownership and execution geometry as a search surface rather than a
-single tuning constant. Useful axes include tile and subgroup shapes, split
-factors, the amount of independent work, register lifetime, occupancy, tail
-waste, barriers, and core count. The best geometry can change with request
-shape and accelerator, so measure the boundary cases and transfer assumptions.
+Experiment with how each kernel divides work across the accelerator. A larger
+block may reuse data well but run fewer blocks in parallel; a smaller block may
+create more parallel work but repeat setup or leave part of the hardware idle.
+Try a few sensible divisions of the work, including the smallest and largest
+real request shapes, because the best choice may change with the workload and
+hardware.
 
 Cost a kernel change before building it:
 
@@ -857,9 +858,10 @@ Result:
 The system should keep a ledger of rejected ideas. The ledger should include the
 reason an idea failed, not only the result number.
 
-## High-Value Defaults For The Next Model
+## High-Value Defaults
 
-Start with these unless the new model gives a clear reason not to:
+Start with these unless the model or serving workload gives a clear reason not
+to:
 
 - Build the validation harness first.
 - Reproduce the unoptimized baseline locally and officially.
