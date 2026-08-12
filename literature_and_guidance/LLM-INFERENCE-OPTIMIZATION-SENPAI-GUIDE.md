@@ -19,6 +19,14 @@ hardware target. The lessons below are written to transfer to a different large
 language model, with its own architecture, serving stack, quality contract, and
 deployment hardware.
 
+The guide also incorporates a post-run review of the Maple and Cedar Senpai
+programmes in the MLXFast Challenge, including their pull requests and the
+public submission code and research notes from the wider field. That second
+case study broadened the research map beyond dense decode and speculation. In
+particular, it exposed reusable questions about phase-specific execution,
+sparse and mixture-of-experts dataflow, representation metadata, compilation,
+and the difference between a faster component and a shorter critical path.
+
 The guide also incorporates the speculative decoding lessons from Modal's
 [Speculation Is All You Need](https://modal.com/blog/spec-is-all-u-need), a
 June 19, 2026 research post that argues for treating speculation as a central
@@ -161,9 +169,43 @@ a target-only kernel.
 Before accepting a result, prove that:
 
 - the changed control reaches the timed path,
+- the edited source reaches the artifact that is actually loaded,
 - the intended kernel dispatched,
+- the intended specialization and shape were selected,
 - the required workload was preserved,
-- the compiler and runtime used the intended implementation.
+- the compiler and runtime used the intended implementation,
+- the proposed physical work actually changed.
+
+Think of this as a chain: source, generated or compiled artifact, selector,
+dispatch, and observed work. A source diff can be real while the active path is
+unchanged. Conversely, deleting a high-level operation can make a lower-level
+fast path ineligible and increase the physical work. When practical, close the
+chain with instruction or transaction counts, dispatch identities, generated
+artifact parity, and a small positive control that proves the instrument can
+see the path.
+
+### Partition The Workload Into Execution Regimes
+
+Prefill and one-token decode are not merely two rows in a final score. They can
+have different arithmetic intensity, shapes, layouts, kernels, and limiting
+resources. Seed processing, the first decode step, steady decode, verification,
+sampling, long-context transitions, batch sizes, and cold versus warm execution
+can form further regimes.
+
+Build a small regime matrix from the real serving contract. For each important
+cell, record:
+
+- request shape and phase,
+- selected implementation and hardware path,
+- frequency or weight in the end-to-end workload,
+- wall time and the dominant resource,
+- whether the measurement is cold, warm, or amortized.
+
+Optimize and report raw regime-level times before collapsing them into one
+throughput or composite score. A result from one cell should transfer to another
+only through an explicit bridge, such as a shared kernel, a validated cost
+model, or a target measurement. This prevents a local fallback, a different
+context length, or noise in one phase from becoming evidence for another.
 
 ### Treat Quality As A System, Not One Number
 
@@ -225,6 +267,36 @@ new drafter, ask which budget line it attacks:
 - network or benchmark overhead.
 
 If the idea does not map to a measured cost, it is probably premature.
+
+The budget must describe the dependency graph as well as the sum of component
+times. Removing a dispatch may save nothing when it was overlapped. Fusion may
+delay an independent branch, replicate a producer reduction, increase live
+state, or reduce occupancy. Fission may add a launch yet shorten the critical
+path. For every fusion, materialization, or scheduling proposal, ask whether it
+removes work, moves work, overlaps work, or merely changes where the profiler
+attributes it.
+
+### Treat Metadata And Invariants As Optimization Inputs
+
+Inference moves and recomputes more than weights and activations. Indices,
+bounds, masks, permutations, scales, routing decisions, layout descriptors, and
+cache state can be substantial costs or can force downstream materialization.
+Inventory them as first-class data products.
+
+Two broad research families follow:
+
+- Have a producer publish a compact result that several consumers currently
+  rediscover, such as exact bounds, a permutation, a sparse-work map, or a
+  layout certificate.
+- Find invariants created by a checkpoint transform or upstream computation,
+  then encode the same information more cheaply and reconstruct it exactly at
+  the consumer.
+
+These levers are safest when the invariant is proved by construction, carried
+with explicit shape and provenance, and invalidated whenever its source state
+changes. Keep a fail-closed fallback for inputs that do not satisfy the proof.
+Price the certificate itself: maintaining or checking an invariant can cost
+more than the work it removes.
 
 ### Treat Speculation As A Data Flywheel
 
@@ -368,6 +440,18 @@ system uses a ladder:
 The fast loop should catch obvious failures. The slow loop should prevent
 expensive false positives.
 
+Calibrate the instrument as well as the candidate. Use known-null and
+known-effect controls to test that counters, labels, and timings mean what the
+analysis assumes. Estimate the minimum detectable effect before committing to a
+long experiment, and allow “inconclusive at this precision” as an honest
+result. Paired or counterbalanced designs are useful only when the measured
+covariance supports them; no ordering or replicate count is universally best.
+
+Keep causal evidence separate from selection outcomes. A leaderboard rank,
+promotion, or rejection can mix the candidate effect with run noise and
+selection from many trials. Fingerprint executable content, compare raw
+component times, and replicate small selected wins before composing them.
+
 ### Make Negative Results Easy To Reuse
 
 The corpus contains many dead ends that are useful precisely because they were
@@ -423,7 +507,9 @@ different request path should block promotion.
 
 ### Phase 3: Make A Decode Budget
 
-Profile one token at a time. For transformer inference, split the budget into:
+Profile one token at a time, but also make separate budgets for the other
+important regimes identified in the serving contract. For transformer
+inference, split each applicable budget into:
 
 - embedding and input preparation,
 - attention,
@@ -438,6 +524,11 @@ Profile one token at a time. For transformer inference, split the budget into:
 
 Then assign each proposed optimization to a budget line. This keeps the research
 portfolio balanced and avoids over-investing in an already-small component.
+
+Include phase transitions and lifecycle costs where they matter: model and
+weight preparation, first touch, compilation or autotuning, initial cache
+growth, the first decode step, output selection, and shape-specific fallbacks.
+Do not amortize them away unless production traffic genuinely does.
 
 ### Phase 4: Establish The Weight-Byte Floor
 
@@ -554,6 +645,12 @@ Try:
 - launch-overhead reduction,
 - host-loop removal.
 
+Treat work ownership and execution geometry as a search surface rather than a
+single tuning constant. Useful axes include tile and subgroup shapes, split
+factors, the amount of independent work, register lifetime, occupancy, tail
+waste, barriers, and core count. The best geometry can change with request
+shape and accelerator, so measure the boundary cases and transfer assumptions.
+
 Cost a kernel change before building it:
 
 - bytes moved,
@@ -566,6 +663,20 @@ Cost a kernel change before building it:
 Every kernel optimization needs a numerical-equivalence gate. If the gate is
 "same selected token" rather than bit-exact equality, state that explicitly and
 test the margin where token choices can flip.
+
+Compilation and specialization are part of the runtime budget. Audit the full
+request lifecycle for JIT compilation, graph creation, autotuning, pipeline
+cache misses, and lazy page or artifact loading. Warm the exact phase, shape,
+branch, and epilogue identities that production will reuse; a forward-only
+warmup may leave sampling or a fallback shape cold. Balance specialization
+against compile time, cache pressure, binary size, and the number of identities
+that must be prepared.
+
+Preserve arithmetic semantics, not merely algebra. Contraction, reduction
+order, intermediate rounding, and reassociation can change outputs even when
+two expressions are mathematically equivalent. Use component differential
+tests and full-model gates, and keep generated, AOT, and JIT implementations in
+sync when more than one artifact represents the same kernel.
 
 Drafters need their own runtime scrutiny. They are smaller than the target, so
 they may fail to saturate the accelerator and may pay proportionally more host
@@ -680,6 +791,58 @@ Common failure modes:
 - deterministic settings that restore correctness but impose a large speed tax,
 - private prompts with longer context changing the bottleneck.
 
+### Sparse And Mixture-Of-Experts Dataflow
+
+Sparse models add a control and data-movement problem around the dense expert
+math. Measure the real distribution rather than reasoning only from the mean:
+active experts, routes per expert, empty and tiny groups, skew, tail shapes, and
+how these change across workloads.
+
+Promising experiments:
+
+- exact or hierarchical routing and selection algorithms that preserve full
+  ordering keys and tie-breaking,
+- carrying routing indices, expert bounds, permutations, and other producer
+  metadata to downstream consumers,
+- compacting sparse work and mapping execution ownership to active rows,
+- grouping, sorting, gather/scatter, and inverse-permutation alternatives,
+- ragged versus padded expert kernels and geometry chosen for the measured
+  distribution,
+- shared-expert and routed-expert overlap, locality, and load balancing,
+- eliminating intermediate materialization while preserving accumulation
+  order,
+- exact fallback paths for dense or unusual routing distributions.
+
+Common failure modes:
+
+- sizing kernels for average occupancy while the distribution has a long tail,
+- reducing high-level operations but disabling a specialized sparse backend,
+- changing comparator tie-breaking or floating-point accumulation order,
+- spending more to create, validate, or transport a sparse certificate than it
+  saves,
+- assuming a sparse win at one batch or phase transfers to another.
+
+### Representation And Lifecycle Co-Design
+
+Treat offline transformation, model loading, runtime preparation, and hot-path
+layout as one design space. The same prepacking, permutation, transposition, or
+metadata construction can be cheap at one lifecycle stage and dominated at
+another.
+
+Promising experiments:
+
+- prepacking weights or metadata for the consumer's real access pattern,
+- lossless compression of producer-certified redundant representation,
+- zero-copy views when shape, stride, offset, type, and ownership permit them,
+- removing materialization or repeated conversion between adjacent stages,
+- producing reusable bounds, indices, or layout descriptors upstream,
+- moving invariant preparation out of the repeated request path.
+
+Price startup latency, peak and resident memory, duplicated representations,
+artifact size, compile time, caching, mutability, and invalidation alongside
+steady-state latency. The right answer may be offline, at load time, lazily
+cached, or recomputed; no lifecycle stage is universally best.
+
 ### Decode Loop, Scheduling, And Host Overhead
 
 Promising experiments:
@@ -726,8 +889,9 @@ Implementation scope:
   Files, model artifacts, kernels, flags, or training jobs allowed to change.
 
 Measurement plan:
-  Static checks, microbenchmarks, local validation, paired speed test, and
-  official launch conditions.
+  Regime and reachability matrix; static checks; instrument controls;
+  microbenchmarks; local validation; paired speed test; minimum detectable
+  effect; and official launch conditions.
 
 Speculation plan:
   Acceptance length target, draft length sweep, drafter cost, verifier-width
@@ -737,11 +901,19 @@ Stop rule:
   Green, amber, and red criteria, including when to kill the idea.
 
 Result:
-  Structured metrics, artifact paths, and a plain-language conclusion.
+  Raw component and wall metrics, units, uncertainty, evidence state,
+  artifact paths, and a plain-language conclusion.
 ```
 
 The system should keep a ledger of rejected ideas. The ledger should include the
 reason an idea failed, not only the result number.
+
+Use explicit evidence states. An idea can be refuted, inconclusive,
+unreachable on the available hardware, locally positive but target-unvalidated,
+or validated on the target. Preserve units, sign, base and artifact identity,
+component-versus-wall scope, and whether a candidate was selected from many
+trials. At promotion and composition boundaries, replicate or shrink small
+best-of-many wins rather than treating selection as free evidence.
 
 ## High-Value Defaults For The Next Model
 
@@ -760,9 +932,21 @@ Start with these unless the new model gives a clear reason not to:
 - Model acceptance length and roofline costs before training a new speculator.
 - Reuse application traces for evaluation, speculator training, and later
   distillation, while keeping held-out quality gates clean.
+- Partition prefill, decode, transitions, cold start, and important request
+  shapes before choosing a bottleneck.
+- Trace changed source through generated or compiled artifacts to the selected
+  dispatch and changed physical work.
+- Inventory sparse-routing metadata, layout conversions, and intermediate
+  materializations alongside weight and activation bytes.
+- Treat producer/consumer contracts and lossless representation invariants as
+  research surfaces, with explicit provenance and invalidation.
+- Audit compilation, specialization, and the complete request epilogue rather
+  than warming only the model forward pass.
 - Prefer prompt-invariant levers for private stability.
 - Use downstream quality gates when perplexity is a weak proxy.
 - Use paired speed measurements for small deltas.
+- Calibrate profilers and timing channels with known-null and known-effect
+  controls; estimate whether the proposed effect is resolvable.
 - Require launch preflight before spending scarce official benchmark runs.
 
 Avoid these habits:
@@ -772,6 +956,11 @@ Avoid these habits:
 - trusting one public prompt set as the whole distribution,
 - accepting a perplexity pass as proof of generation quality,
 - treating acceptance length from one prompt set as universal,
+- inferring mechanism quality from a leaderboard rank, promotion, or rejection,
+- counting dispatches without modeling dependencies, overlap, and replicated
+  work,
+- treating algebraic equivalence as proof of identical floating-point behavior,
+- treating a local fallback or unobserved generated artifact as target evidence,
 - stacking projected gains before measuring interactions,
 - retraining a speculator for transient traffic shifts without checking whether
   the workload is really a mixture of stable domains,
@@ -807,6 +996,31 @@ Selected pull request evidence:
 | [#805](https://github.com/morganmcg1/gemma-challenge-senpai/pull/805) | Input-gate dequantization produced a measured local kernel lever around 265.61 decode tokens per second. |
 | [#825](https://github.com/morganmcg1/gemma-challenge-senpai/pull/825) | Benchmark-faithful 128-prompt testing measured a fire candidate at 268.26 tokens per second with a 260.7 lower bootstrap bound. |
 
+Selected MLXFast evidence:
+
+| Evidence | Lesson |
+| --- | --- |
+| [Maple #11](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/11) and [#91](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/91) | Prefill selected different kernel families on the studied local and ranked hardware, requiring separate phase budgets and explicit transfer claims. |
+| [Maple #22](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/22) | Offline transform and load-time preparation were competing lifecycle stages; the apparently unexplored stage was dominated by an existing repack. |
+| [Maple #157](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/157) and [#657](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/657) | Positive and negative controls exposed profiler blindness, while measured covariance showed that a familiar pairing design was not automatically the most precise. |
+| [Maple #741](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/741) | A provenance audit found unit, sign, counterfactual, and component-versus-wall errors that would otherwise have promoted false conclusions. |
+| [Cedar #31](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/31), [#224](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/224), and [#713](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/713) | Sparse routing metadata could be reused, but removing an apparent materialization also disabled a faster sorted-expert path. |
+| [Cedar #195](https://github.com/morganmcg1/mlxfast-challenge_senpai/pull/195) | Proof-carrying state required complete lifecycle invalidation, and the certificate still had to repay its own cost. |
+| [Submission `796ebd80`](https://github.com/Layr-Labs/mlxfast-challenge/commit/6b1666b09042e6b8042b9f0dc5769c903acba4e2) and [`a0da915f`](https://github.com/Layr-Labs/mlxfast-challenge/commit/70fe340becd16cf5efa40884963283e6a834c84b) | Un-fusing work won when fusion delayed independent work or replicated a producer reduction; dispatch count alone was misleading. |
+| [Submission `e885776f`](https://github.com/Layr-Labs/mlxfast-challenge/commit/5e66d24262cfe3334261e67388d51aff7dd89fa5) | A forward-only warmup left output selection compiling inside scored requests, motivating complete lifecycle warmup. |
+| [Submission `d94f66be`](https://github.com/Layr-Labs/mlxfast-challenge/commit/ebadb94cd54543d219ebaa7d75154a664073076a) | A sparse-work producer published exact expert bounds once for reuse by multiple consumers. |
+| [Submission `97a5090c`](https://github.com/Layr-Labs/mlxfast-challenge/commit/3e165fa52be994d9a162951405273a007b9aa3c1), [`f2b7cccd`](https://github.com/Layr-Labs/mlxfast-challenge/commit/ab17a99f5bd4a84265dd83dd291a4c8733983f33), and [`6718326f`](https://github.com/Layr-Labs/mlxfast-challenge/commit/708500f7343f54dc36bcbedb460aea040e2d5b76) | Producer-certified representation invariants enabled lossless metadata packing and conversion reuse. |
+| [Submission `cc6ddc12`](https://github.com/Layr-Labs/mlxfast-challenge/commit/c5b0a13c5cc032b485022db41bcd745792316714) and [`3223e19d`](https://github.com/Layr-Labs/mlxfast-challenge/commit/149892c38865cdb78af6c1b1158fecc853446ed4) | Exact hierarchical selection and carrying decision payloads to consumers reduced repeated comparison and transport work. |
+
+The frozen MLXFast ledger also supplied a measurement warning rather than an
+optimization recipe. Source-diff-validated replay families, identical except
+for inert standalone comments, showed material score spreads. At the audit
+cutoff, the leaderboard-leading receipt was a comment-only continuation of an
+already evaluated implementation. Leaderboard position therefore cannot
+establish a mechanism's effect; use source or executable fingerprints, raw
+phase measurements, controls, and replication instead. Replay tactics and
+benchmark-specific constants are not part of this guide.
+
 External research evidence:
 
 | Source | Lesson |
@@ -821,3 +1035,8 @@ Corpus statistics:
 - Open pull requests at review time: [#824](https://github.com/morganmcg1/gemma-challenge-senpai/pull/824), [#826](https://github.com/morganmcg1/gemma-challenge-senpai/pull/826), [#829](https://github.com/morganmcg1/gemma-challenge-senpai/pull/829), [#830](https://github.com/morganmcg1/gemma-challenge-senpai/pull/830), [#831](https://github.com/morganmcg1/gemma-challenge-senpai/pull/831), [#832](https://github.com/morganmcg1/gemma-challenge-senpai/pull/832).
 - Main recurring themes: quantization, speculative decoding, kernel and runtime
   work, quality gates, launch gates, private stability, and composition models.
+- MLXFast evidence reviewed: hundreds of Maple and Cedar pull requests, the
+  frozen 1,904-row public submission ledger, promoted submission code, and
+  public research notes. Recurring additions were execution regimes, sparse
+  dataflow, metadata and representation reuse, lifecycle co-design, compilation
+  identity, critical-path analysis, and measurement provenance.
