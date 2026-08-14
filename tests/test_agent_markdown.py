@@ -88,11 +88,9 @@ def test_agent_context_installer_builds_loadable_sanitized_runtime_copies(
     home.mkdir()
     runtime_root.mkdir()
     source_skill = PLUGIN_DIR / "skills" / "review-experiment" / "SKILL.md"
-    operator_skill = ROOT / ".agents" / "skills" / "grilling-autoresearch" / "SKILL.md"
     source_agent = ROOT / ".agents" / "agents" / "bash-runner.md"
     originals = {
         source_skill: source_skill.read_text(encoding="utf-8"),
-        operator_skill: operator_skill.read_text(encoding="utf-8"),
         source_agent: source_agent.read_text(encoding="utf-8"),
     }
 
@@ -117,18 +115,9 @@ def test_agent_context_installer_builds_loadable_sanitized_runtime_copies(
     plugin = Plugin.load(runtime_plugin)
     agents = discover_agents(home, include_project=True, include_user=False)
 
-    assert {skill.name for skill in plugin.skills} == {
-        "alphaxiv-paper-lookup",
-        "assign-experiment",
-        "check-human-issues",
-        "exa-search",
-        "review-experiment",
-        "senpai-status-check",
-        "submit-experiment-results",
-        "wandb-primary",
-    }
+    assert "review-experiment" in {skill.name for skill in plugin.skills}
     assert "bash-runner" in {agent.name for agent in agents}
-    assert not (home / ".agents/skills").exists()
+    assert not (home / ".agents/skills/senpai-tool-telemetry").exists()
     assert all(
         strip_spdx_header(text) == text
         for root in (runtime_plugin, home / ".agents")

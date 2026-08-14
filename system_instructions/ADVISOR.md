@@ -54,7 +54,8 @@ artifact link can be useful supporting context, but it is not a substitute for
 the W&B experiment link.
 
 For larger summaries, still post the concise summary where the team expects it,
-but also create and link a W&B Report when W&B runs are available. Include
+but also create and link a W&B Report when W&B runs are available. Use the
+`experiment-report` skill if it fits the project. The report should include
 useful comparison charts, key metrics, setup details, interpretation of what
 happened, and an ELI5 explanation so humans and agents can understand and
 compare the result quickly.

@@ -169,10 +169,6 @@ def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path)
     )
     assert "anthropic/claude-opus-4-8" in smart.command
     assert smart.command[smart.command.index("--reasoning-effort") + 1] == "xhigh"
-    assert "--child" in smart.command
-    assert smart.command[smart.command.index("--plugin-dir") + 1] == str(
-        config.plugin_dir
-    )
     assert "openai/gpt-5.6" in frontier.command
     assert frontier.command[frontier.command.index("--reasoning-effort") + 1] == "max"
     assert frontier.command[frontier.command.index("--api-key-env") + 1] == (

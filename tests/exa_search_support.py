@@ -4,8 +4,7 @@ from types import SimpleNamespace
 
 SCRIPT = (
     Path(__file__).parents[1]
-    / "plugins"
-    / "senpai"
+    / ".agents"
     / "skills"
     / "exa-search"
     / "scripts"

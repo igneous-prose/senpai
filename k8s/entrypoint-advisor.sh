@@ -132,7 +132,7 @@ ls \
     "$HOME/.agents/agents/general-purpose.md" \
     "$HOME/.agents/agents/explore.md" \
     "$HOME/.agents/agents/search.md" \
-    "$SENPAI_PLUGIN/skills/wandb-primary/SKILL.md"
+    "$HOME/.agents/skills/wandb-primary/SKILL.md"
 
 # --- Hivemind is intentionally disabled pending its OpenHands rewrite. ---
 # source "$WORKDIR/k8s/start-hivemind.sh"

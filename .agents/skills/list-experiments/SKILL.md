@@ -1,13 +1,11 @@
 ---
 name: list-experiments
-description: Operator-side inventory of experiment PRs for auditing a Senpai research track. It outputs merged winners, a compact results table, and full details for deep dives.
+description: Use this skill whenever you need to list all experiment ideas tried or in progress under program.md. It outputs 3 files organized by usefulness — merged winners, a compact results table, and full details for deep dives. Use when generating new experimental ideas to check what has already been tried.
 ---
 
 # List Experiments
 
-This is a human/operator audit guide, not a live advisor or student skill. Run
-the script below to fetch all experiment PRs from the advisor branch and
-organize them into 3 files.
+Run the script below to fetch all experiment PRs from the advisor branch and organize them into 3 files.
 
 The `BASE_BRANCH` should be set to the advisor branch (e.g. `noam`). Check the `$ADVISOR_BRANCH` env var or the PR base branch.
 
