@@ -5,9 +5,7 @@ specific, and operational.
 
 ## Title And Target Summary
 
-Name the target plainly. In the first paragraph, say what inputs come in, what
-outputs are predicted or optimized, and what research problem `program.md`
-governs.
+Name the target plainly. In the first paragraph, say what inputs come in, what outputs are predicted or optimized, and what research problem `program.md` governs.
 
 Example:
 

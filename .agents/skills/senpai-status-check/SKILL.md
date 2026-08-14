@@ -9,9 +9,7 @@ description: Produce a fresh, read-only status report for a Senpai research trac
 
 # Senpai status check
 
-Report progress against the configured `program.md` and fleet activity now. Keep
-scientific progress separate from infrastructure liveness, and distinguish
-observed evidence from inference.
+Report progress against the configured `program.md` and fleet activity now. Keep scientific progress separate from infrastructure liveness, and distinguish observed evidence from inference.
 
 ## Establish scope
 
@@ -29,10 +27,7 @@ Resolve these values from the environment before collecting evidence:
 If a required value is absent, record an evidence gap. Never substitute a
 remembered repository, branch, cluster, project, dataset, or metric.
 
-Read the `program.md` identified in the system prompt for its goals, metric
-contracts,
-benchmarks, training constraints, and permitted reporting paths. Derive every
-metric and benchmark in the report from that file or live evidence.
+Read the `program.md` identified in the system prompt for its goals, metric contracts, benchmarks, training constraints, and permitted reporting paths. Derive every metric and benchmark in the report from that file or live evidence.
 
 ## Collect bounded evidence
 
