@@ -292,8 +292,7 @@ def _read_committed_program(
 
 
 def _discover_program_path(workspace: Path, commit: str) -> str:
-    root = ""
-    nested = []
+    candidates = []
     tree = _git_bytes(workspace, "ls-tree", "-r", "-z", commit)
     for raw_entry in tree.split(b"\0"):
         if not raw_entry:
@@ -307,19 +306,18 @@ def _discover_program_path(workspace: Path, commit: str) -> str:
             continue
         path = raw_path.decode()
         parts = PurePosixPath(path).parts
-        if path == "program.md":
-            root = path
-        elif len(parts) == 2 and parts[-1] == "program.md":
-            nested.append(path)
-    if root:
-        return root
-    if len(nested) == 1:
-        return nested[0]
-    if nested:
-        candidates = ", ".join(sorted(nested))
+        if path == "program.md" or (
+            len(parts) == 2 and parts[-1] == "program.md"
+        ):
+            candidates.append(path)
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        matches = ", ".join(sorted(candidates))
         raise RuntimeError(
-            "found multiple committed program.md candidates one directory below "
-            f"the repository root at target commit {commit}: {candidates}. "
+            "found multiple committed program.md files in the automatic search "
+            f"scope at target commit {commit}: {matches}. Only one may exist when "
+            "program_path is blank. "
             f"{PROGRAM_PATH_GUIDANCE}"
         )
     raise RuntimeError(

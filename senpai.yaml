@@ -7,7 +7,7 @@
 problem_dir: target/
 
 # Target-repository-relative program.md to append to every role's system
-# prompt. Blank prefers root program.md, then one unique */program.md.
+# prompt. Blank requires exactly one program.md at root or one level below.
 program_path: ""
 
 # git (senpai itself)

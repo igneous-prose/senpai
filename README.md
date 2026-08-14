@@ -86,9 +86,10 @@ instructions/
 - `prompt-student.md` adds target-specific implementation, training, and reporting guidance.
 
 `program_path` accepts a normalized target-repository-relative path such as
-`senpai/program.md`. When blank, Senpai prefers committed root `program.md`; if
-it is absent, Senpai selects the sole committed `*/program.md` exactly one
-directory below the root. No match or multiple one-level matches fail startup
+`senpai/program.md`. When blank, Senpai searches committed root `program.md`
+and every committed `*/program.md` exactly one directory below the root. It
+proceeds only when that entire search contains exactly one file. No match or
+multiple matches fail startup
 before any controller or model worker starts. The error lists the searched or
 ambiguous paths and explains how to set `--program_path` or `program_path` in
 `senpai.yaml`. Senpai appends the selected file to every advisor, student, and
@@ -407,7 +408,7 @@ Useful launch controls:
 - `--timeout_minutes` and `--max_epochs` are hard per-training limits.
 - `--poll_interval_s` and `--poll_jitter_s` control idle GitHub cadence without teaching the model to poll.
 - `--gh_history_scope branch` keeps normal advisor-branch memory, `fresh` creates a shallow ablation checkout, and `repo` exposes full repository history.
-- `--program_path senpai/program.md` explicitly selects a target-repository programme file for every role's system prompt; an empty value prefers root `program.md`, then one unique `*/program.md`.
+- `--program_path senpai/program.md` explicitly selects a target-repository programme file for every role's system prompt; an empty value requires exactly one match across root `program.md` and one-level `*/program.md`.
 - `--extra_instructions` accepts a Markdown file or literal operator guidance.
 - `human_issues: false` disables GitHub Issue polling for isolated launches.
 

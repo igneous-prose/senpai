@@ -55,7 +55,38 @@ def test_program_path_must_be_normalized_and_repo_relative(path: str):
         normalize_program_path(path)
 
 
-def test_blank_program_path_prefers_root_program(tmp_path: Path):
+def test_blank_program_path_discovers_root_program(tmp_path: Path):
+    workspace = committed_repo(
+        tmp_path,
+        {"program.md": "Root policy."},
+    )
+
+    snapshot = pinned_program_system_prompt(workspace, "", tmp_path / "state")
+
+    assert snapshot.program_path == "program.md"
+    assert snapshot.prompt.endswith("Root policy.")
+
+
+def test_blank_program_path_lists_every_root_and_nested_match(tmp_path: Path):
+    workspace = committed_repo(
+        tmp_path,
+        {
+            "program.md": "Root policy.",
+            "alpha/program.md": "Alpha policy.",
+            "beta/program.md": "Beta policy.",
+        },
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"alpha/program\.md, beta/program\.md, program\.md",
+    ) as error:
+        pinned_program_system_prompt(workspace, "", tmp_path / "state")
+
+    assert "Only one may exist when program_path is blank" in str(error.value)
+
+
+def test_explicit_program_path_selects_one_of_multiple_matches(tmp_path: Path):
     workspace = committed_repo(
         tmp_path,
         {
@@ -64,10 +95,14 @@ def test_blank_program_path_prefers_root_program(tmp_path: Path):
         },
     )
 
-    snapshot = pinned_program_system_prompt(workspace, "", tmp_path / "state")
+    snapshot = pinned_program_system_prompt(
+        workspace,
+        "senpai/program.md",
+        tmp_path / "state",
+    )
 
-    assert snapshot.program_path == "program.md"
-    assert snapshot.prompt.endswith("Root policy.")
+    assert snapshot.program_path == "senpai/program.md"
+    assert snapshot.prompt.endswith("Nested policy.")
 
 
 def test_blank_program_path_discovers_one_level_program(tmp_path: Path):

@@ -202,8 +202,9 @@ The model receives:
    - `system_instructions/SENPAI-HARNESS.md`; and
    - the rendered advisor or student role charter; and
    - the selected target-repository `program.md` under
-     `## program.md - <path>`. A blank `program_path` prefers committed root
-     `program.md`, then exactly one committed `*/program.md`.
+     `## program.md - <path>`. A blank `program_path` searches committed root
+     `program.md` and committed one-level `*/program.md` paths and requires
+     exactly one total match.
 3. Applicable target `AGENTS.md` and compatible `CLAUDE.md` project context.
 4. A compact skill catalog whose bodies are loaded only when invoked.
 5. User turns containing target role instructions, current state, and current

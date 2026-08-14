@@ -66,7 +66,7 @@ class Args:
     target_repo_url: str  # problem-package repo (entrypoint clones this into $PROBLEM_DIR; agent commits/PRs land here) — REQUIRED, no default
     target_repo_branch: str = ""  # target repo branch used as the base when creating advisor_branch; empty = target repo default branch
     problem_dir: str = "target/"  # active problem directory — entrypoint clones target_repo_url here (from senpai.yaml)
-    program_path: str = ""  # target-repo-relative program.md; blank discovers root or one level below
+    program_path: str = ""  # target-repo-relative program.md; blank requires exactly one root/one-level match
     names: str = ""  # comma-separated student names (e.g. "frieren,fern")
     n_students: int = 4  # number of students to launch (ignored if --names is provided)
     student_prefix: str = ""  # make assignment labels unique across parallel launches using the same base names
