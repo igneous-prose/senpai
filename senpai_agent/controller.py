@@ -20,7 +20,7 @@ from senpai_agent.agent_markdown import strip_spdx_header
 from senpai_agent.advisor import (
     AdvisorEvent,
     AdvisorEventStore,
-    compose_senpai_instructions,
+    compose_system_instructions,
 )
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
@@ -880,7 +880,7 @@ def controller_main(
         )
 
     full_prompt = _full_prompt(role, env)
-    senpai_instructions = compose_senpai_instructions(
+    senpai_instructions = compose_system_instructions(
         read_role_instructions(runner_config.harness_file),
         read_role_instructions(runner_config.role_file),
     ).strip()
