@@ -6,6 +6,8 @@ SPDX-PackageName: senpai
 
 # senpai
 
+***[reseearch preview]***
+
 Senpai is an autonomous ML research loop built on the OpenHands Agent SDK. An advisor proposes and reviews experiments; GPU students implement one assigned experiment each, train, and return evidence through GitHub and W&B.
 
 Senpai is problem-agnostic. It runs against a separate target repository, and every experiment branch, commit, and PR lands there—not in this runner repository.
