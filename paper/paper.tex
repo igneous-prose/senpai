@@ -628,7 +628,7 @@ SENPAI's prompts route reusable workflows through progressively disclosed skills
     \midrule
     \texttt{check-human-issues} & Both & Finds labeled human issues for the caller and posts role-prefixed replies without closing issues. \\
     \texttt{list-experiments} & Researcher & Exports merged winners, compact result tables, and detailed PR bodies from the PR ledger. \\
-    \texttt{bootstrap-target} & Operator & Creates the target programme contract for a new research repository. \\
+    \texttt{bootstrap-target} & Operator & Creates the target programme contract and role-specific instruction overlays for a new research repository. \\
     \texttt{assign-experiment} & Advisor & Creates a Student branch, opens a draft PR, labels it \texttt{status:wip}, and writes full experiment instructions. \\
     \shortstack[l]{\texttt{submit-}\\\texttt{experiment-results}} & Student & Commits changed experiment files, pushes the branch, marks the PR ready, and swaps \texttt{status:wip} to \texttt{status:review}. \\
     \texttt{merge-winner} & Advisor & Preflights terminal results, squash-merges a winning PR, updates the Advisor baseline, and pulls the updated branch. \\

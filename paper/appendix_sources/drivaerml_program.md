@@ -29,6 +29,7 @@ The baseline model given in `model.py` and trained by `train.py` is a plain grou
 - `data/generate_manifest.py` — regenerates `data/split_manifest.json` from the processed PVC manifests. **Read-only. Never touch this file.**
 - `data/preload.py` — validates packaged arrays and writes point counts. **Read-only.**
 - `data/split_manifest.json` — pinned public processed split. **Read-only. Never touch this file.**
+- `instructions/prompt-advisor.md`, `instructions/prompt-student.md` — senpai role prompts. **Read-only.**
 - `pyproject.toml` — runtime deps. Add any new package in the same PR that uses it. **Read-only.**
 
 ## Data
@@ -229,7 +230,7 @@ Wild ideas are welcome, but they must still honor the data split, full-fidelity 
 
 ## Roles
 
-Research is coordinated through GitHub PRs with an advisor/student model. GitHub Issues are used for communication with the human researcher team.
+Research is coordinated through GitHub PRs with an advisor/student model. GitHub Issues are used for communication with the human researcher team. See `instructions/prompt-advisor.md` and `instructions/prompt-student.md`.
 
 ## To Sum up: do everything you possibly can to crush the current reference metrics
 
