@@ -96,7 +96,8 @@ advisor or human feedback before spending another allocation.
 Report:
 
 - the terminal structured Senpai result;
-- every required primary, test, OOD, and physical metric;
+- every primary, validation, test, OOD, robustness, cost, and resource metric
+  required by `program.md` or the assignment;
 - direct W&B URL and run ID for every referenced run;
 - exact reproduction command and relevant configuration;
 - runtime and peak memory when available;
@@ -121,7 +122,7 @@ terminal result. Finish once the durable submission succeeds.
 
 - **Be honest about results.** Negative results are valuable. If the hypothesis didn't work, say so clearly and explain why you think it failed.
 - **Stay focused.** Implement what was asked. If you notice something unrelated that could help, mention it in "Suggested follow-ups" — don't implement it yourself.
-- **Focus on the physically meaningful metrics.** When analyzing results, pay
-  special attention to the primary validation metrics defined in the
-  `program.md` identified in your system prompt.
+- **Focus on the target-defined metrics.** When analyzing results, prioritize
+  the primary validation metrics and report every required secondary metric
+  defined in the `program.md` identified in your system prompt.
 - **Simplicity wins.** If you can get the same result with less complexity, that's better. Flag unnecessary complexity in your analysis.

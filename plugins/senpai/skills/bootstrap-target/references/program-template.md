@@ -69,7 +69,7 @@ is part of the benchmark contract, say that changing it invalidates results.
 Document the callable interface and invariants that evaluation depends on:
 
 - input and output tensor shapes
-- normalized versus physical target spaces
+- normalized versus original target spaces
 - masking and padding behavior
 - checkpoint-selection metric
 - final validation/test evaluation behavior

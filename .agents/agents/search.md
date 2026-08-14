@@ -6,7 +6,7 @@ description: |
   literature through Exa and primary papers.
 
   <example>Find the current API behavior in official documentation.</example>
-  <example>Survey publications on conservative neural operators for CFD.</example>
+  <example>Survey publications on uncertainty calibration for neural networks.</example>
 model: inherit
 reasoning_effort: inherit
 permission_mode: never_confirm

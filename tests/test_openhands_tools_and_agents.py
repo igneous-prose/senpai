@@ -473,6 +473,21 @@ def test_system_instructions_refer_to_program_md_by_filename():
     ) in advisor
 
 
+def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
+    prompt_paths = [
+        *(REPO_ROOT / "system_instructions").glob("*.md"),
+        *(REPO_ROOT / ".agents" / "agents").glob("*.md"),
+        *(REPO_ROOT / "plugins" / "senpai" / "skills").glob("**/*.md"),
+        REPO_ROOT / ".agents" / "skills" / "exa-search" / "SKILL.md",
+    ]
+    prompts = "\n".join(
+        path.read_text(encoding="utf-8").lower() for path in prompt_paths
+    )
+
+    for domain_assumption in ("physic", "fluid dynamics", "cfd", "aerodynamic"):
+        assert domain_assumption not in prompts
+
+
 def test_harness_states_bounded_delegation_tree_contract():
     instructions = (
         REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
