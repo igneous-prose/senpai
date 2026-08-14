@@ -503,6 +503,10 @@ def test_program_md_onboarding_context_is_shared_across_agent_clients():
     assert all(url in agents_context for url in example_urls)
 
 
+def test_claude_discovers_project_skills():
+    assert os.readlink(REPO_ROOT / ".claude" / "skills") == "../.agents/skills"
+
+
 def test_harness_states_bounded_delegation_tree_contract():
     instructions = (
         REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
