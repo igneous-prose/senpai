@@ -4,9 +4,6 @@ description: |
   Use for external research through the explicit search_general_web task form
   for current public sources, or search_research_publications for scholarly
   literature through Exa and primary papers.
-
-  <example>Find the current API behavior in official documentation.</example>
-  <example>Survey publications on uncertainty calibration for neural networks.</example>
 model: inherit
 reasoning_effort: inherit
 permission_mode: never_confirm
