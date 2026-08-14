@@ -21,6 +21,10 @@ PROGRAM_PATH_ENV = "SENPAI_PROGRAM_PATH"
 PROGRAM_SNAPSHOT_ENV = "SENPAI_PROGRAM_SYSTEM_PROMPT_FILE"
 PROGRAM_SHA256_ENV = "SENPAI_PROGRAM_SYSTEM_PROMPT_SHA256"
 PROGRAM_SOURCE_COMMIT_ENV = "SENPAI_PROGRAM_SOURCE_COMMIT"
+PROGRAM_PATH_GUIDANCE = (
+    "Set --program_path (or program_path in senpai.yaml) to a committed "
+    "target-repository-relative path ending in program.md."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +275,8 @@ def _read_committed_program(
         mode, kind, object_id = metadata.split()
     except ValueError as error:
         raise RuntimeError(
-            f"configured program.md is not committed at {commit}: {relative_path}"
+            "configured program.md was not found as a committed regular file "
+            f"at target commit {commit}: {relative_path}. {PROGRAM_PATH_GUIDANCE}"
         ) from error
     if (
         listed_path.decode() != relative_path
@@ -279,7 +284,8 @@ def _read_committed_program(
         or kind != b"blob"
     ):
         raise RuntimeError(
-            f"configured program.md must be a committed regular file: {relative_path}"
+            "configured program.md was not found as a committed regular file "
+            f"at target commit {commit}: {relative_path}. {PROGRAM_PATH_GUIDANCE}"
         )
     body = _git_bytes(workspace, "cat-file", "blob", object_id.decode()).decode()
     return relative_path, body, commit
@@ -312,12 +318,14 @@ def _discover_program_path(workspace: Path, commit: str) -> str:
     if nested:
         candidates = ", ".join(sorted(nested))
         raise RuntimeError(
-            "multiple one-level program.md files found; set program_path "
-            f"explicitly: {candidates}"
+            "found multiple committed program.md candidates one directory below "
+            f"the repository root at target commit {commit}: {candidates}. "
+            f"{PROGRAM_PATH_GUIDANCE}"
         )
     raise RuntimeError(
-        "no committed program.md found at the repository root or one directory "
-        "below; set program_path explicitly"
+        f"could not find a committed program.md at target commit {commit}; "
+        "searched program.md and */program.md (exactly one directory below the "
+        f"repository root). {PROGRAM_PATH_GUIDANCE}"
     )
 
 

@@ -88,7 +88,10 @@ def test_blank_program_path_does_not_search_deeper_than_one_level(tmp_path: Path
         {"configs/senpai/program.md": "Too deep."},
     )
 
-    with pytest.raises(RuntimeError, match="root or one directory below"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"searched program\.md and \*/program\.md",
+    ):
         pinned_program_system_prompt(workspace, "", tmp_path / "state")
 
 
@@ -104,8 +107,10 @@ def test_blank_program_path_rejects_ambiguous_one_level_matches(tmp_path: Path):
     with pytest.raises(
         RuntimeError,
         match=r"alpha/program\.md, beta/program\.md",
-    ):
+    ) as error:
         pinned_program_system_prompt(workspace, "", tmp_path / "state")
+
+    assert "--program_path" in str(error.value)
 
 
 def test_program_snapshot_has_a_source_header_digest_and_private_mode(

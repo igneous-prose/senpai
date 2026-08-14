@@ -89,8 +89,10 @@ instructions/
 `senpai/program.md`. When blank, Senpai prefers committed root `program.md`; if
 it is absent, Senpai selects the sole committed `*/program.md` exactly one
 directory below the root. No match or multiple one-level matches fail startup
-and require an explicit path. Senpai appends the selected file to every
-advisor, student, and child system prompt under
+before any controller or model worker starts. The error lists the searched or
+ambiguous paths and explains how to set `--program_path` or `program_path` in
+`senpai.yaml`. Senpai appends the selected file to every advisor, student, and
+child system prompt under
 `## program.md - senpai/program.md`.
 
 Senpai pins the file from the target's committed `HEAD` before starting a

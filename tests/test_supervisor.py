@@ -154,6 +154,50 @@ def test_supervisor_pins_committed_programme_before_starting_workers(
     assert Path(restarted[PROGRAM_SNAPSHOT_ENV]).read_text() == prompt
 
 
+def test_supervisor_does_not_start_a_worker_without_a_discoverable_program(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("No programme here.")
+    subprocess.run(("git", "init", "-q"), cwd=workspace, check=True)
+    subprocess.run(("git", "add", "."), cwd=workspace, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Senpai Test",
+            "-c",
+            "user.email=senpai@example.com",
+            "commit",
+            "-qm",
+            "Add target files",
+        ),
+        cwd=workspace,
+        check=True,
+    )
+
+    def unexpected_worker(*_args, **_kwargs):
+        pytest.fail("worker must not be constructed when program.md is missing")
+
+    monkeypatch.setattr(supervisor_module, "WorkerSupervisor", unexpected_worker)
+
+    with pytest.raises(RuntimeError) as error:
+        supervisor_module.supervisor_main(
+            ["advisor"],
+            {
+                "SENPAI_OPENHANDS_STATE_DIR": str(tmp_path / "state"),
+                "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+            },
+        )
+
+    message = str(error.value)
+    assert "searched program.md and */program.md" in message
+    assert "--program_path" in message
+    assert "senpai.yaml" in message
+
+
 def test_pid_one_reaps_adopted_children_without_reaping_its_worker(monkeypatch):
     reaped = []
     monkeypatch.setattr(supervisor_module.os, "getpid", lambda: 1)
