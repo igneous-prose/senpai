@@ -71,12 +71,9 @@ The launcher places credentials in a per-launch Kubernetes Secret. During bootst
 
 ### 4. Prepare the target repository
 
-The target repository needs one concise `program.md` describing the research
-goal, metrics, data, constraints, allowed edits, and target-specific guidance.
+The target repository needs one concise `program.md` describing the research goal, metrics, data, constraints, allowed edits, and target-specific guidance.
 
-Put it at the repository root. If it lives elsewhere, set `program_path` in
-`senpai.yaml` or pass `--program_path` at launch. Senpai appends the selected
-file to every agent's system prompt.
+Put it at the repository root. If it lives elsewhere, set `program_path` in `senpai.yaml` or pass `--program_path` at launch. Senpai appends the selected file to every agent's system prompt.
 
 The target repository must be different from the Senpai runner repository.
 

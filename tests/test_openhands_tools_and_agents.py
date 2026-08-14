@@ -497,6 +497,15 @@ def test_system_instructions_refer_to_program_md_by_filename():
     ) in advisor
 
 
+def test_event_guidance_lives_in_the_shared_harness():
+    prompt_dir = REPO_ROOT / "system_instructions"
+    advisor = (prompt_dir / "ADVISOR.md").read_text(encoding="utf-8")
+    harness = (prompt_dir / "SENPAI-HARNESS.md").read_text(encoding="utf-8")
+
+    assert "A `review_ready`, `training_monitor`, human-message" not in advisor
+    assert "A `review_ready`, `training_monitor`, human-message" in harness
+
+
 def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
     prompt_paths = [
         *(REPO_ROOT / "system_instructions").glob("*.md"),
