@@ -299,7 +299,6 @@ OpenHands receives these as progressively disclosed skills; their bodies are loa
 
 | Guide | Purpose |
 |---|---|
-| [Grill an autoresearch setup](.agents/skills/grilling-autoresearch/SKILL.md) | Interview the user and turn repository facts plus explicit decisions into a concise `program.md`. |
 | [Bootstrap a target](plugins/senpai/skills/bootstrap-target/SKILL.md) | Build `program.md` from a new ML repository. |
 | [Assign an experiment](plugins/senpai/skills/assign-experiment/SKILL.md) | Turn a hypothesis into a typed student branch and draft PR. |
 | [Submit experiment results](plugins/senpai/skills/submit-experiment-results/SKILL.md) | Commit the tested implementation and publish a structured, evidence-backed result. |
