@@ -25,6 +25,7 @@ from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
     PROGRAM_SHA256_ENV,
     PROGRAM_SNAPSHOT_ENV,
+    ProgramSystemPromptSnapshot,
     program_system_prompt_sha256,
 )
 
@@ -85,6 +86,7 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": True,
         "command_secrets": {"EXA_API_KEY": "exa-secret"},
         "role": "advisor",
+        "program": ProgramSystemPromptSnapshot(),
     }
     values.update(updates)
     return DelegationConfig(**values)
@@ -219,9 +221,12 @@ def test_child_environment_carries_the_parent_program_snapshot(tmp_path: Path):
     child = OpenHandsChildProcess(
         delegation_config(
             tmp_path,
-            program_path="senpai/program.md",
-            program_system_prompt_file=snapshot,
-            program_system_prompt_sha256=program_system_prompt_sha256(program),
+            program=ProgramSystemPromptSnapshot(
+                program_path="senpai/program.md",
+                prompt=program,
+                path=snapshot,
+                sha256=program_system_prompt_sha256(program),
+            ),
         ),
         delegation_request(),
     )

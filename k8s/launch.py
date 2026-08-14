@@ -106,7 +106,7 @@ class Args:
     )
     advisor: bool = False  # also deploy the advisor pod (default: students only)
     extra_instructions: str = (
-        ""  # extra prompt text for the advisor: a .md file path or a literal string
+        ""  # shared operator instructions: a .md file path or literal text
     )
     timeout_minutes: float = (
         30.0  # training run wall-clock limit (SENPAI_TIMEOUT_MINUTES)

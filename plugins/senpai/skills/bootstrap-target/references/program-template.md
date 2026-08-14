@@ -174,10 +174,9 @@ hyperparameter search.
 
 ## Roles
 
-End by pointing to the target role overlays:
+End with the target's coordination model when it adds useful context:
 
 ```markdown
 Research is coordinated through GitHub PRs with an advisor/student model. GitHub
-Issues are used for communication with the human researcher team. See
-`instructions/prompt-advisor.md` and `instructions/prompt-student.md`.
+Issues are used for communication with the human researcher team.
 ```

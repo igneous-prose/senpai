@@ -34,8 +34,6 @@ to README.md or SPEC.md as appropriate.
 - `SPEC.md` - target architecture and rewrite contract for the senpai orchestration loop.
 - `senpai.yaml` - launch defaults, including the target repo, target branch, advisor branch, and `problem_dir`.
 - `$PROBLEM_DIR/program.md` - conventional authoritative target research context, goals, metrics, training constraints, and file boundaries. A blank `program_path` requires exactly one `program.md` across the repository root and directories one level below; an explicit value selects a target-repository-relative `program.md`.
-- `$PROBLEM_DIR/instructions/prompt-advisor.md` - target-specific advisor prompt.
-- `$PROBLEM_DIR/instructions/prompt-student.md` - target-specific student prompt.
 - `system_instructions/SENPAI-HARNESS.md` - shared OpenHands harness contract.
 - `system_instructions/ADVISOR.md` - advisor role workflow.
 - `system_instructions/STUDENT.md` - student role workflow.
@@ -43,7 +41,7 @@ to README.md or SPEC.md as appropriate.
 ## Architecture
 
 - **Runner repo** - this repo. Owns orchestration, Kubernetes launch, role instructions, GitHub helpers, W&B integration, and operational docs.
-- **Target repo** - cloned into `$PROBLEM_DIR` from `target_repo_url`. Owns the data code, training code, evaluation code, `program.md`, target prompts, and experiment branches. Agent commits and PRs land in the target repo, not in the runner repo.
+- **Target repo** - cloned into `$PROBLEM_DIR` from `target_repo_url`. Owns the data code, training code, evaluation code, `program.md`, project context, and experiment branches. Agent commits and PRs land in the target repo, not in the runner repo.
 - **Advisor pod** - lightweight, no GPU, keeps one durable OpenHands
   conversation and uses typed control-plane tools for GitHub and generic
   child-agent dispatch.

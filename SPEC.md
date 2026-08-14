@@ -178,10 +178,10 @@ OpenHands stores base state and individual events beneath that UUID. A killed
 worker resumes from the last persisted event. An in-flight response or tool
 call without a durable event is retried from the preceding event.
 
-The controller marks a conversation's initial instructions delivered and
+The controller marks a conversation's initial launch context delivered and
 records its current system-context digest in the same atomic update, only after
 the OpenHands turn succeeds. A crash or nonzero first turn therefore retries
-the complete programme and assignment prompt instead of incorrectly
+the complete programme and launch context instead of incorrectly
 continuing from instructions that were never delivered.
 
 Role state uses pod-local storage and survives controller or container restarts
@@ -207,8 +207,8 @@ The model receives:
      exactly one total match.
 3. Applicable target `AGENTS.md` and compatible `CLAUDE.md` project context.
 4. A compact skill catalog whose bodies are loaded only when invoked.
-5. User turns containing target role instructions, current state, and current
-   UTC time.
+5. User turns containing optional launch instructions, runtime identity,
+   current state, and current UTC time.
 
 Harness and role remain separate source documents because they have different
 owners, but are merged into one system suffix so the agent knows both the
@@ -225,7 +225,7 @@ alter an existing system prompt. Missing or conflicting generation metadata
 fails closed once conversation state exists. The complete role and configured
 programme are not duplicated in ordinary user messages; OpenHands includes the
 system suffix on every inference. A persisted merged-context hash can still
-deliver changed role or research-brief context once at user level after a
+deliver changed harness, role, or launch context once at user level after a
 worker restart. Current time is rendered for every controller wake.
 
 ### Proposed live programme refresh
@@ -237,7 +237,7 @@ a programme policy change. Prefer explicit SDK support for a versioned system
 event that supersedes the previous Senpai suffix. If the SDK cannot provide
 that semantic, start a new conversation generation with a new UUID and system
 suffix, then carry forward a bounded user-level continuity bundle: the prior
-conversation ID, current research brief, durable assignment state, and pending
+conversation ID, current launch context, durable assignment state, and pending
 inbox messages.
 
 A rollover boundary must also account for work already keyed to the old UUID.

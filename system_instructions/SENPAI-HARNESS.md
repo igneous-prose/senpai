@@ -12,9 +12,9 @@ This document only defines Senpai's additional control-plane contract.
 - OpenHands presents Agent Skills as a compact catalog. Invoke a skill when its
   description matches the work; do not load every skill body in advance.
 - The selected `program.md` appears at the end of this system prompt with its
-  target-repository path in the header. The assignment or advisor brief and
-  live state arrive as user context. Read the applicable files before making a
-  research decision or code change.
+  target-repository path in the header. Assignment details, optional launch
+  instructions, and live state arrive as user context. Read the applicable
+  context before making a research decision or code change.
 - The current UTC time is included in each live brief or Senpai event. Treat
   that as authoritative rather than relying on an old timestamp in history.
 - Your complete durable event log is plain JSON under

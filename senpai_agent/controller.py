@@ -13,11 +13,10 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from string import Template
 from typing import Literal, Protocol
 from uuid import UUID
 
-from senpai_agent.agent_markdown import read_agent_markdown, strip_spdx_header
+from senpai_agent.agent_markdown import strip_spdx_header
 from senpai_agent.advisor import (
     AdvisorEvent,
     AdvisorEventStore,
@@ -54,20 +53,6 @@ from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergen
 
 
 _EDGE_TRIGGERED_EVENT_KINDS = frozenset({"research_base_changed"})
-_PROMPT_TEMPLATE_VARIABLES = frozenset(
-    {
-        "ADVISOR_BRANCH",
-        "GH_REPO",
-        "GPUS_PER_STUDENT",
-        "PROBLEM_DIR",
-        "RESEARCH_TAG",
-        "STUDENT_NAME",
-        "STUDENT_NAMES",
-        "TARGET_REPO_URL",
-        "WANDB_ENTITY",
-        "WANDB_PROJECT",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,8 +102,8 @@ def _is_context_history_failure(error: Exception) -> bool:
 
 
 def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
-    research_brief = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
-    return research_brief + (
+    launch_context = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
+    return launch_context + (
         "# Conversation context recovery\n\n"
         "The previous model-visible conversation branch exhausted or corrupted "
         "its context. Its complete raw trace and workspace are preserved, but "
@@ -749,7 +734,7 @@ class Controller:
         if refresh_system_context:
             prompt += (
                 "\n\n# Updated Senpai system context\n\n"
-                "The Senpai operating context or research brief changed since "
+                "The Senpai operating or launch context changed since "
                 "this conversation last ran. Treat the following as current:\n\n"
                 f"{self.system_context}"
             )
@@ -757,20 +742,12 @@ class Controller:
 
 
 def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) -> str:
-    workspace = Path(env["SENPAI_OPENHANDS_WORKSPACE"]).resolve()
-    instructions = workspace / "instructions" / f"prompt-{role}.md"
-    template_env = {
-        key: env[key] for key in _PROMPT_TEMPLATE_VARIABLES if key in env
-    }
-    role_prompt = Template(read_agent_markdown(instructions)).safe_substitute(
-        template_env
-    )
-    prompt = f"# {role.title()} task\n\n{role_prompt.strip()}"
+    sections = []
     encoded_extra = env.get("EXTRA_INSTRUCTIONS_B64")
     if encoded_extra:
         extra = b64decode(encoded_extra, validate=True).decode()
-        prompt += (
-            "\n\n# Additional launch instructions\n\n"
+        sections.append(
+            "# Additional launch instructions\n\n"
             f"{strip_spdx_header(extra).strip()}"
         )
     identity = (
@@ -782,7 +759,8 @@ def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) ->
         identity += f" Students: {env.get('STUDENT_NAMES', '')}."
     else:
         identity += f" Student: {env['STUDENT_NAME']}."
-    return f"{prompt}\n\n# Runtime identity\n\n{identity}"
+    sections.append(f"# Runtime identity\n\n{identity}")
+    return "\n\n".join(sections)
 
 
 def _role_interval(
@@ -905,11 +883,11 @@ def controller_main(
     system_context = compose_system_instructions(
         read_role_instructions(runner_config.harness_file),
         read_role_instructions(runner_config.role_file),
-        runner_config.program_system_prompt,
+        runner_config.program.prompt,
     )
     continuation_context = (
         f"{system_context.strip()}\n\n"
-        f"# Current research brief\n\n{full_prompt}"
+        f"# Current launch context\n\n{full_prompt}"
     )
     inbox = PersistentInbox(
         runner_config.state_dir / "delivery-inbox.sqlite3",

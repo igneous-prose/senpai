@@ -37,6 +37,7 @@ from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
     PROGRAM_SHA256_ENV,
     PROGRAM_SNAPSHOT_ENV,
+    ProgramSystemPromptSnapshot,
 )
 from senpai_agent.secrets import scrub_github_credentials
 
@@ -149,9 +150,7 @@ class DelegationConfig:
     enable_browser: bool
     command_secrets: Mapping[str, str]
     role: str
-    program_path: str = ""
-    program_system_prompt_file: Path | None = None
-    program_system_prompt_sha256: str = ""
+    program: ProgramSystemPromptSnapshot
     root_state_dir: Path | None = None
     tree_id: str | None = None
     depth: int = 0
@@ -397,12 +396,11 @@ class OpenHandsChildProcess:
             )
         if self._config.github_trusted_actor is not None:
             environment["SENPAI_GITHUB_ACTOR"] = self._config.github_trusted_actor
-        if self._config.program_system_prompt_file is not None:
-            environment[PROGRAM_PATH_ENV] = self._config.program_path
-            environment[PROGRAM_SNAPSHOT_ENV] = str(
-                self._config.program_system_prompt_file
-            )
-            environment[PROGRAM_SHA256_ENV] = self._config.program_system_prompt_sha256
+        program = self._config.program
+        if program.path is not None:
+            environment[PROGRAM_PATH_ENV] = program.program_path
+            environment[PROGRAM_SNAPSHOT_ENV] = str(program.path)
+            environment[PROGRAM_SHA256_ENV] = program.sha256
         return environment
 
     def start(

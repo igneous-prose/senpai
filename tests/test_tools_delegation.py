@@ -32,6 +32,7 @@ from senpai_agent.delegation import (
     configure_delegation,
     reconcile_delegated_tasks,
 )
+from senpai_agent.program_context import ProgramSystemPromptSnapshot
 
 
 def test_model_tier_runtime_limits():
@@ -260,6 +261,7 @@ def config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": False,
         "command_secrets": {},
         "role": "advisor",
+        "program": ProgramSystemPromptSnapshot(),
     }
     values.update(updates)
     return DelegationConfig(**values)

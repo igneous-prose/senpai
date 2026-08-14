@@ -382,7 +382,7 @@ def test_terminal_budget_reconciles_a_finished_response_before_recovery(
 
     result = OpenHandsTurnRunner(
         config,
-        full_prompt="complete research brief",
+        full_prompt="complete launch context",
     ).run(
         turn.prompt.body,
         conversation_id=config.conversation_id,
@@ -516,7 +516,7 @@ def test_stalled_recovery_is_bounded_and_quarantined_with_the_full_brief(
         lambda _events: [],
     )
     isolate_agent_discovery(monkeypatch, runner)
-    turns = OpenHandsTurnRunner(config, full_prompt="complete research brief")
+    turns = OpenHandsTurnRunner(config, full_prompt="complete launch context")
 
     first = turns.run(
         turn.prompt.body,
@@ -535,7 +535,7 @@ def test_stalled_recovery_is_bounded_and_quarantined_with_the_full_brief(
 
     assert first.exit_code == second.exit_code == 1
     assert [name for name, _value in calls].count("navigate") == 1
-    assert "complete research brief" in active[0].message
+    assert "complete launch context" in active[0].message
     assert "Conversation context recovery" in active[0].message
     assert [event.message for event in active[1:]] == ["canonical event"]
 
@@ -613,7 +613,7 @@ def test_model_visible_progress_renews_the_stalled_attempt_budget(
         lambda _events: [],
     )
     isolate_agent_discovery(monkeypatch, runner)
-    turns = OpenHandsTurnRunner(config, full_prompt="complete research brief")
+    turns = OpenHandsTurnRunner(config, full_prompt="complete launch context")
 
     for _attempt in range(2):
         assert turns.run(
@@ -689,7 +689,7 @@ def test_timeout_and_error_artifacts_do_not_renew_the_stalled_attempt_budget(
         lambda _events: [],
     )
     isolate_agent_discovery(monkeypatch, runner)
-    turns = OpenHandsTurnRunner(config, full_prompt="complete research brief")
+    turns = OpenHandsTurnRunner(config, full_prompt="complete launch context")
 
     for _attempt in range(3):
         assert turns.run(

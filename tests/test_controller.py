@@ -20,6 +20,7 @@ from senpai_agent.inbox import (
     deliver_turn_messages,
 )
 from senpai_agent.mailbox import ControllerEvent
+from senpai_agent.program_context import ProgramSystemPromptSnapshot
 from senpai_agent.state import ConversationStateLedger, WorkspaceDivergenceLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
 from senpai_agent.workspace import WorkspaceDivergence
@@ -143,22 +144,10 @@ def research_base_event(current_sha="def"):
     )
 
 
-def test_first_turn_combines_role_template_and_runtime_identity(
-    tmp_path: Path,
-):
-    workspace = tmp_path / "target"
-    instructions = workspace / "instructions"
-    instructions.mkdir(parents=True)
-    (instructions / "prompt-student.md").write_text(
-        HTML_HEADER
-        + "Work as $STUDENT_NAME on $ADVISOR_BRANCH in $WANDB_PROJECT. "
-        + "Never expose $WANDB_API_KEY."
-    )
-
+def test_first_turn_combines_launch_instructions_and_runtime_identity():
     prompt = _full_prompt(
         "student",
         {
-            "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
             "GH_REPO": "acme/widgets",
             "ADVISOR_BRANCH": "research",
             "WANDB_ENTITY": "acme",
@@ -172,37 +161,30 @@ def test_first_turn_combines_role_template_and_runtime_identity(
     )
 
     assert "# Research programme" not in prompt
-    assert "# Student task\n\nWork as fern on research in cfd." in prompt
-    assert "$WANDB_API_KEY" in prompt
+    assert "# Student task" not in prompt
     assert "live-secret" not in prompt
     assert "# Additional launch instructions\n\nUse typed tools." in prompt
     assert "Role: student; repository: acme/widgets" in prompt
     assert "SPDX-" not in prompt
 
 
-def test_configured_program_is_system_only_and_can_live_below_repo_root(
-    tmp_path: Path,
-):
-    workspace = tmp_path / "target"
-    instructions = workspace / "instructions"
-    instructions.mkdir(parents=True)
-    (instructions / "prompt-advisor.md").write_text("Choose experiments.")
-
+def test_advisor_first_turn_contains_only_runtime_identity_without_launch_text():
     prompt = _full_prompt(
         "advisor",
         {
-            "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
-            "SENPAI_PROGRAM_PATH": "senpai/program.md",
             "GH_REPO": "acme/widgets",
             "ADVISOR_BRANCH": "research",
             "WANDB_ENTITY": "acme",
             "WANDB_PROJECT": "cfd",
-            "STUDENT_NAMES": "fern",
+            "STUDENT_NAMES": "fern,frieren",
         },
     )
 
-    assert "# Research programme" not in prompt
-    assert "# Advisor task\n\nChoose experiments." in prompt
+    assert prompt == (
+        "# Runtime identity\n\n"
+        "Role: advisor; repository: acme/widgets; advisor branch: research; "
+        "W&B: acme/cfd. Students: fern,frieren."
+    )
 
 
 def test_empty_mailbox_does_not_start_a_model_turn():
@@ -675,7 +657,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         timeout_seconds=3600,
         harness_file=tmp_path / "harness.md",
         role_file=tmp_path / "role.md",
-        program_system_prompt="",
+        program=ProgramSystemPromptSnapshot(),
     )
     monkeypatch.setattr(runner_module, "parse_runner_args", lambda _argv: object())
     monkeypatch.setattr(
@@ -723,7 +705,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     assert created[0].full_prompt == "programme"
     assert created[0].turns.full_prompt == "programme"
     assert created[0].system_context.endswith(
-        "# Current research brief\n\nprogramme"
+        "# Current launch context\n\nprogramme"
     )
 
 

@@ -18,6 +18,7 @@ from senpai_agent.openhands_runner import (
 from senpai_agent.program_context import (
     PROGRAM_SHA256_ENV,
     PROGRAM_SNAPSHOT_ENV,
+    ProgramSystemPromptSnapshot,
     program_system_prompt_sha256,
 )
 from openhands_support import runtime_config, runtime_env
@@ -53,7 +54,11 @@ def test_role_file_must_be_explicit_and_exist(tmp_path: Path, explicit: str | No
 
 
 def test_main_agent_context_places_harness_and_role_before_project_skills():
-    context = build_main_agent_context("harness instructions", "advisor role")
+    context = build_main_agent_context(
+        "harness instructions",
+        "advisor role",
+        program=ProgramSystemPromptSnapshot(),
+    )
 
     assert context.system_message_suffix == (
         "# Senpai harness\n\nharness instructions\n\n"
@@ -68,8 +73,8 @@ def test_main_agent_context_appends_the_configured_program_section():
     context = build_main_agent_context(
         "harness instructions",
         "advisor role",
-        program_system_prompt=(
-            "## program.md - senpai/program.md\n\nResearch policy."
+        program=ProgramSystemPromptSnapshot(
+            prompt="## program.md - senpai/program.md\n\nResearch policy."
         ),
     )
 
@@ -176,24 +181,20 @@ def test_resolved_config_discovers_one_level_program_from_target_workspace(
     )
     config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
-    assert config.program_path == "senpai/program.md"
-    assert config.program_system_prompt == (
+    assert config.program.program_path == "senpai/program.md"
+    assert config.program.prompt == (
         "## program.md - senpai/program.md\n\n"
         "# Mission\n\nImprove the model."
     )
     snapshot = (
         Path(env["SENPAI_OPENHANDS_STATE_DIR"])
         / "program-context"
-        / f"{config.program_system_prompt_sha256}.md"
+        / f"{config.program.sha256}.md"
     )
-    assert config.program_system_prompt_file == snapshot
-    assert snapshot.read_text() == config.program_system_prompt
+    assert config.program.path == snapshot
+    assert snapshot.read_text() == config.program.prompt
     delegated = runner.delegation_config(config)
-    assert delegated.program_path == "senpai/program.md"
-    assert delegated.program_system_prompt_file == snapshot
-    assert delegated.program_system_prompt_sha256 == (
-        config.program_system_prompt_sha256
-    )
+    assert delegated.program is config.program
 
 
 def test_child_config_uses_the_parent_program_snapshot(tmp_path: Path):
@@ -208,9 +209,9 @@ def test_child_config_uses_the_parent_program_snapshot(tmp_path: Path):
 
     config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
-    assert config.program_system_prompt.endswith("Parent snapshot.")
-    assert config.program_system_prompt_file == snapshot
-    assert config.program_system_prompt_sha256 == env[PROGRAM_SHA256_ENV]
+    assert config.program.prompt.endswith("Parent snapshot.")
+    assert config.program.path == snapshot
+    assert config.program.sha256 == env[PROGRAM_SHA256_ENV]
 
 
 @pytest.mark.parametrize(

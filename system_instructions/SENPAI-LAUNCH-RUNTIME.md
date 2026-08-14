@@ -2,7 +2,7 @@
 
 These values were resolved by the Senpai launcher and describe the actual runtime.
 They override conflicting compute or run-limit claims in the target repository's
-`program.md` and role prompts.
+`program.md` and other project instructions.
 
 - Compute backend: `{{BACKEND}}`.
 - Visible GPUs per student: `{{GPUS_PER_STUDENT}}`.

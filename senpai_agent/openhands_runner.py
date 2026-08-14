@@ -89,6 +89,7 @@ from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
     PROGRAM_SHA256_ENV,
     PROGRAM_SNAPSHOT_ENV,
+    ProgramSystemPromptSnapshot,
     load_program_system_prompt_snapshot,
     pinned_program_system_prompt,
 )
@@ -201,10 +202,7 @@ class RunnerConfig:
     harness_file: Path
     role_file: Path
     plugin_dir: Path
-    program_path: str = ""
-    program_system_prompt: str = ""
-    program_system_prompt_file: Path | None = None
-    program_system_prompt_sha256: str = ""
+    program: ProgramSystemPromptSnapshot
     advisor_branch: str | None = None
     student_names: tuple[str, ...] | None = None
     student_name: str | None = None
@@ -577,10 +575,6 @@ def resolve_config(
             program_path,
             state_dir,
         )
-    program_path = program_snapshot.program_path
-    program_system_prompt = program_snapshot.prompt
-    program_system_prompt_file = program_snapshot.path
-    program_system_prompt_sha256 = program_snapshot.sha256
     role = env.get("SENPAI_ROLE", "")
     if role not in {"advisor", "student"}:
         raise RuntimeError("SENPAI_ROLE must be advisor or student")
@@ -859,10 +853,7 @@ def resolve_config(
         plugin_dir=resolve_plugin_dir(
             env_value(args.plugin_dir, env, "SENPAI_PLUGIN"),
         ),
-        program_path=program_path,
-        program_system_prompt=program_system_prompt,
-        program_system_prompt_file=program_system_prompt_file,
-        program_system_prompt_sha256=program_system_prompt_sha256,
+        program=program_snapshot,
         advisor_branch=env.get("ADVISOR_BRANCH") or None,
         student_names=tuple(
             name.strip()
@@ -904,7 +895,7 @@ def with_role_and_project_context(
     role_instructions: str,
     project_skills: Sequence[Skill] = (),
     *,
-    program_system_prompt: str = "",
+    program: ProgramSystemPromptSnapshot,
 ) -> Agent:
     context = agent.agent_context or AgentContext()
     skills = {skill.name: skill for skill in context.skills}
@@ -912,7 +903,7 @@ def with_role_and_project_context(
     role_suffix = compose_system_instructions(
         harness_instructions,
         role_instructions,
-        program_system_prompt,
+        program.prompt,
     )
     system_suffix = (
         f"{context.system_message_suffix}\n\n{role_suffix}"
@@ -938,14 +929,14 @@ def build_main_agent_context(
     role_instructions: str,
     project_skills: Sequence[Skill] = (),
     *,
-    program_system_prompt: str = "",
+    program: ProgramSystemPromptSnapshot,
 ) -> AgentContext:
     return AgentContext(
         skills=list(project_skills),
         system_message_suffix=compose_system_instructions(
             harness_instructions,
             role_instructions,
-            program_system_prompt,
+            program.prompt,
         ),
         current_datetime=None,
         load_public_skills=False,
@@ -1169,9 +1160,7 @@ def delegation_config(
         enable_browser=config.enable_browser,
         command_secrets=config.command_secrets,
         role=config.role,
-        program_path=config.program_path,
-        program_system_prompt_file=config.program_system_prompt_file,
-        program_system_prompt_sha256=config.program_system_prompt_sha256,
+        program=config.program,
         root_state_dir=config.delegation_root_state_dir,
         tree_id=config.delegation_tree_id,
         depth=config.delegation_depth,
@@ -1483,7 +1472,7 @@ def run_openhands(
                 harness_instructions,
                 role_instructions,
                 project_skills,
-                program_system_prompt=config.program_system_prompt,
+                program=config.program,
             )
             agent = with_tool_concurrency(agent, MAX_PARALLEL_AGENTS)
             if (
@@ -1509,7 +1498,7 @@ def run_openhands(
                     harness_instructions,
                     role_instructions,
                     project_skills,
-                    program_system_prompt=config.program_system_prompt,
+                    program=config.program,
                 ),
                 system_prompt_kwargs={"cli_mode": True},
                 condenser=condenser,
