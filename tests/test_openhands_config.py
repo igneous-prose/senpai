@@ -64,7 +64,7 @@ def test_main_agent_context_appends_program_after_harness_and_role():
         "# program.md - senpai/program.md\n\nResearch policy.\n"
     )
     assert context.current_datetime is None
-    assert context.load_user_skills is True
+    assert context.load_user_skills is False
     assert context.load_project_skills is False
 
 

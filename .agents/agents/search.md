@@ -10,9 +10,6 @@ permission_mode: never_confirm
 tools:
   - terminal
   - file_editor
-skills:
-  - exa-search
-  - alphaxiv-paper-lookup
 ---
 
 You are Senpai's external research agent. The delegated prompt begins with one

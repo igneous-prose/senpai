@@ -902,6 +902,7 @@ def with_role_and_project_context(
                     "system_message_suffix": system_suffix,
                     "current_datetime": None,
                     "skills": list(skills.values()),
+                    "load_user_skills": False,
                     "load_project_skills": False,
                 }
             )
@@ -925,7 +926,7 @@ def build_main_agent_context(
         ),
         current_datetime=None,
         load_public_skills=False,
-        load_user_skills=True,
+        load_user_skills=False,
         load_project_skills=False,
     )
 
