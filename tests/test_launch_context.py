@@ -40,12 +40,12 @@ def test_launch_context_records_resolved_runtime_facts(backend):
     assert f"Compute backend: `{backend}`" in context
     assert "Visible GPUs per student: `3`" in context
     assert (
-        "Hard limits for each training run: `12.5` minutes wall-clock\n"
-        "  and `7` epochs"
-    ) in context
+        "Hard limits for each training run: `12.5` minutes wall-clock and `7` epochs"
+        in context
+    )
     assert "research tag `foil-run`" in context
     assert "advisor branch `research-v2`" in context
-    assert "target base branch `main`" in context
+    assert "base branch `main`" in context
     assert "fern, frieren" in context
     assert "{{" not in context
 
@@ -66,9 +66,9 @@ def test_each_role_receives_authoritative_launch_context(role):
     assert "Compute backend: `kubernetes`" in context
     assert "Visible GPUs per student: `2`" in context
     assert (
-        "Hard limits for each training run: `20` minutes wall-clock\n"
-        "  and `9` epochs"
-    ) in context
+        "Hard limits for each training run: `20` minutes wall-clock and `9` epochs"
+        in context
+    )
     assert context.endswith(
         "# Additional operator instructions\n\n"
         "Prefer small, measurable experiments."
