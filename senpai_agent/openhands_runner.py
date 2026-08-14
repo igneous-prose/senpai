@@ -87,7 +87,7 @@ from senpai_agent.github.tools import (
 )
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
-    ProgramSystemPromptSnapshot,
+    ProgramSystemPrompt,
     load_program_system_prompt,
 )
 from senpai_agent.tools import register_senpai_tools
@@ -199,7 +199,7 @@ class RunnerConfig:
     harness_file: Path
     role_file: Path
     plugin_dir: Path
-    program: ProgramSystemPromptSnapshot
+    program: ProgramSystemPrompt
     advisor_branch: str | None = None
     student_names: tuple[str, ...] | None = None
     student_name: str | None = None
@@ -880,7 +880,7 @@ def with_role_and_project_context(
     role_instructions: str,
     project_skills: Sequence[Skill] = (),
     *,
-    program: ProgramSystemPromptSnapshot,
+    program: ProgramSystemPrompt,
 ) -> Agent:
     context = agent.agent_context or AgentContext()
     skills = {skill.name: skill for skill in context.skills}
@@ -914,7 +914,7 @@ def build_main_agent_context(
     role_instructions: str,
     project_skills: Sequence[Skill] = (),
     *,
-    program: ProgramSystemPromptSnapshot,
+    program: ProgramSystemPrompt,
 ) -> AgentContext:
     return AgentContext(
         skills=list(project_skills),

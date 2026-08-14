@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import SecretStr
 
 from senpai_agent.openhands_runner import RunnerConfig
-from senpai_agent.program_context import ProgramSystemPromptSnapshot
+from senpai_agent.program_context import ProgramSystemPrompt
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
@@ -47,7 +47,7 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "harness_file": harness_file,
         "role_file": role_file,
         "plugin_dir": PLUGIN_DIR,
-        "program": ProgramSystemPromptSnapshot(
+        "program": ProgramSystemPrompt(
             program_path="program.md",
             prompt="# program.md - program.md\n\nTest programme.",
         ),
