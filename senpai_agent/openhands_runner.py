@@ -25,7 +25,7 @@ from senpai_agent.advisor import (
     AdvisorEventPump,
     AdvisorEventStore,
     advisor_conversation_id,
-    compose_senpai_instructions,
+    compose_system_instructions,
 )
 from senpai_agent.delegation import (
     MAX_DELEGATION_DEPTH,
@@ -863,13 +863,13 @@ def find_named_agent(
     raise RuntimeError(f"OpenHands agent not found: {name}")
 
 
-def compose_system_instructions(
+def compose_program_system_instructions(
     harness: str,
     role: str,
     program: str,
 ) -> str:
     return (
-        f"{compose_senpai_instructions(harness, role).strip()}\n\n"
+        f"{compose_system_instructions(harness, role).strip()}\n\n"
         f"{program.strip()}\n"
     )
 
@@ -885,7 +885,7 @@ def with_role_and_project_context(
     context = agent.agent_context or AgentContext()
     skills = {skill.name: skill for skill in context.skills}
     skills.update({skill.name: skill for skill in project_skills})
-    role_suffix = compose_system_instructions(
+    role_suffix = compose_program_system_instructions(
         harness_instructions,
         role_instructions,
         program.prompt,
@@ -918,7 +918,7 @@ def build_main_agent_context(
 ) -> AgentContext:
     return AgentContext(
         skills=list(project_skills),
-        system_message_suffix=compose_system_instructions(
+        system_message_suffix=compose_program_system_instructions(
             harness_instructions,
             role_instructions,
             program.prompt,
