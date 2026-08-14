@@ -200,24 +200,29 @@ The model receives:
 1. OpenHands' native base system prompt and tool schemas.
 2. One stable system suffix assembled from:
    - `system_instructions/SENPAI-HARNESS.md`; and
-   - the rendered advisor or student role charter; and
+   - the rendered advisor or student role charter, including its non-secret
+     runtime identity; and
    - the selected target-repository `program.md` under
      `## program.md - <path>`. A blank `program_path` searches root
      `program.md` and one-level `*/program.md` paths and requires exactly one
      total match.
 3. Applicable target `AGENTS.md` and compatible `CLAUDE.md` project context.
 4. A compact skill catalog whose bodies are loaded only when invoked.
-5. User turns containing optional launch instructions, runtime identity,
-   current state, and current UTC time.
+5. User turns containing optional launch instructions, current state, and
+   current UTC time.
 
 Harness and role remain separate source documents because they have different
 owners, but are merged into one system suffix so the agent knows both the
 OpenHands operating contract and its Senpai role. Before constructing a model
-worker, the supervisor resolves the configured path or fails with the missing
-or ambiguous candidates. The runner reads that file, formats the programme
-section, and appends it to the system suffix. Delegated children inherit the
-resolved repository-relative path and build the same suffix. The programme is
-not duplicated in ordinary user messages. OpenHands includes the system suffix
+worker, the supervisor renders the role's `{{VARIABLE}}` placeholders once
+from an explicit non-secret allowlist and snapshots the result in role state.
+Any referenced value that is absent fails the launch; unrelated environment
+variables and credentials are never considered. The supervisor also resolves
+the configured programme path or fails with the missing or ambiguous
+candidates. The runner appends that programme section to the system suffix.
+Delegated children reuse the rendered role snapshot and resolved
+repository-relative programme path. Neither runtime identity nor the programme
+is duplicated in ordinary user messages. OpenHands includes the system suffix
 on every inference, and current time is rendered for every controller wake.
 
 ### Proposed live programme refresh

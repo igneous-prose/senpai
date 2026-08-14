@@ -394,7 +394,15 @@ Pod startup and liveness probes read the supervisor lease. Container restarts re
 
 GitHub coordination works across Docker, cloud VMs, or local hosts without private networking. The current repository does not yet provide a Compose or direct-host launcher: the Kubernetes manifests perform the source clone, environment assembly, skill installation, token handoff, mounts, and entrypoint selection.
 
-To build another launcher, reproduce [entrypoint-advisor.sh](k8s/entrypoint-advisor.sh) or [entrypoint-student.sh](k8s/entrypoint-student.sh), persist `/var/lib/senpai/<tag>/advisor` for the advisor, and use the container healthcheck with a restart policy. Student execution requires Linux, an NVIDIA runtime, and compatible CUDA hardware; Docker Desktop on macOS cannot run the GPU student image.
+To build another launcher, reproduce the bootstrap around
+[entrypoint-advisor.sh](k8s/entrypoint-advisor.sh) or
+[entrypoint-student.sh](k8s/entrypoint-student.sh), pass the built-in role
+template and its explicit identity values to the Python supervisor, persist
+`/var/lib/senpai/<tag>/advisor` for the advisor, and use the container
+healthcheck with a restart policy. The supervisor uses the same fail-on-missing,
+non-secret role renderer for Kubernetes and direct-host launches. Student
+execution requires Linux, an NVIDIA runtime, and compatible CUDA hardware;
+Docker Desktop on macOS cannot run the GPU student image.
 
 ## Development and reference
 

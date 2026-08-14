@@ -15,7 +15,7 @@ from senpai_agent.supervisor import (
     SupervisorConfig,
     WorkerLease,
     WorkerSupervisor,
-    prepare_program_context_environment,
+    prepare_system_context_environment,
 )
 
 
@@ -53,7 +53,7 @@ def test_supervisor_caps_repeated_restart_backoff_at_five_minutes():
     assert SupervisorConfig().max_backoff_seconds == 300
 
 
-def test_supervisor_resolves_program_path_before_starting_workers(
+def test_supervisor_snapshots_program_and_rendered_role_before_starting_workers(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ):
@@ -61,15 +61,70 @@ def test_supervisor_resolves_program_path_before_starting_workers(
     program = workspace / "senpai" / "program.md"
     program.parent.mkdir(parents=True)
     program.write_text("Research policy.")
+    role_template = tmp_path / "ADVISOR.md"
+    role_template.write_text(
+        "Role={{ROLE}} Repo={{GH_REPO}} Project={{WANDB_PROJECT}}\n"
+    )
+    state_dir = tmp_path / "state"
 
-    environment = prepare_program_context_environment(
-        {"SENPAI_OPENHANDS_WORKSPACE": str(workspace)},
+    environment = prepare_system_context_environment(
+        "advisor",
+        state_dir,
+        {
+            "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+            "SENPAI_OPENHANDS_ROLE_FILE": str(role_template),
+            "GH_REPO": "acme/widgets",
+            "WANDB_PROJECT": "cfd",
+            "GITHUB_TOKEN": "github-secret-sentinel",
+            "WANDB_API_KEY": "wandb-secret-sentinel",
+        },
     )
 
     assert environment["SENPAI_PROGRAM_PATH"] == "senpai/program.md"
+    role_prompt = Path(environment["SENPAI_OPENHANDS_ROLE_FILE"])
+    assert role_prompt == state_dir / "system-instructions" / "advisor.md"
+    assert role_prompt.read_text() == "Role=advisor Repo=acme/widgets Project=cfd\n"
+    assert role_template.read_text().startswith("Role={{ROLE}}")
     assert capsys.readouterr().out == (
         "SENPAI_PROGRAM_CONTEXT path=senpai/program.md\n"
+        f"SENPAI_ROLE_PROMPT path={role_prompt}\n"
     )
+
+    restarted = prepare_system_context_environment(
+        "advisor",
+        state_dir,
+        {
+            "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+            "GH_REPO": "changed/widgets",
+            "WANDB_PROJECT": "changed",
+        },
+    )
+
+    assert restarted["SENPAI_OPENHANDS_ROLE_FILE"] == str(role_prompt)
+    assert role_prompt.read_text() == "Role=advisor Repo=acme/widgets Project=cfd\n"
+
+
+def test_supervisor_fails_before_snapshotting_a_role_with_missing_values(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    (workspace / "program.md").write_text("Research policy.")
+    role_template = tmp_path / "STUDENT.md"
+    role_template.write_text("Student={{STUDENT_NAME}} Repo={{GH_REPO}}\n")
+
+    with pytest.raises(ValueError, match="Missing STUDENT.md values: STUDENT_NAME"):
+        prepare_system_context_environment(
+            "student",
+            tmp_path / "state",
+            {
+                "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+                "SENPAI_OPENHANDS_ROLE_FILE": str(role_template),
+                "GH_REPO": "acme/widgets",
+            },
+        )
+
+    assert not (tmp_path / "state" / "system-instructions" / "student.md").exists()
 
 
 def test_supervisor_does_not_start_a_worker_without_a_discoverable_program(

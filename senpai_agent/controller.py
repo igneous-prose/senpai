@@ -17,11 +17,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from senpai_agent.agent_markdown import strip_spdx_header
-from senpai_agent.advisor import (
-    AdvisorEvent,
-    AdvisorEventStore,
-    compose_senpai_instructions,
-)
+from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
     DeliveryState,
@@ -102,7 +98,11 @@ def _is_context_history_failure(error: Exception) -> bool:
 
 
 def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
-    launch_context = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
+    launch_context = (
+        f"{full_prompt}\n\n"
+        if full_prompt and full_prompt not in current_prompt
+        else ""
+    )
     return launch_context + (
         "# Conversation context recovery\n\n"
         "The previous model-visible conversation branch exhausted or corrupted "
@@ -124,8 +124,6 @@ class OpenHandsTurnRunner:
     ):
         self.config = config
         self.full_prompt = full_prompt.strip()
-        if not self.full_prompt:
-            raise ValueError("full prompt must not be empty")
         self.github_mailbox = github_mailbox
         self.active_poll_interval_seconds = active_poll_interval_seconds
 
@@ -722,8 +720,9 @@ class Controller:
     ) -> str:
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         if not continuing:
+            launch_context = f"{self.full_prompt}\n\n" if self.full_prompt else ""
             return (
-                f"{self.full_prompt}\n\nCurrent time (UTC): {now}\n\n"
+                f"{launch_context}Current time (UTC): {now}\n\n"
                 "# Current GitHub state\n\n"
                 "Actionable events follow as separately tracked messages."
             )
@@ -741,26 +740,15 @@ class Controller:
         return prompt
 
 
-def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) -> str:
-    sections = []
+def _full_prompt(env: Mapping[str, str]) -> str:
     encoded_extra = env.get("EXTRA_INSTRUCTIONS_B64")
-    if encoded_extra:
-        extra = b64decode(encoded_extra, validate=True).decode()
-        sections.append(
-            "# Additional launch instructions\n\n"
-            f"{strip_spdx_header(extra).strip()}"
-        )
-    identity = (
-        f"Role: {role}; repository: {env['GH_REPO']}; "
-        f"advisor branch: {env['ADVISOR_BRANCH']}; "
-        f"W&B: {env['WANDB_ENTITY']}/{env['WANDB_PROJECT']}."
+    if not encoded_extra:
+        return ""
+    extra = b64decode(encoded_extra, validate=True).decode()
+    return (
+        "# Additional launch instructions\n\n"
+        f"{strip_spdx_header(extra).strip()}"
     )
-    if role == "advisor":
-        identity += f" Students: {env.get('STUDENT_NAMES', '')}."
-    else:
-        identity += f" Student: {env['STUDENT_NAME']}."
-    sections.append(f"# Runtime identity\n\n{identity}")
-    return "\n\n".join(sections)
 
 
 def _role_interval(
@@ -787,7 +775,6 @@ def controller_main(
     from senpai_agent.delegation import reconcile_delegated_tasks
     from senpai_agent.openhands_runner import (
         parse_runner_args,
-        read_role_instructions,
         resolve_config,
         scrub_model_credentials,
     )
@@ -879,13 +866,9 @@ def controller_main(
             token=runner_config.github_token,
         )
 
-    full_prompt = _full_prompt(role, env)
+    full_prompt = _full_prompt(env)
     continuation_context = (
-        f"{compose_senpai_instructions(
-            read_role_instructions(runner_config.harness_file),
-            read_role_instructions(runner_config.role_file),
-        ).strip()}\n\n"
-        f"# Current launch context\n\n{full_prompt}"
+        f"# Current launch context\n\n{full_prompt}" if full_prompt else ""
     )
     inbox = PersistentInbox(
         runner_config.state_dir / "delivery-inbox.sqlite3",
