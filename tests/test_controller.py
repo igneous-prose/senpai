@@ -659,7 +659,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         role_file=tmp_path / "role.md",
         program=ProgramSystemPromptSnapshot(
             program_path="program.md",
-            prompt="## program.md - program.md\n\nTest programme.",
+            prompt="# program.md - program.md\n\nTest programme.",
         ),
     )
     monkeypatch.setattr(runner_module, "parse_runner_args", lambda _argv: object())

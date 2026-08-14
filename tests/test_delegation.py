@@ -21,10 +21,7 @@ from senpai_agent.delegation import (
     render_child_prompt,
     run_child_process,
 )
-from senpai_agent.program_context import (
-    PROGRAM_PATH_ENV,
-    ProgramSystemPromptSnapshot,
-)
+from senpai_agent.program_context import PROGRAM_PATH_ENV
 
 
 def delegation_request(
@@ -83,10 +80,7 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": True,
         "command_secrets": {"EXA_API_KEY": "exa-secret"},
         "role": "advisor",
-        "program": ProgramSystemPromptSnapshot(
-            program_path="program.md",
-            prompt="## program.md - program.md\n\nTest programme.",
-        ),
+        "program_path": "program.md",
     }
     values.update(updates)
     return DelegationConfig(**values)
@@ -175,6 +169,10 @@ def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path)
     )
     assert "anthropic/claude-opus-4-8" in smart.command
     assert smart.command[smart.command.index("--reasoning-effort") + 1] == "xhigh"
+    assert "--child" in smart.command
+    assert smart.command[smart.command.index("--plugin-dir") + 1] == str(
+        config.plugin_dir
+    )
     assert "openai/gpt-5.6" in frontier.command
     assert frontier.command[frontier.command.index("--reasoning-effort") + 1] == "max"
     assert frontier.command[frontier.command.index("--api-key-env") + 1] == (
@@ -218,12 +216,7 @@ def test_child_environment_carries_the_resolved_program_path(tmp_path: Path):
     child = OpenHandsChildProcess(
         delegation_config(
             tmp_path,
-            program=ProgramSystemPromptSnapshot(
-                program_path="senpai/program.md",
-                prompt=(
-                    "## program.md - senpai/program.md\n\nParent programme."
-                ),
-            ),
+            program_path="senpai/program.md",
         ),
         delegation_request(),
     )

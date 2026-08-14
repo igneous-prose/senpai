@@ -54,17 +54,17 @@ def test_main_agent_context_appends_program_after_harness_and_role():
         "advisor role",
         program=ProgramSystemPromptSnapshot(
             program_path="senpai/program.md",
-            prompt="## program.md - senpai/program.md\n\nResearch policy."
+            prompt="# program.md - senpai/program.md\n\nResearch policy."
         ),
     )
 
     assert context.system_message_suffix == (
         "# Senpai harness\n\nharness instructions\n\n"
         "# Senpai role\n\nadvisor role\n\n"
-        "## program.md - senpai/program.md\n\nResearch policy.\n"
+        "# program.md - senpai/program.md\n\nResearch policy.\n"
     )
     assert context.current_datetime is None
-    assert context.load_user_skills is True
+    assert context.load_user_skills is False
     assert context.load_project_skills is False
 
 
@@ -166,11 +166,11 @@ def test_resolved_config_discovers_one_level_program_from_target_workspace(
 
     assert config.program.program_path == "senpai/program.md"
     assert config.program.prompt == (
-        "## program.md - senpai/program.md\n\n"
+        "# program.md - senpai/program.md\n\n"
         "# Mission\n\nImprove the model."
     )
     delegated = runner.delegation_config(config)
-    assert delegated.program is config.program
+    assert delegated.program_path == config.program.program_path
 
 
 @pytest.mark.parametrize(

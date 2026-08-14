@@ -25,7 +25,7 @@ from senpai_agent.advisor import (
     AdvisorEventPump,
     AdvisorEventStore,
     advisor_conversation_id,
-    compose_system_instructions,
+    compose_senpai_instructions,
 )
 from senpai_agent.delegation import (
     MAX_DELEGATION_DEPTH,
@@ -863,6 +863,17 @@ def find_named_agent(
     raise RuntimeError(f"OpenHands agent not found: {name}")
 
 
+def compose_system_instructions(
+    harness: str,
+    role: str,
+    program: str,
+) -> str:
+    return (
+        f"{compose_senpai_instructions(harness, role).strip()}\n\n"
+        f"{program.strip()}\n"
+    )
+
+
 def with_role_and_project_context(
     agent: Agent,
     harness_instructions: str,
@@ -891,6 +902,7 @@ def with_role_and_project_context(
                     "system_message_suffix": system_suffix,
                     "current_datetime": None,
                     "skills": list(skills.values()),
+                    "load_user_skills": False,
                     "load_project_skills": False,
                 }
             )
@@ -914,7 +926,7 @@ def build_main_agent_context(
         ),
         current_datetime=None,
         load_public_skills=False,
-        load_user_skills=True,
+        load_user_skills=False,
         load_project_skills=False,
     )
 
@@ -1134,7 +1146,7 @@ def delegation_config(
         enable_browser=config.enable_browser,
         command_secrets=config.command_secrets,
         role=config.role,
-        program=config.program,
+        program_path=config.program.program_path,
         root_state_dir=config.delegation_root_state_dir,
         tree_id=config.delegation_tree_id,
         depth=config.delegation_depth,

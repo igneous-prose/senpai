@@ -880,11 +880,12 @@ def controller_main(
         )
 
     full_prompt = _full_prompt(role, env)
+    senpai_instructions = compose_senpai_instructions(
+        read_role_instructions(runner_config.harness_file),
+        read_role_instructions(runner_config.role_file),
+    ).strip()
     continuation_context = (
-        f"{compose_senpai_instructions(
-            read_role_instructions(runner_config.harness_file),
-            read_role_instructions(runner_config.role_file),
-        ).strip()}\n\n"
+        f"{senpai_instructions}\n\n"
         f"# Current launch context\n\n{full_prompt}"
     )
     inbox = PersistentInbox(

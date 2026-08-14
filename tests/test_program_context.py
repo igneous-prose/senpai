@@ -39,7 +39,7 @@ def test_blank_program_path_discovers_the_only_root_program(tmp_path: Path):
     program = load_program_system_prompt(workspace, "")
 
     assert program.program_path == "program.md"
-    assert program.prompt == "## program.md - program.md\n\nRoot policy."
+    assert program.prompt == "# program.md - program.md\n\nRoot policy."
 
 
 def test_blank_program_path_discovers_the_only_one_level_program(tmp_path: Path):
@@ -51,7 +51,7 @@ def test_blank_program_path_discovers_the_only_one_level_program(tmp_path: Path)
 
     assert program.program_path == "senpai/program.md"
     assert program.prompt == (
-        "## program.md - senpai/program.md\n\nNested policy."
+        "# program.md - senpai/program.md\n\nNested policy."
     )
 
 
@@ -110,7 +110,7 @@ def test_program_prompt_strips_the_spdx_header(tmp_path: Path):
     program = load_program_system_prompt(workspace, "program.md")
 
     assert program.prompt == (
-        "## program.md - program.md\n\n# Research policy\n\nWin safely."
+        "# program.md - program.md\n\n# Research policy\n\nWin safely."
     )
 
 

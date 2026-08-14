@@ -155,17 +155,6 @@ def compose_senpai_instructions(harness: str, role: str) -> str:
     )
 
 
-def compose_system_instructions(
-    harness: str,
-    role: str,
-    program: str,
-) -> str:
-    return (
-        f"{compose_senpai_instructions(harness, role).strip()}\n\n"
-        f"{program.strip()}\n"
-    )
-
-
 def advisor_conversation_id(
     state_dir: Path,
     explicit_id: str | None = None,

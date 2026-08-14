@@ -52,7 +52,7 @@ def load_program_system_prompt(
     workspace = workspace.resolve()
     program_path = normalize_program_path(value) or _discover_program_path(workspace)
     source = _program_file(workspace, program_path)
-    prompt = f"## program.md - {program_path}\n\n{read_agent_markdown(source).strip()}"
+    prompt = f"# program.md - {program_path}\n\n{read_agent_markdown(source).strip()}"
     return ProgramSystemPromptSnapshot(program_path=program_path, prompt=prompt)
 
 

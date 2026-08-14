@@ -202,7 +202,7 @@ The model receives:
    - `system_instructions/SENPAI-HARNESS.md`; and
    - the rendered advisor or student role charter; and
    - the selected target-repository `program.md` under
-     `## program.md - <path>`. A blank `program_path` searches root
+     `# program.md - <path>`. A blank `program_path` searches root
      `program.md` and one-level `*/program.md` paths and requires exactly one
      total match.
 3. Applicable target `AGENTS.md` and compatible `CLAUDE.md` project context.
@@ -214,26 +214,18 @@ Harness and role remain separate source documents because they have different
 owners, but are merged into one system suffix so the agent knows both the
 OpenHands operating contract and its Senpai role. Before constructing a model
 worker, the supervisor resolves the configured path or fails with the missing
-or ambiguous candidates. The runner reads that file, formats the programme
+or ambiguous candidates. The runner reads that file, formats the `program.md`
 section, and appends it to the system suffix. Delegated children inherit the
-resolved repository-relative path and build the same suffix. The programme is
-not duplicated in ordinary user messages. OpenHands includes the system suffix
-on every inference, and current time is rendered for every controller wake.
+resolved repository-relative path and build the same suffix. It is not
+duplicated in ordinary user messages. Use GitHub Issues for live human
+direction; `program.md` changes take effect when a model process starts.
+OpenHands includes the system suffix on every inference, and current time is
+rendered for every controller wake.
 
-### Proposed live programme refresh
-
-This PR does not hot-reload `program.md`. A safe future implementation should
-promote changes only at controller turn boundaries and only when no delegated
-child or training monitor is active. Prefer SDK support for a versioned system
-event that replaces the previous Senpai suffix. If OpenHands cannot replace a
-persisted system event, start a new conversation UUID with the new suffix and
-carry forward only durable assignment state, pending inbox messages, and a
-short continuity note. The advisor should request that rollover explicitly
-after committing the new `program.md`; students must not change their own
-system policy. Until then, operators should restart with fresh role state after
-changing the file and must treat it as immutable while that state is active.
-
-File-based subagents are discovered from `.agents/agents`. Skill bodies are not
+File-based subagents are discovered from `.agents/agents`. Live advisor and
+student skills come only from `plugins/senpai/skills`; `.agents/skills` is for
+human operators and Senpai developers and is not installed into pods. Target
+repositories may still supply their own project skills. Skill bodies are not
 concatenated into agent definitions. The OpenHands fork's `main` branch applies
 each agent definition's `reasoning_effort` override after resolving its
 inherited LLM or stored model profile.
@@ -705,7 +697,8 @@ Removed:
 
 Retained intentionally:
 
-- Agent skills and their model/effort metadata under `.agents`;
+- runtime skills and their model/effort metadata in the Senpai plugin;
+- human and developer guides under `.agents/skills`, outside pod context;
 - OpenHands Browser, task tracker, Think, and the high-quality default
   condenser for providers not using stored OpenAI Responses continuation or
   Anthropic native compaction;

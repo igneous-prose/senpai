@@ -37,7 +37,7 @@ concise, plain-language, and high-signal. It should clearly define:
 Favor high-level goals and guardrails that let research agents discover the
 details. Avoid micromanaging methods or over-prompting one idea unless that
 narrow focus is the user's explicit goal. The
-[`bootstrap-target`](plugins/senpai/skills/bootstrap-target/SKILL.md) guide and
+[`bootstrap-target`](.agents/skills/bootstrap-target/SKILL.md) guide and
 its template can turn the confirmed decisions into the target contract.
 
 Reference examples:

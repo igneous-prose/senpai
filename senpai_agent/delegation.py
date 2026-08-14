@@ -33,10 +33,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.processes import terminate_process_group
-from senpai_agent.program_context import (
-    PROGRAM_PATH_ENV,
-    ProgramSystemPromptSnapshot,
-)
+from senpai_agent.program_context import PROGRAM_PATH_ENV
 from senpai_agent.secrets import scrub_github_credentials
 
 if TYPE_CHECKING:
@@ -148,7 +145,7 @@ class DelegationConfig:
     enable_browser: bool
     command_secrets: Mapping[str, str]
     role: str
-    program: ProgramSystemPromptSnapshot
+    program_path: str
     root_state_dir: Path | None = None
     tree_id: str | None = None
     depth: int = 0
@@ -394,7 +391,7 @@ class OpenHandsChildProcess:
             )
         if self._config.github_trusted_actor is not None:
             environment["SENPAI_GITHUB_ACTOR"] = self._config.github_trusted_actor
-        environment[PROGRAM_PATH_ENV] = self._config.program.program_path
+        environment[PROGRAM_PATH_ENV] = self._config.program_path
         return environment
 
     def start(

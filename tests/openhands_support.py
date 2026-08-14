@@ -49,7 +49,7 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "plugin_dir": PLUGIN_DIR,
         "program": ProgramSystemPromptSnapshot(
             program_path="program.md",
-            prompt="## program.md - program.md\n\nTest programme.",
+            prompt="# program.md - program.md\n\nTest programme.",
         ),
     }
     values.update(updates)
