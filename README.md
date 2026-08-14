@@ -82,6 +82,14 @@ program.md
 rules, training limits, allowed edit surface, and any target-specific guidance
 for advisors and students. Senpai does not load separate target role prompts.
 
+If the target does not have a clear `program.md`, ask your coding agent to use
+`$grilling-autoresearch` and follow the
+[`grilling-autoresearch`](.agents/skills/grilling-autoresearch/SKILL.md) guide.
+It inspects the repository first, interviews you about the decisions it cannot
+infer, and drafts the file only after you confirm a shared understanding. The
+canonical skill lives under `.agents/skills/` and is also exposed to Claude
+clients through `.claude/skills/`.
+
 `program_path` accepts a normalized target-repository-relative path such as
 `senpai/program.md`. When blank, Senpai searches root `program.md` and every
 `*/program.md` exactly one directory below the root. It proceeds only when
@@ -322,6 +330,7 @@ OpenHands receives these as progressively disclosed skills; their bodies are loa
 
 | Guide | Purpose |
 |---|---|
+| [Grill an autoresearch setup](.agents/skills/grilling-autoresearch/SKILL.md) | Interview the user and turn repository facts plus explicit decisions into a concise `program.md`. |
 | [Bootstrap a target](plugins/senpai/skills/bootstrap-target/SKILL.md) | Build `program.md` from a new ML repository. |
 | [Assign an experiment](plugins/senpai/skills/assign-experiment/SKILL.md) | Turn a hypothesis into a typed student branch and draft PR. |
 | [Submit experiment results](plugins/senpai/skills/submit-experiment-results/SKILL.md) | Commit the tested implementation and publish a structured, evidence-backed result. |

@@ -488,6 +488,42 @@ def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
         assert domain_assumption not in prompts
 
 
+def test_program_md_onboarding_is_shared_across_agent_clients():
+    agents_context = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    skill_path = (
+        REPO_ROOT
+        / ".agents"
+        / "skills"
+        / "grilling-autoresearch"
+        / "SKILL.md"
+    )
+    skill = skill_path.read_text(encoding="utf-8")
+    normalized_skill = " ".join(skill.split())
+    normalized_context = " ".join(agents_context.split())
+    example_urls = {
+        "https://github.com/morganmcg1/TandemFoilSet-Balanced/blob/main/program.md",
+        "https://github.com/morganmcg1/DrivAerML/blob/main/program.md",
+        "https://github.com/morganmcg1/mlxfast-challenge_senpai/blob/main/senpai/program.md",
+        "https://github.com/karpathy/autoresearch/blob/master/program.md",
+    }
+
+    assert os.readlink(REPO_ROOT / "CLAUDE.md") == "AGENTS.md"
+    assert os.readlink(REPO_ROOT / ".claude" / "skills") == "../.agents/skills"
+    assert "name: grilling-autoresearch" in skill
+    for requirement in (
+        "Finding facts is your job, never the user's",
+        "Ask the whole frontier in one round",
+        "The decisions are the user's",
+        "Do not act on it until the user confirms",
+        "exact primary metric names and definitions",
+        "shapes, sizes, splits, exclusions",
+        "without unnecessarily narrowing the search space",
+    ):
+        assert requirement in normalized_skill
+    assert "wait for shared understanding before drafting" in normalized_context
+    assert all(url in agents_context and url in skill for url in example_urls)
+
+
 def test_harness_states_bounded_delegation_tree_contract():
     instructions = (
         REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"

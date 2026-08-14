@@ -7,8 +7,8 @@ SPDX-PackageName: senpai
 # senpai - Development Context
 
 Development of a problem-agnostic autonomous ML research loop for target ML
-problem repositories. The current research programs are often CFD surrogate
-experiments, but the runner should stay target-repo agnostic.
+problem repositories. The runner and its guidance must stay target-repo
+agnostic.
 
 ## User Clarifications
 
@@ -20,6 +20,44 @@ operations, and tradeoffs. Prefer non-obvious questions that expose constraints
 or intent. When the answers change durable project behavior, write the learnings
 to README.md or SPEC.md as appropriate.
 
+## Creating a target program.md
+
+When helping a user onboard a target repository, inspect an explicitly
+configured `program_path` first. When it is blank, look for `program.md` at the
+root and exactly one directory below it. If there is no usable file, coach the
+user through creating one by following the
+[`grilling-autoresearch`](.agents/skills/grilling-autoresearch/SKILL.md) skill
+(`$grilling-autoresearch`).
+Inspect the repository before interviewing them, establish facts yourself, ask
+the user to decide the remaining intent and tradeoffs, and wait for shared
+understanding before drafting the file. Multiple auto-discovered files are
+ambiguous; do not choose one silently.
+
+`program.md` is appended to every Senpai model's system prompt, so keep it
+concise, plain-language, and high-signal. It should clearly define:
+
+- the project goal and the exact primary metrics, including how each metric is
+  calculated, which direction is better, and which split or benchmark decides
+  success;
+- the data paths, shapes, sizes, train/validation/test splits, exclusions,
+  leakage risks, and important footguns;
+- operational guardrails such as commands, budgets, allowed edits, protected
+  artifacts, and result-reporting expectations; and
+- optional research avenues, papers, models, and libraries that provide useful
+  starting points without forcing a narrow solution path.
+
+Favor high-level goals and guardrails that let research agents discover the
+details. Avoid micromanaging methods or over-prompting one idea unless that
+narrow focus is the user's explicit goal. The
+[`bootstrap-target`](plugins/senpai/skills/bootstrap-target/SKILL.md) guide and
+its template can turn the confirmed decisions into the target contract.
+
+Reference examples:
+
+- [TandemFoilSet-Balanced](https://github.com/morganmcg1/TandemFoilSet-Balanced/blob/main/program.md)
+- [DrivAerML](https://github.com/morganmcg1/DrivAerML/blob/main/program.md)
+- [MLXFast challenge](https://github.com/morganmcg1/mlxfast-challenge_senpai/blob/main/senpai/program.md)
+- [autoresearch](https://github.com/karpathy/autoresearch/blob/master/program.md)
 
 ## Coding guidelines and philosophy
 
@@ -73,5 +111,5 @@ its repository-relative path in the header.
 
 Target `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded through
 OpenHands project context and progressive disclosure. The checked-in root
-`CLAUDE.md` is only a compact pointer to this development context; neither root
-file is a pod role instruction.
+`CLAUDE.md` links to this canonical development context; neither root file is a
+pod role instruction.
