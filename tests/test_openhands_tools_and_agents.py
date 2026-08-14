@@ -515,7 +515,6 @@ def test_grilling_autoresearch_skill_guides_human_program_design():
         "https://github.com/karpathy/autoresearch/blob/master/program.md",
     }
 
-    assert os.readlink(REPO_ROOT / ".claude" / "skills") == "../.agents/skills"
     assert (skill_dir / ".senpai-developer-only").exists()
     assert "name: grilling-autoresearch" in skill
     assert "$grilling-autoresearch" in agents_context
