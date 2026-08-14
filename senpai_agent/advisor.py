@@ -148,18 +148,22 @@ class AdvisorEventStore:
         self.close()
 
 
+def compose_senpai_instructions(harness: str, role: str) -> str:
+    return (
+        f"# Senpai harness\n\n{harness.strip()}\n\n"
+        f"# Senpai role\n\n{role.strip()}\n"
+    )
+
+
 def compose_system_instructions(
     harness: str,
     role: str,
-    program: str = "",
+    program: str,
 ) -> str:
-    instructions = (
-        f"# Senpai harness\n\n{harness.strip()}\n\n"
-        f"# Senpai role\n\n{role.strip()}"
+    return (
+        f"{compose_senpai_instructions(harness, role).strip()}\n\n"
+        f"{program.strip()}\n"
     )
-    if program:
-        instructions += f"\n\n{program.strip()}"
-    return f"{instructions}\n"
 
 
 def advisor_conversation_id(

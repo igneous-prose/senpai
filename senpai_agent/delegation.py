@@ -35,8 +35,6 @@ from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.processes import terminate_process_group
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
-    PROGRAM_SHA256_ENV,
-    PROGRAM_SNAPSHOT_ENV,
     ProgramSystemPromptSnapshot,
 )
 from senpai_agent.secrets import scrub_github_credentials
@@ -396,11 +394,7 @@ class OpenHandsChildProcess:
             )
         if self._config.github_trusted_actor is not None:
             environment["SENPAI_GITHUB_ACTOR"] = self._config.github_trusted_actor
-        program = self._config.program
-        if program.path is not None:
-            environment[PROGRAM_PATH_ENV] = program.program_path
-            environment[PROGRAM_SNAPSHOT_ENV] = str(program.path)
-            environment[PROGRAM_SHA256_ENV] = program.sha256
+        environment[PROGRAM_PATH_ENV] = self._config.program.program_path
         return environment
 
     def start(

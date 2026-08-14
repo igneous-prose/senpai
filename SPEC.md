@@ -202,9 +202,9 @@ The model receives:
    - `system_instructions/SENPAI-HARNESS.md`; and
    - the rendered advisor or student role charter; and
    - the selected target-repository `program.md` under
-     `## program.md - <path>`. A blank `program_path` searches committed root
-     `program.md` and committed one-level `*/program.md` paths and requires
-     exactly one total match.
+     `## program.md - <path>`. A blank `program_path` searches root
+     `program.md` and one-level `*/program.md` paths and requires exactly one
+     total match.
 3. Applicable target `AGENTS.md` and compatible `CLAUDE.md` project context.
 4. A compact skill catalog whose bodies are loaded only when invoked.
 5. User turns containing optional launch instructions, runtime identity,
@@ -212,60 +212,26 @@ The model receives:
 
 Harness and role remain separate source documents because they have different
 owners, but are merged into one system suffix so the agent knows both the
-OpenHands operating contract and its Senpai role. The selected programme is
-read from the cloned target's committed `HEAD` by the supervisor before any
-model starts. Senpai writes it atomically to a mode-0600, content-addressed
-snapshot outside the target workspace and retains the expected SHA-256 in the
-supervisor environment. An atomic active-generation manifest records the path,
-source commit, prompt digest, and snapshot path in role state, so a new
-supervisor reuses the same generation after a container restart. Every worker
-restart and delegated child verifies that digest before elevating the text to
-system level. Later target-worktree or snapshot edits therefore cannot silently
-alter an existing system prompt. Missing or conflicting generation metadata
-fails closed once conversation state exists. The complete role and configured
-programme are not duplicated in ordinary user messages; OpenHands includes the
-system suffix on every inference. A persisted merged-context hash can still
-deliver changed harness, role, or launch context once at user level after a
-worker restart. Current time is rendered for every controller wake.
+OpenHands operating contract and its Senpai role. Before constructing a model
+worker, the supervisor resolves the configured path or fails with the missing
+or ambiguous candidates. The runner reads that file, formats the programme
+section, and appends it to the system suffix. Delegated children inherit the
+resolved repository-relative path and build the same suffix. The programme is
+not duplicated in ordinary user messages. OpenHands includes the system suffix
+on every inference, and current time is rendered for every controller wake.
 
 ### Proposed live programme refresh
 
-Live refresh should happen at controller turn boundaries, not through a file
-watcher or a pod rollout. Because the existing OpenHands system event is
-persisted, the current one-time user-level context update is not sufficient for
-a programme policy change. Prefer explicit SDK support for a versioned system
-event that supersedes the previous Senpai suffix. If the SDK cannot provide
-that semantic, start a new conversation generation with a new UUID and system
-suffix, then carry forward a bounded user-level continuity bundle: the prior
-conversation ID, current launch context, durable assignment state, and pending
-inbox messages.
-
-A rollover boundary must also account for work already keyed to the old UUID.
-The simplest safe boundary has no active delegated descendants or training
-monitor. If rollover must occur while either is active, atomically install an
-old-to-new routing alias in the inbox and delegation registry and update the
-advisor/student conversation registries before activating the new generation;
-late child results and monitor events must then resolve through that alias.
-The active programme manifest changes in that same atomic transition, never as
-an independent file refresh.
-
-At each safe boundary, resolve `program_path` from a trusted committed advisor
-or integration ref, record its blob SHA, and create an immutable,
-content-addressed snapshot for the next generation. Never promote programme
-text directly from a mutable student assignment worktree. Persist
-`(path, trusted ref, blob SHA, conversation generation)` atomically and give
-every child spawned by that generation the same snapshot. An edit made during
-a turn takes effect only after that turn completes.
-
-For an intentional agent-authored update, expose an advisor-only typed
-`promote_program_context(expected_blob_sha)` operation. The advisor first
-commits `program.md` to the configured trusted branch, then requests promotion
-of that exact blob. The controller verifies the path, ref reachability, and
-expected SHA before staging the next generation and reports when it becomes
-active. Human-authored commits can enter through the same reconciliation path.
-Students cannot promote their own worktree policy. This preserves system-level
-priority, makes every transition auditable, and carries the new programme
-forward without replacing the pod or mutating a conversation mid-turn.
+This PR does not hot-reload `program.md`. A safe future implementation should
+promote changes only at controller turn boundaries and only when no delegated
+child or training monitor is active. Prefer SDK support for a versioned system
+event that replaces the previous Senpai suffix. If OpenHands cannot replace a
+persisted system event, start a new conversation UUID with the new suffix and
+carry forward only durable assignment state, pending inbox messages, and a
+short continuity note. The advisor should request that rollover explicitly
+after committing the new `program.md`; students must not change their own
+system policy. Until then, operators should restart with fresh role state after
+changing the file and must treat it as immutable while that state is active.
 
 File-based subagents are discovered from `.agents/agents`. Skill bodies are not
 concatenated into agent definitions. The OpenHands fork's `main` branch applies

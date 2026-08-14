@@ -20,7 +20,7 @@ from senpai_agent.agent_markdown import strip_spdx_header
 from senpai_agent.advisor import (
     AdvisorEvent,
     AdvisorEventStore,
-    compose_system_instructions,
+    compose_senpai_instructions,
 )
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
@@ -880,13 +880,11 @@ def controller_main(
         )
 
     full_prompt = _full_prompt(role, env)
-    system_context = compose_system_instructions(
-        read_role_instructions(runner_config.harness_file),
-        read_role_instructions(runner_config.role_file),
-        runner_config.program.prompt,
-    )
     continuation_context = (
-        f"{system_context.strip()}\n\n"
+        f"{compose_senpai_instructions(
+            read_role_instructions(runner_config.harness_file),
+            read_role_instructions(runner_config.role_file),
+        ).strip()}\n\n"
         f"# Current launch context\n\n{full_prompt}"
     )
     inbox = PersistentInbox(

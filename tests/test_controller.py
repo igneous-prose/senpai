@@ -657,7 +657,10 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         timeout_seconds=3600,
         harness_file=tmp_path / "harness.md",
         role_file=tmp_path / "role.md",
-        program=ProgramSystemPromptSnapshot(),
+        program=ProgramSystemPromptSnapshot(
+            program_path="program.md",
+            prompt="## program.md - program.md\n\nTest programme.",
+        ),
     )
     monkeypatch.setattr(runner_module, "parse_runner_args", lambda _argv: object())
     monkeypatch.setattr(
@@ -676,7 +679,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     )
     monkeypatch.setattr(
         controller_module,
-        "compose_system_instructions",
+        "compose_senpai_instructions",
         lambda *_: "",
     )
     monkeypatch.setattr(controller_module, "_full_prompt", lambda *_: "programme")
@@ -707,6 +710,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     assert created[0].system_context.endswith(
         "# Current launch context\n\nprogramme"
     )
+    assert "Test programme" not in created[0].system_context
 
 
 def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():

@@ -261,7 +261,10 @@ def config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": False,
         "command_secrets": {},
         "role": "advisor",
-        "program": ProgramSystemPromptSnapshot(),
+        "program": ProgramSystemPromptSnapshot(
+            program_path="program.md",
+            prompt="## program.md - program.md\n\nTest programme.",
+        ),
     }
     values.update(updates)
     return DelegationConfig(**values)

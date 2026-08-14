@@ -77,7 +77,8 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
     assert captured["prompt"] == "first task"
     assert captured["role"] == (
         "# Senpai harness\n\nharness instructions\n\n"
-        "# Senpai role\n\nadvisor role\n"
+        "# Senpai role\n\nadvisor role\n\n"
+        "## program.md - program.md\n\nTest programme.\n"
     )
     assert captured["plugin"] == str(PLUGIN_DIR)
     assert captured["secrets"] == {"WANDB_API_KEY": "wandb-key"}

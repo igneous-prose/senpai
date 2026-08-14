@@ -1,4 +1,3 @@
-import subprocess
 import uuid
 from pathlib import Path
 
@@ -48,7 +47,10 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "harness_file": harness_file,
         "role_file": role_file,
         "plugin_dir": PLUGIN_DIR,
-        "program": ProgramSystemPromptSnapshot(),
+        "program": ProgramSystemPromptSnapshot(
+            program_path="program.md",
+            prompt="## program.md - program.md\n\nTest programme.",
+        ),
     }
     values.update(updates)
     return RunnerConfig(**values)
@@ -63,26 +65,9 @@ def runtime_env(
 ) -> dict[str, str]:
     workspace = tmp_path / "target"
     workspace.mkdir(exist_ok=True)
-    if not (workspace / ".git").exists():
-        subprocess.run(("git", "init", "-q"), cwd=workspace, check=True)
-        program = workspace / program_path
-        program.parent.mkdir(parents=True, exist_ok=True)
-        program.write_text(program_content, encoding="utf-8")
-        subprocess.run(("git", "add", "."), cwd=workspace, check=True)
-        subprocess.run(
-            (
-                "git",
-                "-c",
-                "user.name=Senpai Test",
-                "-c",
-                "user.email=senpai@example.com",
-                "commit",
-                "-qm",
-                "Add test programme",
-            ),
-            cwd=workspace,
-            check=True,
-        )
+    program = workspace / program_path
+    program.parent.mkdir(parents=True, exist_ok=True)
+    program.write_text(program_content, encoding="utf-8")
     role_file = tmp_path / f"SENPAI-{role.upper()}.md"
     role_file.write_text(f"{role} role", encoding="utf-8")
     harness_file = tmp_path / "SENPAI-HARNESS.md"

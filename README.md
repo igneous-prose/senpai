@@ -83,23 +83,21 @@ rules, training limits, allowed edit surface, and any target-specific guidance
 for advisors and students. Senpai does not load separate target role prompts.
 
 `program_path` accepts a normalized target-repository-relative path such as
-`senpai/program.md`. When blank, Senpai searches committed root `program.md`
-and every committed `*/program.md` exactly one directory below the root. It
-proceeds only when that entire search contains exactly one file. No match or
-multiple matches fail startup
-before any controller or model worker starts. The error lists the searched or
-ambiguous paths and explains how to set `--program_path` or `program_path` in
-`senpai.yaml`. Senpai appends the selected file to every advisor, student, and
-child system prompt under
+`senpai/program.md`. When blank, Senpai searches root `program.md` and every
+`*/program.md` exactly one directory below the root. It proceeds only when
+that entire search contains exactly one file. No match or multiple matches
+fail startup before any controller or model worker starts. The error lists
+the searched or ambiguous paths and explains how to set `--program_path` or
+`program_path` in `senpai.yaml`. Senpai appends the selected file to every
+advisor, student, and child system prompt under
 `## program.md - senpai/program.md`.
 
-Senpai pins the file from the target's committed `HEAD` before starting a
-model, stores a private content-addressed snapshot, and verifies its digest for
-worker restarts and children. A durable generation manifest keeps that same pin
-across container restarts. Later worktree edits therefore do not alter an
-existing conversation's system prompt; changing the selection for existing
-role state requires the [proposed generation-promotion
-mechanism](SPEC.md#proposed-live-programme-refresh) or fresh role state.
+Senpai resolves and reads the file directly from the target checkout. It does
+not hot-reload an existing conversation, so treat `program.md` as immutable
+while role state is active. After changing it, start with fresh role state to
+guarantee that every role receives the same system context. A future safe
+refresh mechanism is
+[proposed in the specification](SPEC.md#proposed-live-programme-refresh).
 
 Use the [bootstrap-target guide](plugins/senpai/skills/bootstrap-target/SKILL.md) to inspect a new target and create this contract. Target `AGENTS.md`, compatible `CLAUDE.md`, and `.agents/skills/` are also loaded through OpenHands project context and progressive disclosure.
 

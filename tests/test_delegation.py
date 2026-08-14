@@ -23,10 +23,7 @@ from senpai_agent.delegation import (
 )
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
-    PROGRAM_SHA256_ENV,
-    PROGRAM_SNAPSHOT_ENV,
     ProgramSystemPromptSnapshot,
-    program_system_prompt_sha256,
 )
 
 
@@ -86,7 +83,10 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": True,
         "command_secrets": {"EXA_API_KEY": "exa-secret"},
         "role": "advisor",
-        "program": ProgramSystemPromptSnapshot(),
+        "program": ProgramSystemPromptSnapshot(
+            program_path="program.md",
+            prompt="## program.md - program.md\n\nTest programme.",
+        ),
     }
     values.update(updates)
     return DelegationConfig(**values)
@@ -214,28 +214,21 @@ def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path)
     )
 
 
-def test_child_environment_carries_the_parent_program_snapshot(tmp_path: Path):
-    program = "## program.md - senpai/program.md\n\nParent snapshot."
-    snapshot = tmp_path / "program-system-prompt.md"
-    snapshot.write_text(program)
+def test_child_environment_carries_the_resolved_program_path(tmp_path: Path):
     child = OpenHandsChildProcess(
         delegation_config(
             tmp_path,
             program=ProgramSystemPromptSnapshot(
                 program_path="senpai/program.md",
-                prompt=program,
-                path=snapshot,
-                sha256=program_system_prompt_sha256(program),
+                prompt=(
+                    "## program.md - senpai/program.md\n\nParent programme."
+                ),
             ),
         ),
         delegation_request(),
     )
 
     assert child.environment[PROGRAM_PATH_ENV] == "senpai/program.md"
-    assert child.environment[PROGRAM_SNAPSHOT_ENV] == str(snapshot)
-    assert child.environment[PROGRAM_SHA256_ENV] == program_system_prompt_sha256(
-        program
-    )
 
 
 def test_child_environment_replaces_ambient_model_credentials(

@@ -87,11 +87,8 @@ from senpai_agent.github.tools import (
 )
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
-    PROGRAM_SHA256_ENV,
-    PROGRAM_SNAPSHOT_ENV,
     ProgramSystemPromptSnapshot,
-    load_program_system_prompt_snapshot,
-    pinned_program_system_prompt,
+    load_program_system_prompt,
 )
 from senpai_agent.tools import register_senpai_tools
 
@@ -548,33 +545,10 @@ def resolve_config(
         raise RuntimeError(
             "OpenHands state directory must be outside the target workspace"
         )
-    program_path = env.get(PROGRAM_PATH_ENV, "")
-    configured_snapshot = env.get(PROGRAM_SNAPSHOT_ENV, "")
-    expected_sha256 = env.get(PROGRAM_SHA256_ENV, "")
-    if not program_path and (configured_snapshot or expected_sha256):
-        raise RuntimeError("program.md snapshot requires SENPAI_PROGRAM_PATH")
-    if configured_snapshot:
-        expanded_snapshot = Path(configured_snapshot).expanduser()
-        program_system_prompt_file = Path(os.path.abspath(expanded_snapshot))
-    else:
-        program_system_prompt_file = None
-    if program_system_prompt_file is not None and (
-        program_system_prompt_file == workspace
-        or program_system_prompt_file.is_relative_to(workspace)
-    ):
-        raise RuntimeError("program.md snapshot must be outside the target workspace")
-    if program_system_prompt_file is not None:
-        program_snapshot = load_program_system_prompt_snapshot(
-            program_path,
-            program_system_prompt_file,
-            expected_sha256,
-        )
-    else:
-        program_snapshot = pinned_program_system_prompt(
-            workspace,
-            program_path,
-            state_dir,
-        )
+    program = load_program_system_prompt(
+        workspace,
+        env.get(PROGRAM_PATH_ENV, ""),
+    )
     role = env.get("SENPAI_ROLE", "")
     if role not in {"advisor", "student"}:
         raise RuntimeError("SENPAI_ROLE must be advisor or student")
@@ -853,7 +827,7 @@ def resolve_config(
         plugin_dir=resolve_plugin_dir(
             env_value(args.plugin_dir, env, "SENPAI_PLUGIN"),
         ),
-        program=program_snapshot,
+        program=program,
         advisor_branch=env.get("ADVISOR_BRANCH") or None,
         student_names=tuple(
             name.strip()
