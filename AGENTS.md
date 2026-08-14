@@ -13,7 +13,9 @@ SPDX-PackageName: senpai
 When helping a user onboard a target repository, inspect an explicitly
 configured `program_path` first. When it is blank, look for `program.md` at the
 root and exactly one directory below it. If there is no usable file, coach the
-user through creating one.
+user through creating one by following the
+[`grilling-autoresearch`](.agents/skills/grilling-autoresearch/SKILL.md) skill
+(`$grilling-autoresearch`).
 Inspect the repository before interviewing them, establish facts yourself, ask
 the user to decide the remaining intent and tradeoffs, and wait for shared
 understanding before drafting the file. Multiple auto-discovered files are
