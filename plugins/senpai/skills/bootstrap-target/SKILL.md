@@ -17,11 +17,7 @@ effort: high
 
 # bootstrap-target
 
-Turn an arbitrary ML or research repository into a Senpai-ready target package
-by writing `program.md`, the authoritative research contract. It is not generic
-documentation: it is the shared launch briefing for an autonomous research lab.
-Write it so the advisor knows what science to direct, the student knows what is
-legitimate to edit and run, and both roles agree on a valid result.
+Turn an arbitrary ML or research repository into a Senpai-ready target package by writing `program.md`, the authoritative research contract. It is not generic documentation: it is the shared launch briefing for an autonomous research lab. Write it so the advisor knows what science to direct, the student knows what is legitimate to edit and run, and both roles agree on a valid result.
 
 ## References
 
@@ -93,9 +89,7 @@ Load these only when they help the current task:
    `references/program-template.md`.
 
 5. **Validate the target package.**
-   Check that referenced paths exist, command patterns are plausible, metric
-   names match code where possible, and protected files are explicit. If
-   commands cannot be run locally, state what was verified statically.
+   Check that referenced paths exist, command patterns are plausible, metric names match code where possible, and protected files are explicit. If commands cannot be run locally, state what was verified statically.
 
 ## Writing Principles
 

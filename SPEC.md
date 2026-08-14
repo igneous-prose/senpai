@@ -178,11 +178,7 @@ OpenHands stores base state and individual events beneath that UUID. A killed
 worker resumes from the last persisted event. An in-flight response or tool
 call without a durable event is retried from the preceding event.
 
-The controller marks a conversation's initial launch context delivered and
-records its current system-context digest in the same atomic update, only after
-the OpenHands turn succeeds. A crash or nonzero first turn therefore retries
-the complete programme and launch context instead of incorrectly
-continuing from instructions that were never delivered.
+The controller marks a conversation's initial launch context delivered and records its current system-context digest in the same atomic update, only after the OpenHands turn succeeds. A crash or nonzero first turn therefore retries the complete program.md and launch context instead of incorrectly continuing from instructions that were never delivered.
 
 Role state uses pod-local storage and survives controller or container restarts
 within the same pod. Replacing or rescheduling a pod starts fresh local state;
@@ -201,26 +197,12 @@ The model receives:
 2. One stable system suffix assembled from:
    - `system_instructions/SENPAI-HARNESS.md`; and
    - the rendered advisor or student role charter; and
-   - the selected target-repository `program.md` under
-     `# program.md - <path>`. A blank `program_path` searches root
-     `program.md` and one-level `*/program.md` paths and requires exactly one
-     total match.
+   - the selected target-repository `program.md` under `# program.md - <path>`. A blank `program_path` searches root `program.md` and one-level `*/program.md` paths and requires exactly one total match.
 3. Applicable target `AGENTS.md` and compatible `CLAUDE.md` project context.
 4. A compact skill catalog whose bodies are loaded only when invoked.
-5. User turns containing optional launch instructions, runtime identity,
-   current state, and current UTC time.
+5. User turns containing optional launch instructions, runtime identity, current state, and current UTC time.
 
-Harness and role remain separate source documents because they have different
-owners, but are merged into one system suffix so the agent knows both the
-OpenHands operating contract and its Senpai role. Before constructing a model
-worker, the supervisor resolves the configured path or fails with the missing
-or ambiguous candidates. The runner reads that file, formats the `program.md`
-section, and appends it to the system suffix. Delegated children inherit the
-resolved repository-relative path and build the same suffix. It is not
-duplicated in ordinary user messages. Use GitHub Issues for live human
-direction; `program.md` changes take effect when a model process starts.
-OpenHands includes the system suffix on every inference, and current time is
-rendered for every controller wake.
+Harness and role remain separate source documents because they have different owners, but are merged into one system suffix so the agent knows both the OpenHands operating contract and its Senpai role. Before constructing a model worker, the supervisor resolves the configured path or fails with the missing or ambiguous candidates. The runner reads that file, formats the `program.md` section, and appends it to the system suffix. Delegated children inherit the resolved repository-relative path and build the same suffix. It is not duplicated in ordinary user messages. Use GitHub Issues for live human direction; `program.md` changes take effect when a model process starts. OpenHands includes the system suffix on every inference, and current time is rendered for every controller wake.
 
 File-based subagents are discovered from `.agents/agents`. Skill bodies are not
 concatenated into agent definitions. The OpenHands fork's `main` branch applies

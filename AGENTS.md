@@ -10,35 +10,16 @@ SPDX-PackageName: senpai
 
 ### Creating a target program.md
 
-When helping a user onboard a target repository, inspect an explicitly
-configured `program_path` first. When it is blank, look for `program.md` at the
-root and exactly one directory below it. If there is no usable file, coach the
-user through creating one by following the
-[`grilling-autoresearch`](.agents/skills/grilling-autoresearch/SKILL.md) skill
-(`$grilling-autoresearch`).
-Inspect the repository before interviewing them, establish facts yourself, ask
-the user to decide the remaining intent and tradeoffs, and wait for shared
-understanding before drafting the file. Multiple auto-discovered files are
-ambiguous; do not choose one silently.
+When helping a user onboard a target repository, inspect an explicitly configured `program_path` first. When it is blank, look for `program.md` at the root and exactly one directory below it. If there is no usable file, coach the user through creating one by following the [`grilling-autoresearch`](.agents/skills/grilling-autoresearch/SKILL.md) skill (`$grilling-autoresearch`). Inspect the repository before interviewing them, establish facts yourself, ask the user to decide the remaining intent and tradeoffs, and wait for shared understanding before drafting the file. Multiple auto-discovered files are ambiguous; do not choose one silently.
 
-`program.md` is appended to every Senpai model's system prompt, so keep it
-concise, plain-language, and high-signal. It should clearly define:
+`program.md` is appended to every Senpai model's system prompt, so keep it concise, plain-language, and high-signal. It should clearly define:
 
-- the project goal and the exact primary metrics, including how each metric is
-  calculated, which direction is better, and which split or benchmark decides
-  success;
-- the data paths, shapes, sizes, train/validation/test splits, exclusions,
-  leakage risks, and important footguns;
-- operational guardrails such as commands, budgets, allowed edits, protected
-  artifacts, and result-reporting expectations; and
-- optional research avenues, papers, models, and libraries that provide useful
-  starting points without forcing a narrow solution path.
+- the project goal and the exact primary metrics, including how each metric is calculated, which direction is better, and which split or benchmark decides success;
+- the data paths, shapes, sizes, train/validation/test splits, exclusions, leakage risks, and important footguns;
+- operational guardrails such as commands, budgets, allowed edits, protected artifacts, and result-reporting expectations; and
+- optional research avenues, papers, models, and libraries that provide useful starting points without forcing a narrow solution path.
 
-Favor high-level goals and guardrails that let research agents discover the
-details. Avoid micromanaging methods or over-prompting one idea unless that
-narrow focus is the user's explicit goal. The
-[`bootstrap-target`](plugins/senpai/skills/bootstrap-target/SKILL.md) guide and
-its template can turn the confirmed decisions into the target contract.
+Favor high-level goals and guardrails that let research agents discover the details. Avoid micromanaging methods or over-prompting one idea unless that narrow focus is the user's explicit goal. The [`bootstrap-target`](plugins/senpai/skills/bootstrap-target/SKILL.md) guide and its template can turn the confirmed decisions into the target contract.
 
 Reference examples:
 
@@ -49,9 +30,7 @@ Reference examples:
 
 ## Senpai developers
 
-Development of a problem-agnostic autonomous ML research loop for target ML
-problem repositories. The runner and its guidance must stay target-repo
-agnostic.
+Development of a problem-agnostic autonomous ML research loop for target ML problem repositories. The runner and its guidance must stay target-repo agnostic.
 
 ### Clarifying development work
 
@@ -109,10 +88,6 @@ shared harness file and one rendered role file:
 - `system_instructions/ADVISOR.md` or
   `system_instructions/STUDENT.md`
 
-The selected or discovered target `program.md` is appended to that suffix with
-its repository-relative path in the header.
+The selected or discovered target `program.md` is appended to that suffix with its repository-relative path in the header.
 
-Target `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded through
-OpenHands project context and progressive disclosure. The checked-in root
-`CLAUDE.md` links to this canonical development context; neither root file is a
-pod role instruction.
+Target `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded through OpenHands project context and progressive disclosure. The checked-in root `CLAUDE.md` links to this canonical development context; neither root file is a pod role instruction.
