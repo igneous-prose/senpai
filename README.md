@@ -315,7 +315,6 @@ are not installed into autoresearch pods.
 
 | Guide | Purpose |
 |---|---|
-| [Grill an autoresearch setup](.agents/skills/grilling-autoresearch/SKILL.md) | Interview the user and turn repository facts plus explicit decisions into a concise `program.md`. |
 | [Bootstrap a target](.agents/skills/bootstrap-target/SKILL.md) | Build `program.md` from a new ML repository. |
 | [Experiment report](.agents/skills/experiment-report/SKILL.md) | Create the project-standard `nn_cfd` W&B comparison report; this guide is target-specific rather than part of the generic runtime. |
 | [Training code style](literature_and_guidance/TRAINING-CODE-STYLE.md) | Structure expensive ML entrypoints so configuration, artifacts, validation, and failure boundaries stay explicit. |

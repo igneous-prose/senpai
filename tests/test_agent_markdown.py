@@ -88,7 +88,7 @@ def test_agent_context_installer_builds_loadable_sanitized_runtime_copies(
     home.mkdir()
     runtime_root.mkdir()
     source_skill = PLUGIN_DIR / "skills" / "review-experiment" / "SKILL.md"
-    operator_skill = ROOT / ".agents" / "skills" / "grilling-autoresearch" / "SKILL.md"
+    operator_skill = ROOT / ".agents" / "skills" / "experiment-report" / "SKILL.md"
     source_agent = ROOT / ".agents" / "agents" / "bash-runner.md"
     originals = {
         source_skill: source_skill.read_text(encoding="utf-8"),
