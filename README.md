@@ -71,43 +71,12 @@ The launcher places credentials in a per-launch Kubernetes Secret. During bootst
 
 ### 4. Prepare the target repository
 
-The target branch must contain `program.md`. The repository root is the
-conventional layout:
+The target repository needs one concise `program.md` describing the research
+goal, metrics, data, constraints, allowed edits, and target-specific guidance.
 
-```text
-program.md
-```
-
-`program.md` defines the research objective, baseline, metrics, benchmark
-rules, training limits, allowed edit surface, and any target-specific guidance
-for advisors and students. Senpai does not load separate target role prompts.
-
-If the target does not have a clear `program.md`, ask your coding agent to use
-`$grilling-autoresearch` and follow the
-[`grilling-autoresearch`](.agents/skills/grilling-autoresearch/SKILL.md) guide.
-It inspects the repository first, interviews you about the decisions it cannot
-infer, and drafts the file only after you confirm a shared understanding. The
-canonical skill lives under `.agents/skills/` and is also exposed to Claude
-clients through `.claude/skills/`.
-
-`program_path` accepts a normalized target-repository-relative path such as
-`senpai/program.md`. When blank, Senpai searches root `program.md` and every
-`*/program.md` exactly one directory below the root. It proceeds only when
-that entire search contains exactly one file. No match or multiple matches
-fail startup before any controller or model worker starts. The error lists
-the searched or ambiguous paths and explains how to set `--program_path` or
-`program_path` in `senpai.yaml`. Senpai appends the selected file to every
-advisor, student, and child system prompt under
-`## program.md - senpai/program.md`.
-
-Senpai resolves and reads the file directly from the target checkout. It does
-not hot-reload an existing conversation, so treat `program.md` as immutable
-while role state is active. After changing it, start with fresh role state to
-guarantee that every role receives the same system context. A future safe
-refresh mechanism is
-[proposed in the specification](SPEC.md#proposed-live-programme-refresh).
-
-Use the [bootstrap-target guide](plugins/senpai/skills/bootstrap-target/SKILL.md) to inspect a new target and create this contract. Target `AGENTS.md`, compatible `CLAUDE.md`, and `.agents/skills/` are also loaded through OpenHands project context and progressive disclosure.
+Put it at the repository root. If it lives elsewhere, set `program_path` in
+`senpai.yaml` or pass `--program_path` at launch. Senpai appends the selected
+file to every agent's system prompt.
 
 The target repository must be different from the Senpai runner repository.
 
@@ -412,7 +381,6 @@ Useful launch controls:
 - `--timeout_minutes` and `--max_epochs` are hard per-training limits.
 - `--poll_interval_s` and `--poll_jitter_s` control idle GitHub cadence without teaching the model to poll.
 - `--gh_history_scope branch` keeps normal advisor-branch memory, `fresh` creates a shallow ablation checkout, and `repo` exposes full repository history.
-- `--program_path senpai/program.md` explicitly selects a target-repository programme file for every role's system prompt; an empty value requires exactly one match across root `program.md` and one-level `*/program.md`.
 - `--extra_instructions` accepts a Markdown file or literal operator guidance.
 - `human_issues: false` disables GitHub Issue polling for isolated launches.
 
