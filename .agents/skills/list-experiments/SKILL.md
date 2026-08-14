@@ -1,6 +1,6 @@
 ---
 name: list-experiments
-description: Use this skill whenever you need to list all of the experiment ideas tried and in progress for this research programme. It outputs 3 files organized by usefulness — merged winners, a compact results table, and full details for deep dives. Use when generating new experimental ideas to check what has already been tried.
+description: Use this skill whenever you need to list all experiment ideas tried or in progress under program.md. It outputs 3 files organized by usefulness — merged winners, a compact results table, and full details for deep dives. Use when generating new experimental ideas to check what has already been tried.
 ---
 
 # List Experiments

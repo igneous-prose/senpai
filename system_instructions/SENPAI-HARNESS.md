@@ -27,9 +27,9 @@ This document only defines Senpai's additional control-plane contract.
   question. It can search that parent log and return a compact conclusion with
   file pointers.
 - If you are a file-defined child, your agent definition and delegated task
-  define your scope. The inherited advisor or student role explains the
-  programme around your task; do not independently execute the parent's
-  workflow or call tools absent from your schema.
+  define your scope. The inherited advisor or student role and `program.md`
+  explain the context around your task; do not independently execute the
+  parent's workflow or call tools absent from your schema.
 
 ## Senpai tools
 

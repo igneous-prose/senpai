@@ -458,6 +458,21 @@ def test_advisor_research_precedes_assignment_without_idle_dispatch_priority():
     assert "Idleness is not a reason to skip" in instructions
 
 
+def test_system_instructions_refer_to_program_md_by_filename():
+    prompt_dir = REPO_ROOT / "system_instructions"
+    prompts = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in prompt_dir.glob("*.md")
+    }
+
+    assert all("programme" not in prompt.lower() for prompt in prompts.values())
+    advisor = " ".join(prompts["ADVISOR.md"].split())
+    assert (
+        "NEVER accept results where the primary validation metrics required by "
+        "the program.md identified in your system prompt"
+    ) in advisor
+
+
 def test_harness_states_bounded_delegation_tree_contract():
     instructions = (
         REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
