@@ -15,7 +15,7 @@ from senpai_agent.openhands_runner import (
     sanitized_project_skills,
     scrub_model_credentials,
 )
-from senpai_agent.program_context import ProgramSystemPromptSnapshot
+from senpai_agent.program_context import ProgramSystemPrompt
 from openhands_support import runtime_config, runtime_env
 from test_agent_markdown import HTML_HEADER, PLAIN_HEADER
 
@@ -52,7 +52,7 @@ def test_main_agent_context_appends_program_after_harness_and_role():
     context = build_main_agent_context(
         "harness instructions",
         "advisor role",
-        program=ProgramSystemPromptSnapshot(
+        program=ProgramSystemPrompt(
             program_path="senpai/program.md",
             prompt="# program.md - senpai/program.md\n\nResearch policy."
         ),

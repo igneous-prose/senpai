@@ -20,7 +20,7 @@ from senpai_agent.inbox import (
     deliver_turn_messages,
 )
 from senpai_agent.mailbox import ControllerEvent
-from senpai_agent.program_context import ProgramSystemPromptSnapshot
+from senpai_agent.program_context import ProgramSystemPrompt
 from senpai_agent.state import ConversationStateLedger, WorkspaceDivergenceLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
 from senpai_agent.workspace import WorkspaceDivergence
@@ -657,7 +657,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         timeout_seconds=3600,
         harness_file=tmp_path / "harness.md",
         role_file=tmp_path / "role.md",
-        program=ProgramSystemPromptSnapshot(
+        program=ProgramSystemPrompt(
             program_path="program.md",
             prompt="# program.md - program.md\n\nTest programme.",
         ),
