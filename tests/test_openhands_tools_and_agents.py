@@ -466,6 +466,7 @@ def test_system_instructions_refer_to_program_md_by_filename():
     }
 
     assert all("programme" not in prompt.lower() for prompt in prompts.values())
+    assert "program.md" not in prompts["SENPAI-HARNESS.md"]
     advisor = " ".join(prompts["ADVISOR.md"].split())
     assert (
         "NEVER accept results where the primary validation metrics required by "
