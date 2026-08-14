@@ -679,7 +679,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     )
     monkeypatch.setattr(
         controller_module,
-        "compose_senpai_instructions",
+        "compose_system_instructions",
         lambda *_: "",
     )
     monkeypatch.setattr(controller_module, "_full_prompt", lambda *_: "programme")
