@@ -7,10 +7,22 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
 from pydantic import SecretStr
 
 import senpai_agent.supervisor as supervisor_module
-from senpai_agent.supervisor import SupervisorConfig, WorkerLease, WorkerSupervisor
+from senpai_agent.program_context import (
+    PROGRAM_SHA256_ENV,
+    PROGRAM_SNAPSHOT_ENV,
+    PROGRAM_SOURCE_COMMIT_ENV,
+    program_system_prompt_sha256,
+)
+from senpai_agent.supervisor import (
+    SupervisorConfig,
+    WorkerLease,
+    WorkerSupervisor,
+    prepare_program_context_environment,
+)
 
 
 def wait_for(path: Path, timeout: float = 5) -> None:
@@ -45,6 +57,101 @@ def test_supervisor_default_termination_grace_is_sixty_seconds():
 
 def test_supervisor_caps_repeated_restart_backoff_at_five_minutes():
     assert SupervisorConfig().max_backoff_seconds == 300
+
+
+def test_supervisor_pins_committed_programme_before_starting_workers(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    program = workspace / "program.md"
+    program.write_text("Committed policy.")
+    subprocess.run(("git", "init", "-q"), cwd=workspace, check=True)
+    subprocess.run(("git", "add", "program.md"), cwd=workspace, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Senpai Test",
+            "-c",
+            "user.email=senpai@example.com",
+            "commit",
+            "-qm",
+            "Add programme",
+        ),
+        cwd=workspace,
+        check=True,
+    )
+    program.write_text("Mutable replacement.")
+
+    environment = prepare_program_context_environment(
+        {"SENPAI_OPENHANDS_WORKSPACE": str(workspace)},
+        tmp_path / "state",
+    )
+
+    snapshot = Path(environment[PROGRAM_SNAPSHOT_ENV])
+    prompt = snapshot.read_text()
+    manifest = json.loads(
+        (tmp_path / "state" / "program-context" / "current.json").read_text()
+    )
+    assert prompt.endswith("Committed policy.")
+    assert "Mutable replacement" not in prompt
+    assert environment[PROGRAM_SHA256_ENV] == program_system_prompt_sha256(prompt)
+    assert environment[PROGRAM_SOURCE_COMMIT_ENV] == subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert manifest == {
+        "version": 1,
+        "program_path": "program.md",
+        "source_commit": environment[PROGRAM_SOURCE_COMMIT_ENV],
+        "prompt_sha256": environment[PROGRAM_SHA256_ENV],
+        "snapshot_path": f"program-context/{environment[PROGRAM_SHA256_ENV]}.md",
+    }
+    automatic_restart = prepare_program_context_environment(
+        {"SENPAI_OPENHANDS_WORKSPACE": str(workspace)},
+        tmp_path / "state",
+    )
+    assert automatic_restart["SENPAI_PROGRAM_PATH"] == "program.md"
+    assert automatic_restart[PROGRAM_SHA256_ENV] == environment[PROGRAM_SHA256_ENV]
+    with pytest.raises(RuntimeError, match="does not match the pinned generation"):
+        prepare_program_context_environment(
+            {
+                "SENPAI_PROGRAM_PATH": "senpai/program.md",
+                "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+            },
+            tmp_path / "state",
+        )
+
+    subprocess.run(("git", "add", "program.md"), cwd=workspace, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=Senpai Test",
+            "-c",
+            "user.email=senpai@example.com",
+            "commit",
+            "-qm",
+            "Replace programme",
+        ),
+        cwd=workspace,
+        check=True,
+    )
+    restarted = prepare_program_context_environment(
+        {"SENPAI_OPENHANDS_WORKSPACE": str(workspace)},
+        tmp_path / "state",
+    )
+
+    assert restarted[PROGRAM_SOURCE_COMMIT_ENV] == environment[
+        PROGRAM_SOURCE_COMMIT_ENV
+    ]
+    assert restarted[PROGRAM_SHA256_ENV] == environment[PROGRAM_SHA256_ENV]
+    assert restarted[PROGRAM_SNAPSHOT_ENV] == environment[PROGRAM_SNAPSHOT_ENV]
+    assert Path(restarted[PROGRAM_SNAPSHOT_ENV]).read_text() == prompt
 
 
 def test_pid_one_reaps_adopted_children_without_reaping_its_worker(monkeypatch):

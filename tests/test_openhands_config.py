@@ -15,6 +15,11 @@ from senpai_agent.openhands_runner import (
     sanitized_project_skills,
     scrub_model_credentials,
 )
+from senpai_agent.program_context import (
+    PROGRAM_SHA256_ENV,
+    PROGRAM_SNAPSHOT_ENV,
+    program_system_prompt_sha256,
+)
 from openhands_support import runtime_config, runtime_env
 from test_agent_markdown import HTML_HEADER, PLAIN_HEADER
 
@@ -57,6 +62,22 @@ def test_main_agent_context_places_harness_and_role_before_project_skills():
     assert context.current_datetime is None
     assert context.load_user_skills is True
     assert context.load_project_skills is False
+
+
+def test_main_agent_context_appends_the_configured_program_section():
+    context = build_main_agent_context(
+        "harness instructions",
+        "advisor role",
+        program_system_prompt=(
+            "## program.md - senpai/program.md\n\nResearch policy."
+        ),
+    )
+
+    assert context.system_message_suffix == (
+        "# Senpai harness\n\nharness instructions\n\n"
+        "# Senpai role\n\nadvisor role\n\n"
+        "## program.md - senpai/program.md\n\nResearch policy.\n"
+    )
 
 
 def test_student_charter_requires_typed_tools_for_every_training_operation():
@@ -143,6 +164,53 @@ def test_resolved_config_separates_runtime_credentials_from_command_secrets(
     assert delegated.smart_api_key == "openai-key"
     assert delegated.fast_api_key == "openai-key"
     assert delegated.frontier_api_key == "openai-key"
+
+
+def test_resolved_config_discovers_one_level_program_from_target_workspace(
+    tmp_path: Path,
+):
+    env = runtime_env(
+        tmp_path,
+        program_path="senpai/program.md",
+        program_content="# Mission\n\nImprove the model.\n",
+    )
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert config.program_path == "senpai/program.md"
+    assert config.program_system_prompt == (
+        "## program.md - senpai/program.md\n\n"
+        "# Mission\n\nImprove the model."
+    )
+    snapshot = (
+        Path(env["SENPAI_OPENHANDS_STATE_DIR"])
+        / "program-context"
+        / f"{config.program_system_prompt_sha256}.md"
+    )
+    assert config.program_system_prompt_file == snapshot
+    assert snapshot.read_text() == config.program_system_prompt
+    delegated = runner.delegation_config(config)
+    assert delegated.program_path == "senpai/program.md"
+    assert delegated.program_system_prompt_file == snapshot
+    assert delegated.program_system_prompt_sha256 == (
+        config.program_system_prompt_sha256
+    )
+
+
+def test_child_config_uses_the_parent_program_snapshot(tmp_path: Path):
+    env = runtime_env(tmp_path)
+    snapshot = tmp_path / "parent-program-system-prompt.md"
+    prompt = "## program.md - senpai/program.md\n\nParent snapshot."
+    snapshot.write_text(prompt)
+    snapshot.chmod(0o600)
+    env["SENPAI_PROGRAM_PATH"] = "senpai/program.md"
+    env[PROGRAM_SNAPSHOT_ENV] = str(snapshot)
+    env[PROGRAM_SHA256_ENV] = program_system_prompt_sha256(prompt)
+
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert config.program_system_prompt.endswith("Parent snapshot.")
+    assert config.program_system_prompt_file == snapshot
+    assert config.program_system_prompt_sha256 == env[PROGRAM_SHA256_ENV]
 
 
 @pytest.mark.parametrize(

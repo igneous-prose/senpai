@@ -6,6 +6,10 @@
 # problem-package repo's root ends up at ./target/ in the pod workspace.
 problem_dir: target/
 
+# Target-repository-relative program.md to append to every role's system
+# prompt. Blank prefers root program.md, then one unique */program.md.
+program_path: ""
+
 # git (senpai itself)
 repo_url: https://github.com/wandb/senpai.git
 # Required only for digest-pinned images; source-SHA tags derive it automatically.

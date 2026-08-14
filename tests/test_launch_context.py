@@ -14,6 +14,7 @@ def test_default_fleet_is_four_students_with_one_gpu_each():
 
     assert args.n_students == 4
     assert args.gpus_per_student == 1
+    assert args.program_path == ""
 
 
 @pytest.mark.parametrize("backend", ["kubernetes", "docker", "aws"])
@@ -71,4 +72,16 @@ def test_each_role_receives_authoritative_launch_context(role):
     assert context.endswith(
         "# Additional operator instructions\n\n"
         "Prefer small, measurable experiments."
+    )
+
+
+@pytest.mark.parametrize("role", ["advisor", "student"])
+def test_each_role_receives_the_configured_program_path(role):
+    configmap, _deployment, _secret = render_role(
+        role,
+        launch_args(program_path="senpai/program.md"),
+    )
+
+    assert yaml.safe_load(configmap)["data"]["SENPAI_PROGRAM_PATH"] == (
+        "senpai/program.md"
     )

@@ -19,6 +19,13 @@ import psutil
 from pydantic import SecretStr
 
 from senpai_agent.processes import terminate_process_group
+from senpai_agent.program_context import (
+    PROGRAM_PATH_ENV,
+    PROGRAM_SHA256_ENV,
+    PROGRAM_SNAPSHOT_ENV,
+    PROGRAM_SOURCE_COMMIT_ENV,
+    pinned_program_system_prompt,
+)
 from senpai_agent.secrets import (
     GITHUB_TOKEN_FD_ENV,
     GITHUB_TOKEN_FILE_ENV,
@@ -342,6 +349,7 @@ def supervisor_main(
         return 0 if lease_is_healthy(args.lease_path) else 1
 
     state_dir = Path(env["SENPAI_OPENHANDS_STATE_DIR"]).resolve()
+    worker_environment = prepare_program_context_environment(env, state_dir)
     github_token = _consume_github_token(env)
     stop = threading.Event()
 
@@ -361,12 +369,46 @@ def supervisor_main(
                 args.command,
             ),
             lease_path=state_dir / "controller-lease.json",
-            environment=env,
+            environment=worker_environment,
             github_token=github_token,
         ).run(stop)
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
+
+
+def prepare_program_context_environment(
+    env: Mapping[str, str],
+    state_dir: Path,
+) -> dict[str, str]:
+    """Pin configured programme text before any model process starts."""
+
+    environment = dict(env)
+    program_path = environment.get(PROGRAM_PATH_ENV, "")
+    snapshot = pinned_program_system_prompt(
+        Path(environment["SENPAI_OPENHANDS_WORKSPACE"]),
+        program_path,
+        state_dir,
+    )
+    if snapshot.path is None:
+        return environment
+    if snapshot.source_commit is None:
+        raise RuntimeError("configured program.md did not produce a snapshot")
+    environment.update(
+        {
+            PROGRAM_PATH_ENV: snapshot.program_path,
+            PROGRAM_SNAPSHOT_ENV: str(snapshot.path),
+            PROGRAM_SHA256_ENV: snapshot.sha256,
+            PROGRAM_SOURCE_COMMIT_ENV: snapshot.source_commit,
+        }
+    )
+    print(
+        "SENPAI_PROGRAM_CONTEXT "
+        f"path={snapshot.program_path} commit={snapshot.source_commit} "
+        f"sha256={snapshot.sha256}",
+        flush=True,
+    )
+    return environment
 
 
 def _consume_github_token(env: Mapping[str, str]) -> SecretStr:

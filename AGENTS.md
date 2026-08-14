@@ -33,7 +33,7 @@ to README.md or SPEC.md as appropriate.
 - `README.md` - operator-facing overview, launch examples, and problem-package layout.
 - `SPEC.md` - target architecture and rewrite contract for the senpai orchestration loop.
 - `senpai.yaml` - launch defaults, including the target repo, target branch, advisor branch, and `problem_dir`.
-- `$PROBLEM_DIR/program.md` - authoritative target research context, goals, metrics, training constraints, and file boundaries. With the default config this is `target/program.md` after the target repo is cloned.
+- `$PROBLEM_DIR/program.md` - preferred authoritative target research context, goals, metrics, training constraints, and file boundaries. A blank `program_path` discovers it at the root or uniquely one directory below; an explicit value selects another target-repository-relative `program.md`.
 - `$PROBLEM_DIR/instructions/prompt-advisor.md` - target-specific advisor prompt.
 - `$PROBLEM_DIR/instructions/prompt-student.md` - target-specific student prompt.
 - `system_instructions/SENPAI-HARNESS.md` - shared OpenHands harness contract.
@@ -69,6 +69,9 @@ shared harness file and one rendered role file:
 - `system_instructions/SENPAI-HARNESS.md`
 - `system_instructions/ADVISOR.md` or
   `system_instructions/STUDENT.md`
+
+The selected or discovered target `program.md` is appended to that suffix with
+its repository-relative path in the header.
 
 Target `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded through
 OpenHands project context and progressive disclosure. The checked-in root

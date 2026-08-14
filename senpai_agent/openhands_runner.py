@@ -85,6 +85,13 @@ from senpai_agent.github.tools import (
     clear_github_credentials,
     configure_github_credentials,
 )
+from senpai_agent.program_context import (
+    PROGRAM_PATH_ENV,
+    PROGRAM_SHA256_ENV,
+    PROGRAM_SNAPSHOT_ENV,
+    load_program_system_prompt_snapshot,
+    pinned_program_system_prompt,
+)
 from senpai_agent.tools import register_senpai_tools
 
 DEFAULT_MODEL = "openai/gpt-5.6-sol"
@@ -194,6 +201,10 @@ class RunnerConfig:
     harness_file: Path
     role_file: Path
     plugin_dir: Path
+    program_path: str = ""
+    program_system_prompt: str = ""
+    program_system_prompt_file: Path | None = None
+    program_system_prompt_sha256: str = ""
     advisor_branch: str | None = None
     student_names: tuple[str, ...] | None = None
     student_name: str | None = None
@@ -539,6 +550,37 @@ def resolve_config(
         raise RuntimeError(
             "OpenHands state directory must be outside the target workspace"
         )
+    program_path = env.get(PROGRAM_PATH_ENV, "")
+    configured_snapshot = env.get(PROGRAM_SNAPSHOT_ENV, "")
+    expected_sha256 = env.get(PROGRAM_SHA256_ENV, "")
+    if not program_path and (configured_snapshot or expected_sha256):
+        raise RuntimeError("program.md snapshot requires SENPAI_PROGRAM_PATH")
+    if configured_snapshot:
+        expanded_snapshot = Path(configured_snapshot).expanduser()
+        program_system_prompt_file = Path(os.path.abspath(expanded_snapshot))
+    else:
+        program_system_prompt_file = None
+    if program_system_prompt_file is not None and (
+        program_system_prompt_file == workspace
+        or program_system_prompt_file.is_relative_to(workspace)
+    ):
+        raise RuntimeError("program.md snapshot must be outside the target workspace")
+    if program_system_prompt_file is not None:
+        program_snapshot = load_program_system_prompt_snapshot(
+            program_path,
+            program_system_prompt_file,
+            expected_sha256,
+        )
+    else:
+        program_snapshot = pinned_program_system_prompt(
+            workspace,
+            program_path,
+            state_dir,
+        )
+    program_path = program_snapshot.program_path
+    program_system_prompt = program_snapshot.prompt
+    program_system_prompt_file = program_snapshot.path
+    program_system_prompt_sha256 = program_snapshot.sha256
     role = env.get("SENPAI_ROLE", "")
     if role not in {"advisor", "student"}:
         raise RuntimeError("SENPAI_ROLE must be advisor or student")
@@ -817,6 +859,10 @@ def resolve_config(
         plugin_dir=resolve_plugin_dir(
             env_value(args.plugin_dir, env, "SENPAI_PLUGIN"),
         ),
+        program_path=program_path,
+        program_system_prompt=program_system_prompt,
+        program_system_prompt_file=program_system_prompt_file,
+        program_system_prompt_sha256=program_system_prompt_sha256,
         advisor_branch=env.get("ADVISOR_BRANCH") or None,
         student_names=tuple(
             name.strip()
@@ -857,6 +903,8 @@ def with_role_and_project_context(
     harness_instructions: str,
     role_instructions: str,
     project_skills: Sequence[Skill] = (),
+    *,
+    program_system_prompt: str = "",
 ) -> Agent:
     context = agent.agent_context or AgentContext()
     skills = {skill.name: skill for skill in context.skills}
@@ -864,6 +912,7 @@ def with_role_and_project_context(
     role_suffix = compose_system_instructions(
         harness_instructions,
         role_instructions,
+        program_system_prompt,
     )
     system_suffix = (
         f"{context.system_message_suffix}\n\n{role_suffix}"
@@ -888,12 +937,15 @@ def build_main_agent_context(
     harness_instructions: str,
     role_instructions: str,
     project_skills: Sequence[Skill] = (),
+    *,
+    program_system_prompt: str = "",
 ) -> AgentContext:
     return AgentContext(
         skills=list(project_skills),
         system_message_suffix=compose_system_instructions(
             harness_instructions,
             role_instructions,
+            program_system_prompt,
         ),
         current_datetime=None,
         load_public_skills=False,
@@ -1117,6 +1169,9 @@ def delegation_config(
         enable_browser=config.enable_browser,
         command_secrets=config.command_secrets,
         role=config.role,
+        program_path=config.program_path,
+        program_system_prompt_file=config.program_system_prompt_file,
+        program_system_prompt_sha256=config.program_system_prompt_sha256,
         root_state_dir=config.delegation_root_state_dir,
         tree_id=config.delegation_tree_id,
         depth=config.delegation_depth,
@@ -1428,6 +1483,7 @@ def run_openhands(
                 harness_instructions,
                 role_instructions,
                 project_skills,
+                program_system_prompt=config.program_system_prompt,
             )
             agent = with_tool_concurrency(agent, MAX_PARALLEL_AGENTS)
             if (
@@ -1453,6 +1509,7 @@ def run_openhands(
                     harness_instructions,
                     role_instructions,
                     project_skills,
+                    program_system_prompt=config.program_system_prompt,
                 ),
                 system_prompt_kwargs={"cli_mode": True},
                 condenser=condenser,

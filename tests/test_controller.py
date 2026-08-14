@@ -143,13 +143,12 @@ def research_base_event(current_sha="def"):
     )
 
 
-def test_first_turn_combines_programme_role_template_and_runtime_identity(
+def test_first_turn_combines_role_template_and_runtime_identity(
     tmp_path: Path,
 ):
     workspace = tmp_path / "target"
     instructions = workspace / "instructions"
     instructions.mkdir(parents=True)
-    (workspace / "program.md").write_text(HTML_HEADER + "Minimize test error.")
     (instructions / "prompt-student.md").write_text(
         HTML_HEADER
         + "Work as $STUDENT_NAME on $ADVISOR_BRANCH in $WANDB_PROJECT. "
@@ -172,13 +171,38 @@ def test_first_turn_combines_programme_role_template_and_runtime_identity(
         },
     )
 
-    assert "# Research programme\n\nMinimize test error." in prompt
+    assert "# Research programme" not in prompt
     assert "# Student task\n\nWork as fern on research in cfd." in prompt
     assert "$WANDB_API_KEY" in prompt
     assert "live-secret" not in prompt
     assert "# Additional launch instructions\n\nUse typed tools." in prompt
     assert "Role: student; repository: acme/widgets" in prompt
     assert "SPDX-" not in prompt
+
+
+def test_configured_program_is_system_only_and_can_live_below_repo_root(
+    tmp_path: Path,
+):
+    workspace = tmp_path / "target"
+    instructions = workspace / "instructions"
+    instructions.mkdir(parents=True)
+    (instructions / "prompt-advisor.md").write_text("Choose experiments.")
+
+    prompt = _full_prompt(
+        "advisor",
+        {
+            "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+            "SENPAI_PROGRAM_PATH": "senpai/program.md",
+            "GH_REPO": "acme/widgets",
+            "ADVISOR_BRANCH": "research",
+            "WANDB_ENTITY": "acme",
+            "WANDB_PROJECT": "cfd",
+            "STUDENT_NAMES": "fern",
+        },
+    )
+
+    assert "# Research programme" not in prompt
+    assert "# Advisor task\n\nChoose experiments." in prompt
 
 
 def test_empty_mailbox_does_not_start_a_model_turn():
@@ -651,6 +675,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         timeout_seconds=3600,
         harness_file=tmp_path / "harness.md",
         role_file=tmp_path / "role.md",
+        program_system_prompt="",
     )
     monkeypatch.setattr(runner_module, "parse_runner_args", lambda _argv: object())
     monkeypatch.setattr(

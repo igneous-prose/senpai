@@ -21,6 +21,12 @@ from senpai_agent.delegation import (
     render_child_prompt,
     run_child_process,
 )
+from senpai_agent.program_context import (
+    PROGRAM_PATH_ENV,
+    PROGRAM_SHA256_ENV,
+    PROGRAM_SNAPSHOT_ENV,
+    program_system_prompt_sha256,
+)
 
 
 def delegation_request(
@@ -203,6 +209,27 @@ def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path)
     )
     assert fast.environment["SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT"] == (
         config.frontier_reasoning_effort
+    )
+
+
+def test_child_environment_carries_the_parent_program_snapshot(tmp_path: Path):
+    program = "## program.md - senpai/program.md\n\nParent snapshot."
+    snapshot = tmp_path / "program-system-prompt.md"
+    snapshot.write_text(program)
+    child = OpenHandsChildProcess(
+        delegation_config(
+            tmp_path,
+            program_path="senpai/program.md",
+            program_system_prompt_file=snapshot,
+            program_system_prompt_sha256=program_system_prompt_sha256(program),
+        ),
+        delegation_request(),
+    )
+
+    assert child.environment[PROGRAM_PATH_ENV] == "senpai/program.md"
+    assert child.environment[PROGRAM_SNAPSHOT_ENV] == str(snapshot)
+    assert child.environment[PROGRAM_SHA256_ENV] == program_system_prompt_sha256(
+        program
     )
 
 

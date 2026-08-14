@@ -71,7 +71,8 @@ The launcher places credentials in a per-launch Kubernetes Secret. During bootst
 
 ### 4. Prepare the target repository
 
-The target branch must contain:
+The target branch must contain the following files. Root `program.md` is the
+preferred layout:
 
 ```text
 program.md
@@ -83,6 +84,22 @@ instructions/
 - `program.md` defines the research objective, baseline, metrics, benchmark rules, training limits, and allowed edit surface.
 - `prompt-advisor.md` adds target-specific experiment-selection and review guidance.
 - `prompt-student.md` adds target-specific implementation, training, and reporting guidance.
+
+`program_path` accepts a normalized target-repository-relative path such as
+`senpai/program.md`. When blank, Senpai prefers committed root `program.md`; if
+it is absent, Senpai selects the sole committed `*/program.md` exactly one
+directory below the root. No match or multiple one-level matches fail startup
+and require an explicit path. Senpai appends the selected file to every
+advisor, student, and child system prompt under
+`## program.md - senpai/program.md`.
+
+Senpai pins the file from the target's committed `HEAD` before starting a
+model, stores a private content-addressed snapshot, and verifies its digest for
+worker restarts and children. A durable generation manifest keeps that same pin
+across container restarts. Later worktree edits therefore do not alter an
+existing conversation's system prompt; changing the selection for existing
+role state requires the [proposed generation-promotion
+mechanism](SPEC.md#proposed-live-programme-refresh) or fresh role state.
 
 Use the [bootstrap-target guide](plugins/senpai/skills/bootstrap-target/SKILL.md) to inspect a new target and create these files. Target `AGENTS.md`, compatible `CLAUDE.md`, and `.agents/skills/` are also loaded through OpenHands project context and progressive disclosure.
 
@@ -101,6 +118,7 @@ The most important settings are:
 ```yaml
 target_repo_branch: main
 advisor_branch: senpai-research
+program_path: ""  # auto-discover, or set e.g. senpai/program.md
 
 wandb_entity: your-team
 wandb_project: your-project
@@ -387,6 +405,7 @@ Useful launch controls:
 - `--timeout_minutes` and `--max_epochs` are hard per-training limits.
 - `--poll_interval_s` and `--poll_jitter_s` control idle GitHub cadence without teaching the model to poll.
 - `--gh_history_scope branch` keeps normal advisor-branch memory, `fresh` creates a shallow ablation checkout, and `repo` exposes full repository history.
+- `--program_path senpai/program.md` explicitly selects a target-repository programme file for every role's system prompt; an empty value prefers root `program.md`, then one unique `*/program.md`.
 - `--extra_instructions` accepts a Markdown file or literal operator guidance.
 - `human_issues: false` disables GitHub Issue polling for isolated launches.
 

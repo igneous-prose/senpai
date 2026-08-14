@@ -759,19 +759,13 @@ class Controller:
 def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) -> str:
     workspace = Path(env["SENPAI_OPENHANDS_WORKSPACE"]).resolve()
     instructions = workspace / "instructions" / f"prompt-{role}.md"
-    program = workspace / "program.md"
     template_env = {
         key: env[key] for key in _PROMPT_TEMPLATE_VARIABLES if key in env
     }
     role_prompt = Template(read_agent_markdown(instructions)).safe_substitute(
         template_env
     )
-    prompt = (
-        "# Research programme\n\n"
-        f"{read_agent_markdown(program).strip()}\n\n"
-        f"# {role.title()} task\n\n"
-        f"{role_prompt.strip()}"
-    )
+    prompt = f"# {role.title()} task\n\n{role_prompt.strip()}"
     encoded_extra = env.get("EXTRA_INSTRUCTIONS_B64")
     if encoded_extra:
         extra = b64decode(encoded_extra, validate=True).decode()
@@ -911,6 +905,7 @@ def controller_main(
     system_context = compose_system_instructions(
         read_role_instructions(runner_config.harness_file),
         read_role_instructions(runner_config.role_file),
+        runner_config.program_system_prompt,
     )
     continuation_context = (
         f"{system_context.strip()}\n\n"

@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from senpai_agent.launch_context import render_launch_context
+from senpai_agent.program_context import PROGRAM_PATH_ENV, normalize_program_path
 
 from launch_helpers import (
     ensure_advisor_branch,
@@ -65,6 +66,7 @@ class Args:
     target_repo_url: str  # problem-package repo (entrypoint clones this into $PROBLEM_DIR; agent commits/PRs land here) — REQUIRED, no default
     target_repo_branch: str = ""  # target repo branch used as the base when creating advisor_branch; empty = target repo default branch
     problem_dir: str = "target/"  # active problem directory — entrypoint clones target_repo_url here (from senpai.yaml)
+    program_path: str = ""  # target-repo-relative program.md; blank discovers root or one level below
     names: str = ""  # comma-separated student names (e.g. "frieren,fern")
     n_students: int = 4  # number of students to launch (ignored if --names is provided)
     student_prefix: str = ""  # make assignment labels unique across parallel launches using the same base names
@@ -280,6 +282,13 @@ def validate_timing_args(args: Args) -> None:
             )
 
 
+def validate_program_path(args: Args) -> None:
+    try:
+        normalize_program_path(args.program_path)
+    except ValueError as error:
+        sys.exit(f"ERROR: --program_path: {error}")
+
+
 def build_extra_instructions(
     args: Args,
     tag: str,
@@ -338,6 +347,7 @@ def render_student(
             "REPO_REVISION": args.repo_revision,
             "TARGET_REPO_URL": args.target_repo_url,
             "TARGET_REPO_BRANCH": args.target_repo_branch,
+            PROGRAM_PATH_ENV: args.program_path,
             "GH_REPO": target_repo_slug(args.target_repo_url),
             "STUDENT_NAME": student_name,
             "RESEARCH_TAG": tag,
@@ -401,6 +411,7 @@ def render_advisor(
         "REPO_REVISION": args.repo_revision,
         "TARGET_REPO_URL": args.target_repo_url,
         "TARGET_REPO_BRANCH": args.target_repo_branch,
+        PROGRAM_PATH_ENV: args.program_path,
         "GH_REPO": target_repo_slug(args.target_repo_url),
         "RESEARCH_TAG": tag,
         "STUDENT_NAMES": ",".join(student_list),
@@ -453,6 +464,7 @@ def main():
             "ERROR: --gpus_per_student, --cpu_per_gpu, and --memory_gi_per_gpu must all be at least 1"
         )
     validate_timing_args(args)
+    validate_program_path(args)
     validate_model_config(args)
     if not args.preflight_only:
         for role, image in (

@@ -36,6 +36,7 @@ def test_default_config_exposes_every_model_profile_and_effort():
         "frontier_model": "openai/gpt-5.6-sol",
         "frontier_reasoning_effort": "max",
     }.items() <= config.items()
+    assert config["program_path"] == ""
 
 
 @pytest.mark.parametrize(
@@ -180,6 +181,17 @@ def test_start_gate_is_rendered_when_it_is_beneath_the_shared_pvc():
     assert yaml.safe_load(configmap)["data"]["SENPAI_START_GATE_PATH"] == (
         "/mnt/shared/gates/start"
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/program.md", "../program.md", "senpai/../program.md", "policy.md"],
+)
+def test_launch_rejects_a_program_path_outside_the_target_repo(path):
+    result = run_launch("--program_path", path)
+
+    assert result.returncode != 0
+    assert "--program_path" in result.stderr
 
 
 def test_launch_secret_contains_each_credential_and_both_roles_reference_it():

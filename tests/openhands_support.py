@@ -1,3 +1,4 @@
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -51,9 +52,35 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
     return RunnerConfig(**values)
 
 
-def runtime_env(tmp_path: Path, *, role: str = "advisor") -> dict[str, str]:
+def runtime_env(
+    tmp_path: Path,
+    *,
+    role: str = "advisor",
+    program_path: str = "program.md",
+    program_content: str = "# Test programme\n\nUse the target contract.\n",
+) -> dict[str, str]:
     workspace = tmp_path / "target"
     workspace.mkdir(exist_ok=True)
+    if not (workspace / ".git").exists():
+        subprocess.run(("git", "init", "-q"), cwd=workspace, check=True)
+        program = workspace / program_path
+        program.parent.mkdir(parents=True, exist_ok=True)
+        program.write_text(program_content, encoding="utf-8")
+        subprocess.run(("git", "add", "."), cwd=workspace, check=True)
+        subprocess.run(
+            (
+                "git",
+                "-c",
+                "user.name=Senpai Test",
+                "-c",
+                "user.email=senpai@example.com",
+                "commit",
+                "-qm",
+                "Add test programme",
+            ),
+            cwd=workspace,
+            check=True,
+        )
     role_file = tmp_path / f"SENPAI-{role.upper()}.md"
     role_file.write_text(f"{role} role", encoding="utf-8")
     harness_file = tmp_path / "SENPAI-HARNESS.md"
