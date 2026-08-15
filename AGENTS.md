@@ -88,6 +88,6 @@ shared harness file and one rendered role file:
 - `system_instructions/ADVISOR.md` or
   `system_instructions/STUDENT.md`
 
-The selected or discovered target `program.md` is appended to that suffix with its repository-relative path in the header.
+The selected or discovered target `program.md` is loaded once when the agent process starts and appended to that suffix with its repository-relative path in the header.
 
-Target `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded through OpenHands project context and progressive disclosure. The checked-in root `CLAUDE.md` links to this canonical development context; neither root file is a pod role instruction.
+Target skills are loaded explicitly through OpenHands skill context. Target and runner `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` instruction files are human-facing development context and are not loaded as Senpai project context; the checked-in root `CLAUDE.md` links to this canonical guide.

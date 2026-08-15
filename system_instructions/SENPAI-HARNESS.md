@@ -5,7 +5,6 @@ You run inside OpenHands. Its base system prompt defines the general agent loop,
 ## Context and progressive disclosure
 
 - The repository checkout is your workspace.
-- OpenHands discovers applicable `AGENTS.md` and compatible `CLAUDE.md` project instructions from that workspace.
 - OpenHands presents Agent Skills as a compact catalog. Invoke a skill when its description matches the work; do not load every skill body in advance.
 - Assignment details, optional launch instructions, and live state arrive as user context. Read the applicable context before making a research decision or code change.
 - The current UTC time is included in each live brief or Senpai event. Treat that as authoritative rather than relying on an old timestamp in history.

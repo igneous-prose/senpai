@@ -20,7 +20,6 @@ from senpai_agent.agent_markdown import strip_spdx_header
 from senpai_agent.advisor import (
     AdvisorEvent,
     AdvisorEventStore,
-    compose_system_instructions,
 )
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
@@ -46,16 +45,14 @@ from senpai_agent.prompts import (
     ADVISOR_RUNTIME_IDENTITY_PROMPT,
     CONTEXT_RECOVERY_PROMPT,
     CONTINUATION_CONTROLLER_PROMPT,
-    CURRENT_LAUNCH_CONTEXT_PROMPT,
     INITIAL_CONTROLLER_PROMPT,
     STUDENT_RUNTIME_IDENTITY_PROMPT,
-    SYSTEM_CONTEXT_REFRESH_PROMPT,
     render_prompt,
 )
 from senpai_agent.state import (
     AssignmentConversationRegistry,
     ConversationBatch,
-    ConversationStateLedger,
+    StartedConversationLedger,
     StudentConversationSelector,
     WorkspaceDivergenceLedger,
 )
@@ -281,8 +278,7 @@ class Controller:
         turns: TurnRunner,
         conversation_id: UUID,
         full_prompt: str,
-        system_context: str = "",
-        conversation_state: ConversationStateLedger | None = None,
+        started_conversations: StartedConversationLedger | None = None,
         inbox: PersistentInbox | None = None,
         workspace_divergence_state: WorkspaceDivergenceLedger | None = None,
         conversation_for_events: (
@@ -324,8 +320,7 @@ class Controller:
         )
         self.start_gate_poll_seconds = start_gate_poll_seconds
         self.full_prompt = full_prompt.strip()
-        self.system_context = system_context.strip()
-        self.conversation_state = conversation_state
+        self.started_conversations = started_conversations
         self.inbox = inbox or PersistentInbox()
         self.workspace_divergence_state = workspace_divergence_state
         self.sleep = sleep
@@ -556,29 +551,11 @@ class Controller:
             ):
                 continue
             continuing = self._has_started(conversation_id)
-            refresh_system_context = (
-                continuing
-                and self.conversation_state is not None
-                and not self.conversation_state.is_context_current(
-                    conversation_id,
-                    self.system_context,
-                )
-            )
             turn = self.inbox.next_turn(
                 conversation_id,
-                self._prompt(
-                    (),
-                    continuing=continuing,
-                    refresh_system_context=refresh_system_context,
-                ),
+                self._prompt((), continuing=continuing),
                 legacy_prompt_identity=(
-                    f"initial:{self.full_prompt}"
-                    if not continuing
-                    else (
-                        f"system-context:{self.system_context}"
-                        if refresh_system_context
-                        else None
-                    )
+                    f"initial:{self.full_prompt}" if not continuing else None
                 ),
             )
             if turn is not None:
@@ -655,17 +632,14 @@ class Controller:
 
     def _has_started(self, conversation_id: UUID) -> bool:
         return conversation_id in self._started or (
-            self.conversation_state is not None
-            and self.conversation_state.has_started(conversation_id)
+            self.started_conversations is not None
+            and self.started_conversations.has_started(conversation_id)
         )
 
     def _mark_success(self, conversation_id: UUID) -> None:
         self._started.add(conversation_id)
-        if self.conversation_state is not None:
-            self.conversation_state.mark_success(
-                conversation_id,
-                self.system_context,
-            )
+        if self.started_conversations is not None:
+            self.started_conversations.mark_started(conversation_id)
 
     def _workspace_divergence_key(self, conversation_id: UUID) -> str | None:
         if self.workspace_divergence_state is not None:
@@ -725,7 +699,6 @@ class Controller:
         _events: Sequence[ControllerEvent],
         *,
         continuing: bool,
-        refresh_system_context: bool = False,
     ) -> str:
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         if not continuing:
@@ -734,22 +707,11 @@ class Controller:
                 FULL_PROMPT=self.full_prompt,
                 CURRENT_TIME=now,
             )
-        prompt = render_prompt(
+        return render_prompt(
             CONTINUATION_CONTROLLER_PROMPT,
             ROLE=self.role,
             CURRENT_TIME=now,
         )
-        if refresh_system_context:
-            prompt = "\n\n".join(
-                (
-                    prompt,
-                    render_prompt(
-                        SYSTEM_CONTEXT_REFRESH_PROMPT,
-                        SYSTEM_CONTEXT=self.system_context,
-                    ),
-                )
-            )
-        return prompt
 
 
 def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) -> str:
@@ -809,7 +771,6 @@ def controller_main(
     from senpai_agent.delegation import reconcile_delegated_tasks
     from senpai_agent.openhands_runner import (
         parse_runner_args,
-        read_role_instructions,
         resolve_config,
         scrub_model_credentials,
     )
@@ -902,15 +863,6 @@ def controller_main(
         )
 
     full_prompt = _full_prompt(role, env)
-    senpai_instructions = compose_system_instructions(
-        read_role_instructions(runner_config.harness_file),
-        read_role_instructions(runner_config.role_file),
-    ).strip()
-    continuation_context = render_prompt(
-        CURRENT_LAUNCH_CONTEXT_PROMPT,
-        SENPAI_INSTRUCTIONS=senpai_instructions,
-        FULL_PROMPT=full_prompt,
-    )
     inbox = PersistentInbox(
         runner_config.state_dir / "delivery-inbox.sqlite3",
         legacy_path=runner_config.state_dir / "pending-message-deliveries.json",
@@ -928,9 +880,8 @@ def controller_main(
         mailbox=mailbox,
         turns=turns,
         conversation_id=runner_config.conversation_id,
-        system_context=continuation_context,
-        conversation_state=ConversationStateLedger(
-            runner_config.state_dir / "conversation-state.json"
+        started_conversations=StartedConversationLedger(
+            runner_config.state_dir / "started-conversations.json"
         ),
         inbox=inbox,
         workspace_divergence_state=(
