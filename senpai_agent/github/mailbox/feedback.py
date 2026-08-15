@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.models import AssignmentRecord
-from senpai_agent.prompts import TRUNCATED_FEEDBACK_PROMPT
+from senpai_agent.PROMPTS import TRUNCATED_FEEDBACK_PROMPT
 
 from .ledger import read_feedback_ledger, write_feedback_ledger
 from .values import (
