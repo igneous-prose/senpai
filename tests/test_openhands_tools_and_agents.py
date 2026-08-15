@@ -484,6 +484,22 @@ def test_event_guidance_lives_in_the_shared_harness():
     assert "A `review_ready`, `training_monitor`, human-message" in harness
 
 
+def test_shared_harness_omits_project_instructions_and_generic_reminders():
+    harness = (
+        REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
+    ).read_text(encoding="utf-8")
+
+    for omitted in (
+        "AGENTS.md",
+        "CLAUDE.md",
+        "OpenHands presents Agent Skills",
+        "Assignment details, optional launch instructions",
+        "current UTC time",
+        "Finish when the current brief",
+    ):
+        assert omitted not in harness
+
+
 def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
     prompt_paths = [
         *(REPO_ROOT / "system_instructions").glob("*.md"),
