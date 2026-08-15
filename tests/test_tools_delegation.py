@@ -261,6 +261,7 @@ def config(tmp_path: Path, **updates) -> DelegationConfig:
         "command_secrets": {},
         "role": "advisor",
         "program_path": "program.md",
+        "launch_context": "# Authoritative launch context\n\nSystem policy.",
     }
     values.update(updates)
     return DelegationConfig(**values)

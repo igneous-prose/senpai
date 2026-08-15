@@ -19,7 +19,7 @@ from senpai_agent.openhands_runner import (
 )
 from senpai_agent.program_context import ProgramSystemPrompt
 from senpai_agent.system_instructions import SenpaiSystemInstructions
-from openhands_support import runtime_config, runtime_env
+from openhands_support import TEST_LAUNCH_CONTEXT, runtime_config, runtime_env
 from test_agent_markdown import HTML_HEADER, PLAIN_HEADER
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,13 +60,15 @@ def test_main_agent_context_appends_program_after_harness_and_role():
                 program_path="senpai/program.md",
                 prompt="# program.md - senpai/program.md\n\nResearch policy.",
             ),
+            launch="# Authoritative launch context\n\nRuntime policy.",
         ),
     )
 
     assert context.system_message_suffix == (
         "# Senpai harness\n\nharness instructions\n\n"
         "# Senpai role\n\nadvisor role\n\n"
-        "# program.md - senpai/program.md\n\nResearch policy.\n"
+        "# program.md - senpai/program.md\n\nResearch policy.\n\n"
+        "# Authoritative launch context\n\nRuntime policy.\n"
     )
     assert context.current_datetime is None
     assert context.load_user_skills is True
@@ -209,11 +211,13 @@ def test_resolved_config_discovers_one_level_program_from_target_workspace(
         "# program.md - senpai/program.md\n\n"
         "# Mission\n\nImprove the model."
     )
+    assert config.instructions.launch == TEST_LAUNCH_CONTEXT
     assert config.instructions.prompt == (
         "# Senpai harness\n\nharness instructions\n\n"
         "# Senpai role\n\nadvisor role\n\n"
         "# program.md - senpai/program.md\n\n"
-        "# Mission\n\nImprove the model.\n"
+        "# Mission\n\nImprove the model.\n\n"
+        f"{TEST_LAUNCH_CONTEXT}\n"
     )
     delegated = runner.delegation_config(config)
     assert delegated.program_path == config.instructions.program.program_path
@@ -231,8 +235,24 @@ def test_resolved_system_instructions_do_not_change_with_source_files(
     (Path(env["SENPAI_OPENHANDS_WORKSPACE"]) / "program.md").write_text(
         "changed program"
     )
+    env["SENPAI_LAUNCH_CONTEXT_B64"] = "Y2hhbmdlZCBsYXVuY2g="
 
     assert config.instructions.prompt == prompt
+
+
+@pytest.mark.parametrize("encoded", [None, "", "not base64", "8A==", "IA=="])
+def test_launch_context_must_be_present_valid_utf8_and_nonempty(
+    tmp_path: Path,
+    encoded: str | None,
+):
+    env = runtime_env(tmp_path)
+    if encoded is None:
+        env.pop("SENPAI_LAUNCH_CONTEXT_B64")
+    else:
+        env["SENPAI_LAUNCH_CONTEXT_B64"] = encoded
+
+    with pytest.raises(ValueError, match="SENPAI_LAUNCH_CONTEXT_B64"):
+        resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
 
 @pytest.mark.parametrize(
