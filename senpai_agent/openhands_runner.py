@@ -93,7 +93,7 @@ from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
     load_program_system_prompt,
 )
-from senpai_agent.prompts import RECOVERED_ACTION_PROMPT
+from senpai_agent.PROMPTS import RECOVERED_ACTION_PROMPT
 from senpai_agent.system_instructions import SenpaiSystemInstructions
 from senpai_agent.tools import register_senpai_tools
 

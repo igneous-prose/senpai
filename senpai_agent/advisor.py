@@ -13,7 +13,7 @@ from openhands.sdk.conversation import ConversationExecutionStatus, Conversation
 from pydantic import BaseModel, ConfigDict, Field
 
 from senpai_agent.inbox import PersistentInbox
-from senpai_agent.prompts import (
+from senpai_agent.PROMPTS import (
     ADVISOR_EVENT_PROMPT,
     EVENT_PROMPT,
     render_prompt,

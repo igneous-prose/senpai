@@ -36,7 +36,7 @@ from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV
 from senpai_agent.processes import terminate_process_group
 from senpai_agent.program_context import PROGRAM_PATH_ENV
-from senpai_agent.prompts import (
+from senpai_agent.PROMPTS import (
     AWAIT_AGENTS_SATISFIED_PROMPT,
     AWAIT_AGENTS_TIMEOUT_PROMPT,
     DELEGATE_AGENT_DEPRECATION_PROMPT,
