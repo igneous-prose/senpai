@@ -196,13 +196,21 @@ def test_monitor_training_replaces_the_default_policy(tmp_path: Path):
         )
         with pytest.raises(PermissionError, match="different student conversation"):
             monitor_tool.executor(action, SimpleNamespace(id=uuid.uuid4()))
-        monitor_tool.executor(action, SimpleNamespace(id=conversation_id))
+        observation = monitor_tool.executor(
+            action,
+            SimpleNamespace(id=conversation_id),
+        )
 
         monitor = monitors.spec("training-17")
         assert training.status_checks == ["training-17", "training-17"]
         assert monitor.metric == "validation/loss"
         assert monitor.direction == "min"
         assert monitor.stale_after_seconds == 300
+        assert observation.to_llm_content[0].text == (
+            "Training training-17 is durably monitored. You may finish this turn; "
+            "the controller will resume this same conversation "
+            f"({conversation_id}) when action is needed."
+        )
     finally:
         monitors.close()
 

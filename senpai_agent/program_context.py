@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from senpai_agent.agent_markdown import read_agent_markdown
+from senpai_agent.prompts import PROGRAM_SYSTEM_PROMPT, render_prompt
 
 PROGRAM_PATH_ENV = "SENPAI_PROGRAM_PATH"
 PROGRAM_PATH_GUIDANCE = (
@@ -52,7 +53,11 @@ def load_program_system_prompt(
     workspace = workspace.resolve()
     program_path = normalize_program_path(value) or _discover_program_path(workspace)
     source = _program_file(workspace, program_path)
-    prompt = f"# program.md - {program_path}\n\n{read_agent_markdown(source).strip()}"
+    prompt = render_prompt(
+        PROGRAM_SYSTEM_PROMPT,
+        PROGRAM_PATH=program_path,
+        PROGRAM_CONTENT=read_agent_markdown(source).strip(),
+    )
     return ProgramSystemPrompt(program_path=program_path, prompt=prompt)
 
 

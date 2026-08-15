@@ -33,6 +33,9 @@ dependencies = [
 include = ["senpai_agent*"]
 namespaces = false
 
+[tool.setuptools.package-data]
+senpai_agent = ["PROMPTS.md"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 
