@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import uuid
+from base64 import b64encode
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from openhands.sdk.tool import (
 from pydantic import BaseModel, Field, model_validator
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
+from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV
 from senpai_agent.processes import terminate_process_group
 from senpai_agent.program_context import PROGRAM_PATH_ENV
 from senpai_agent.prompts import (
@@ -157,6 +159,7 @@ class DelegationConfig:
     command_secrets: Mapping[str, str]
     role: str
     program_path: str
+    launch_context: str
     root_state_dir: Path | None = None
     tree_id: str | None = None
     depth: int = 0
@@ -406,6 +409,9 @@ class OpenHandsChildProcess:
         if self._config.github_trusted_actor is not None:
             environment["SENPAI_GITHUB_ACTOR"] = self._config.github_trusted_actor
         environment[PROGRAM_PATH_ENV] = self._config.program_path
+        environment[LAUNCH_CONTEXT_ENV] = b64encode(
+            self._config.launch_context.encode()
+        ).decode()
         return environment
 
     def start(

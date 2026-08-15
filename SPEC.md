@@ -155,7 +155,7 @@ Student state:
 └── conversations managed by OpenHands
 ```
 
-`student-conversations.json` maps one `(assignment_id, revision_id)` to one UUID. `started-conversations.json` records the UUIDs that successfully received their initial launch context. A `training_monitor` event carries its original conversation UUID and therefore resumes, rather than replaces, the student conversation.
+`student-conversations.json` maps one `(assignment_id, revision_id)` to one UUID. `started-conversations.json` records the UUIDs that successfully received their initial controller context. A `training_monitor` event carries its original conversation UUID and therefore resumes, rather than replaces, the student conversation.
 
 `github-feedback.json` records every immutable PR feedback key's first-seen
 assignment revision, then marks it acknowledged only after its student turn
@@ -166,7 +166,7 @@ OpenHands stores base state and individual events beneath that UUID. A killed
 worker resumes from the last persisted event. An in-flight response or tool
 call without a durable event is retried from the preceding event.
 
-The controller marks a conversation's initial launch context delivered only after the OpenHands turn succeeds. A crash or nonzero first turn therefore retries that context instead of incorrectly continuing from instructions that were never delivered.
+The controller marks a conversation's initial controller context delivered only after the OpenHands turn succeeds. A crash or nonzero first turn therefore retries that context instead of incorrectly continuing from information that was never delivered.
 
 Role state uses pod-local storage and survives controller or container restarts
 within the same pod. Replacing or rescheduling a pod starts fresh local state;
@@ -185,11 +185,12 @@ The model receives:
 2. One stable system suffix assembled from:
    - `system_instructions/SENPAI-HARNESS.md`; and
    - the rendered advisor or student role charter; and
-   - the selected target-repository `program.md` under `# program.md - <path>`. A blank `program_path` searches root `program.md` and one-level `*/program.md` paths and requires exactly one total match.
+   - the selected target-repository `program.md` under `# program.md - <path>`; and
+   - the rendered `system_instructions/SENPAI-LAUNCH-CONTEXT.md`, containing authoritative runtime and isolation rules after `program.md`. A blank `program_path` searches root `program.md` and one-level `*/program.md` paths and requires exactly one total match.
 3. Explicit project and Senpai skills through OpenHands skill context. Agent Skills bodies are loaded only when invoked. Repository `AGENTS.md`, `AGENT.md`, and `CLAUDE.md` instruction files are not loaded as project context.
-4. User turns containing optional launch instructions, runtime identity, current state, and current UTC time.
+4. User turns containing optional human operator instructions, runtime identity, current state, and current UTC time.
 
-At process startup, the runner loads the harness, selected role, and `program.md` once into one immutable `SenpaiSystemInstructions` value. Its prompt is the stable system suffix for that process and is never reread, monitored, or refreshed during the agent session. Before constructing a model worker, the supervisor resolves the configured program path or fails with the missing or ambiguous candidates. Delegated children inherit the resolved repository-relative path and build their own immutable value when their process starts. Use GitHub Issues for live human direction. OpenHands includes the system suffix on every inference, and current time is rendered for every controller wake.
+At process startup, the runner loads the harness, selected role, `program.md`, and authoritative launch context once into one immutable `SenpaiSystemInstructions` value. Its prompt is the stable system suffix for that process and is never reread, monitored, or refreshed during the agent session. Before constructing a model worker, the supervisor resolves the configured program path or fails with the missing or ambiguous candidates. Delegated children inherit the resolved repository-relative path and exact launch context, then build their own immutable value when their process starts. Optional operator instructions remain user context. Use GitHub Issues for live human direction. OpenHands includes the system suffix on every inference, and current time is rendered for every controller wake.
 
 File-based subagents are discovered from `.agents/agents`. Skill bodies are not
 concatenated into agent definitions. The OpenHands fork's `main` branch applies

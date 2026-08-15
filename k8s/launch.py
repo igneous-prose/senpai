@@ -19,7 +19,11 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from senpai_agent.launch_context import render_launch_context
+from senpai_agent.launch_context import (
+    LAUNCH_CONTEXT_ENV,
+    load_operator_instructions,
+    render_launch_context,
+)
 from senpai_agent.program_context import PROGRAM_PATH_ENV, normalize_program_path
 
 from launch_helpers import (
@@ -289,7 +293,7 @@ def validate_program_path(args: Args) -> None:
         sys.exit(f"ERROR: --program_path: {error}")
 
 
-def build_extra_instructions(
+def build_launch_context(
     args: Args,
     tag: str,
     student_list: list[str],
@@ -305,11 +309,10 @@ def build_extra_instructions(
         advisor_branch=args.advisor_branch,
         target_base=args.target_repo_branch,
         students=student_list,
-        extra_instructions=args.extra_instructions,
     )
 
 
-def encoded_extra_instructions(
+def encoded_launch_context(
     args: Args,
     tag: str,
     student_list: list[str],
@@ -317,12 +320,18 @@ def encoded_extra_instructions(
     backend: str,
 ) -> str:
     return base64.b64encode(
-        build_extra_instructions(
+        build_launch_context(
             args,
             tag,
             student_list,
             backend=backend,
         ).encode()
+    ).decode()
+
+
+def encoded_operator_instructions(args: Args) -> str:
+    return base64.b64encode(
+        load_operator_instructions(args.extra_instructions).encode()
     ).decode()
 
 
@@ -362,12 +371,13 @@ def render_student(
             "SENPAI_MAX_EPOCHS": str(args.max_epochs),
             "SENPAI_POLL_INTERVAL_S": str(args.poll_interval_s),
             "SENPAI_POLL_JITTER_S": str(args.poll_jitter_s),
-            "EXTRA_INSTRUCTIONS_B64": encoded_extra_instructions(
+            LAUNCH_CONTEXT_ENV: encoded_launch_context(
                 args,
                 tag,
                 [student_name],
                 backend="kubernetes",
             ),
+            "EXTRA_INSTRUCTIONS_B64": encoded_operator_instructions(args),
             "PROBLEM_DIR": args.problem_dir,
             "PVC_MOUNT_PATH": args.pvc_mount_path,
             "SENPAI_START_GATE_PATH": args.start_gate_path,
@@ -429,12 +439,13 @@ def render_advisor(
         "PVC_MOUNT_PATH": args.pvc_mount_path,
         "SENPAI_START_GATE_PATH": args.start_gate_path,
     }
-    data["EXTRA_INSTRUCTIONS_B64"] = encoded_extra_instructions(
+    data[LAUNCH_CONTEXT_ENV] = encoded_launch_context(
         args,
         tag,
         student_list,
         backend="kubernetes",
     )
+    data["EXTRA_INSTRUCTIONS_B64"] = encoded_operator_instructions(args)
     configmap = render_configmap(
         name=advisor_configmap_name,
         labels={"app": "senpai", "role": "advisor", "research-tag": tag},

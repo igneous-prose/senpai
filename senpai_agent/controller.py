@@ -41,11 +41,11 @@ from senpai_agent.monitor import (
     WandbMetricSource,
 )
 from senpai_agent.prompts import (
-    ADDITIONAL_LAUNCH_INSTRUCTIONS_PROMPT,
     ADVISOR_RUNTIME_IDENTITY_PROMPT,
     CONTEXT_RECOVERY_PROMPT,
     CONTINUATION_CONTROLLER_PROMPT,
     INITIAL_CONTROLLER_PROMPT,
+    OPERATOR_INSTRUCTIONS_PROMPT,
     STUDENT_RUNTIME_IDENTITY_PROMPT,
     render_prompt,
 )
@@ -110,8 +110,8 @@ def _is_context_history_failure(error: Exception) -> bool:
 
 
 def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
-    launch_context = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
-    return launch_context + render_prompt(
+    initial_context = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
+    return initial_context + render_prompt(
         CONTEXT_RECOVERY_PROMPT,
         CURRENT_PROMPT=current_prompt,
     )
@@ -721,7 +721,7 @@ def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) ->
         extra = b64decode(encoded_extra, validate=True).decode()
         sections.append(
             render_prompt(
-                ADDITIONAL_LAUNCH_INSTRUCTIONS_PROMPT,
+                OPERATOR_INSTRUCTIONS_PROMPT,
                 INSTRUCTIONS=strip_spdx_header(extra).strip(),
             )
         )

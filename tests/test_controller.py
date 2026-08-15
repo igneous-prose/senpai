@@ -145,7 +145,7 @@ def research_base_event(current_sha="def"):
     )
 
 
-def test_first_turn_combines_launch_instructions_and_runtime_identity():
+def test_first_turn_combines_operator_instructions_and_runtime_identity():
     prompt = _full_prompt(
         "student",
         {
@@ -158,13 +158,17 @@ def test_first_turn_combines_launch_instructions_and_runtime_identity():
             "EXTRA_INSTRUCTIONS_B64": b64encode(
                 (HTML_HEADER + "Use typed tools.").encode()
             ).decode(),
+            "SENPAI_LAUNCH_CONTEXT_B64": b64encode(
+                b"# Authoritative launch context\n\nSystem policy."
+            ).decode(),
         },
     )
 
     assert "# Research programme" not in prompt
     assert "# Student task" not in prompt
     assert "live-secret" not in prompt
-    assert "# Additional launch instructions\n\nUse typed tools." in prompt
+    assert "# Additional operator instructions\n\nUse typed tools." in prompt
+    assert "Authoritative launch context" not in prompt
     assert "Role: student; repository: acme/widgets" in prompt
     assert "SPDX-" not in prompt
 
@@ -665,6 +669,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
                 program_path="program.md",
                 prompt="# program.md - program.md\n\nTest programme.",
             ),
+            launch="# Authoritative launch context\n\nSystem policy.",
         ),
     )
     monkeypatch.setattr(runner_module, "parse_runner_args", lambda _argv: object())
