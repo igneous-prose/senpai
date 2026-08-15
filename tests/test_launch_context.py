@@ -28,7 +28,7 @@ def test_launch_context_records_resolved_runtime_facts(backend):
         max_epochs=7,
     )
 
-    context = launch.build_extra_instructions(
+    context = launch.build_launch_context(
         args,
         args.tag,
         ["fern", "frieren"],
@@ -50,6 +50,27 @@ def test_launch_context_records_resolved_runtime_facts(backend):
     assert "{{" not in context
 
 
+def test_launch_context_limits_each_role_to_its_assigned_students():
+    args = launch_args(tag="bounded", advisor_branch="research")
+
+    advisor = launch.build_launch_context(
+        args,
+        args.tag,
+        ["fern", "stark"],
+        backend="kubernetes",
+    )
+    student = launch.build_launch_context(
+        args,
+        args.tag,
+        ["stark"],
+        backend="kubernetes",
+    )
+
+    assert "fern, stark" in advisor
+    assert "fern" not in student
+    assert "stark" in student
+
+
 @pytest.mark.parametrize("role", ["advisor", "student"])
 def test_each_role_receives_authoritative_launch_context(role):
     args = launch_args(
@@ -60,8 +81,13 @@ def test_each_role_receives_authoritative_launch_context(role):
     )
 
     configmap, _deployment, _secret = render_role(role, args)
-    encoded = yaml.safe_load(configmap)["data"]["EXTRA_INSTRUCTIONS_B64"]
-    context = base64.b64decode(encoded, validate=True).decode()
+    data = yaml.safe_load(configmap)["data"]
+    context = base64.b64decode(
+        data[launch.LAUNCH_CONTEXT_ENV], validate=True
+    ).decode()
+    operator = base64.b64decode(
+        data["EXTRA_INSTRUCTIONS_B64"], validate=True
+    ).decode()
 
     assert "Compute backend: `kubernetes`" in context
     assert "Visible GPUs per student: `2`" in context
@@ -69,10 +95,16 @@ def test_each_role_receives_authoritative_launch_context(role):
         "Hard limits for each training run: `20` minutes wall-clock and `9` epochs"
         in context
     )
-    assert context.endswith(
-        "# Additional operator instructions\n\n"
-        "Prefer small, measurable experiments."
-    )
+    assert "Prefer small, measurable experiments." not in context
+    assert operator == "Prefer small, measurable experiments."
+
+
+def test_launch_context_source_is_combined():
+    root = launch.ROOT / "system_instructions"
+
+    assert (root / "SENPAI-LAUNCH-CONTEXT.md").is_file()
+    assert not (root / "SENPAI-LAUNCH-RUNTIME.md").exists()
+    assert not (root / "SENPAI-LAUNCH-ISOLATION.md").exists()
 
 
 @pytest.mark.parametrize("role", ["advisor", "student"])
