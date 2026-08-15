@@ -90,6 +90,7 @@ from senpai_agent.program_context import (
     ProgramSystemPrompt,
     load_program_system_prompt,
 )
+from senpai_agent.prompts import RECOVERED_ACTION_PROMPT
 from senpai_agent.tools import register_senpai_tools
 
 DEFAULT_MODEL = "openai/gpt-5.6-sol"
@@ -1260,12 +1261,7 @@ def reject_recovered_actions(conversation: object) -> int:
     pending = ConversationState.get_unmatched_actions(active_branch())
     if not pending:
         return 0
-    conversation.reject_pending_actions(
-        reason=(
-            "Senpai restarted before this action completed. Inspect the preserved "
-            "workspace and rerun it explicitly only if it is still needed."
-        )
-    )
+    conversation.reject_pending_actions(reason=RECOVERED_ACTION_PROMPT)
     print(
         f"OPENHANDS_RECOVERED_ACTIONS rejected={len(pending)}",
         file=sys.stderr,
