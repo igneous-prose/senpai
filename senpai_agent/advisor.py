@@ -16,7 +16,6 @@ from senpai_agent.inbox import PersistentInbox
 from senpai_agent.prompts import (
     ADVISOR_EVENT_PROMPT,
     EVENT_PROMPT,
-    SENPAI_SYSTEM_INSTRUCTIONS_PROMPT,
     render_prompt,
 )
 
@@ -154,17 +153,6 @@ class AdvisorEventStore:
         _traceback: TracebackType | None,
     ) -> None:
         self.close()
-
-
-def compose_system_instructions(harness: str, role: str) -> str:
-    return (
-        render_prompt(
-            SENPAI_SYSTEM_INSTRUCTIONS_PROMPT,
-            HARNESS=harness.strip(),
-            ROLE=role.strip(),
-        )
-        + "\n"
-    )
 
 
 def advisor_conversation_id(

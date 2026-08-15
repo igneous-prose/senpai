@@ -32,14 +32,6 @@ Actionable events follow as separately tracked messages.
 
 Continue the {{ROLE}} loop. Current time (UTC): {{CURRENT_TIME}}. Actionable GitHub events follow as separately tracked messages.
 
-## SYSTEM_CONTEXT_REFRESH_PROMPT
-
-# Updated Senpai system context
-
-The Senpai operating or launch context changed since this conversation last ran. Treat the following as current:
-
-{{SYSTEM_CONTEXT}}
-
 ## ADDITIONAL_LAUNCH_INSTRUCTIONS_PROMPT
 
 # Additional launch instructions
@@ -58,14 +50,6 @@ Role: advisor; repository: {{REPOSITORY}}; advisor branch: {{ADVISOR_BRANCH}}; W
 
 Role: student; repository: {{REPOSITORY}}; advisor branch: {{ADVISOR_BRANCH}}; W&B: {{WANDB_ENTITY}}/{{WANDB_PROJECT}}. Student: {{STUDENT_NAME}}.
 
-## CURRENT_LAUNCH_CONTEXT_PROMPT
-
-{{SENPAI_INSTRUCTIONS}}
-
-# Current launch context
-
-{{FULL_PROMPT}}
-
 ## SENPAI_SYSTEM_INSTRUCTIONS_PROMPT
 
 # Senpai harness
@@ -75,6 +59,8 @@ Role: student; repository: {{REPOSITORY}}; advisor branch: {{ADVISOR_BRANCH}}; W
 # Senpai role
 
 {{ROLE}}
+
+{{PROGRAM}}
 
 ## PROGRAM_SYSTEM_PROMPT
 
