@@ -52,7 +52,7 @@ to README.md or SPEC.md as appropriate.
 
 - `README.md` - operator-facing overview, launch examples, and problem-package layout.
 - `SPEC.md` - target architecture and rewrite contract for the senpai orchestration loop.
-- `senpai.yaml` - launch defaults, including the target repo, target branch, advisor branch, and `problem_dir`.
+- `senpai.yaml` - launch defaults for the Senpai runner, target branch, advisor branch, and `problem_dir`; supply the required target repository by CLI or local config.
 - `$PROBLEM_DIR/program.md` - conventional authoritative target research context, goals, metrics, training constraints, and file boundaries. A blank `program_path` requires exactly one `program.md` across the repository root and directories one level below; an explicit value selects a target-repository-relative `program.md`.
 - `system_instructions/SENPAI-HARNESS.md` - shared OpenHands harness contract.
 - `system_instructions/ADVISOR.md` - advisor role workflow.
