@@ -73,9 +73,12 @@ def test_main_agent_context_appends_program_after_harness_and_role():
     assert context.load_project_skills is False
 
 
-def test_student_charter_requires_typed_tools_for_every_training_operation():
+def test_student_charter_requires_typed_workflow_and_training_tools():
     instructions = (ROOT / "system_instructions" / "STUDENT.md").read_text()
 
+    assert "When `post_assignment_comment` is present" in instructions
+    assert "ask the advisor a meaningful interim question" in instructions
+    assert "Use `submit_experiment_result` for the terminal result" in instructions
     assert "must use `run_training`" in instructions
     assert "Never launch training through the terminal" in instructions
     assert "`monitor_training`" in instructions
