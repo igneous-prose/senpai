@@ -75,7 +75,6 @@ def test_python_sources_do_not_embed_centralized_prompt_text():
     fragments = (
         "# Conversation context recovery",
         "Actionable events follow as separately tracked messages.",
-        "# Updated Senpai system context",
         "You are a fresh Senpai subagent.",
         "Senpai restarted before this action completed.",
         "Open feedback_url to read the omitted text.",

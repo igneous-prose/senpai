@@ -5,6 +5,7 @@ from pydantic import SecretStr
 
 from senpai_agent.openhands_runner import RunnerConfig
 from senpai_agent.program_context import ProgramSystemPrompt
+from senpai_agent.system_instructions import SenpaiSystemInstructions
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
@@ -47,9 +48,13 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "harness_file": harness_file,
         "role_file": role_file,
         "plugin_dir": PLUGIN_DIR,
-        "program": ProgramSystemPrompt(
-            program_path="program.md",
-            prompt="# program.md - program.md\n\nTest programme.",
+        "instructions": SenpaiSystemInstructions(
+            harness="harness instructions",
+            role="advisor role",
+            program=ProgramSystemPrompt(
+                program_path="program.md",
+                prompt="# program.md - program.md\n\nTest programme.",
+            ),
         ),
     }
     values.update(updates)
@@ -89,5 +94,4 @@ def runtime_env(
 def isolate_agent_discovery(monkeypatch, runner) -> None:
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "sanitized_agent_definitions", lambda _: [])
-    monkeypatch.setattr(runner, "register_agent_definitions", lambda *_: None)
     monkeypatch.setattr(runner, "sanitized_project_skills", lambda _: [])

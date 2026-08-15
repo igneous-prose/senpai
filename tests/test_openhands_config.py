@@ -9,13 +9,16 @@ from senpai_agent.openhands_runner import (
     build_main_agent_context,
     find_role_file,
     parse_runner_args,
-    read_role_instructions,
+    read_instruction_file,
+    resolve_agent_skills,
     resolve_config,
     sanitized_agent_definitions,
     sanitized_project_skills,
     scrub_model_credentials,
+    without_eager_skill_discovery,
 )
 from senpai_agent.program_context import ProgramSystemPrompt
+from senpai_agent.system_instructions import SenpaiSystemInstructions
 from openhands_support import runtime_config, runtime_env
 from test_agent_markdown import HTML_HEADER, PLAIN_HEADER
 
@@ -37,7 +40,7 @@ def test_explicit_role_file_is_loaded(tmp_path: Path):
     selected = find_role_file(str(role_file))
 
     assert selected == role_file
-    assert read_role_instructions(selected) == "student role"
+    assert read_instruction_file(selected) == "student role"
 
 
 @pytest.mark.parametrize("explicit", [None, "missing.md"])
@@ -50,11 +53,13 @@ def test_role_file_must_be_explicit_and_exist(tmp_path: Path, explicit: str | No
 
 def test_main_agent_context_appends_program_after_harness_and_role():
     context = build_main_agent_context(
-        "harness instructions",
-        "advisor role",
-        program=ProgramSystemPrompt(
-            program_path="senpai/program.md",
-            prompt="# program.md - senpai/program.md\n\nResearch policy."
+        SenpaiSystemInstructions(
+            harness="harness instructions",
+            role="advisor role",
+            program=ProgramSystemPrompt(
+                program_path="senpai/program.md",
+                prompt="# program.md - senpai/program.md\n\nResearch policy.",
+            ),
         ),
     )
 
@@ -78,17 +83,37 @@ def test_student_charter_requires_typed_tools_for_every_training_operation():
     assert "`cancel_training`" in instructions
 
 
-def test_project_instructions_and_file_agents_are_sanitized_without_mutation(
+def test_project_instruction_files_are_not_loaded_but_explicit_skills_are(
     tmp_path: Path,
 ):
     workspace = tmp_path / "target"
     agents = workspace / ".agents" / "agents"
+    skill_dir = workspace / ".agents" / "skills" / "agents"
     agents.mkdir(parents=True)
-    instructions = workspace / "AGENTS.md"
+    skill_dir.mkdir(parents=True)
+    instructions = (
+        workspace / "AGENTS.md",
+        workspace / "CLAUDE.md",
+        workspace / "nested" / "AGENT.md",
+        workspace / ".agents" / "skills" / "AGENTS.md",
+        workspace / ".openhands" / "skills" / "CLAUDE.md",
+    )
     definition = agents / "review.md"
-    instructions.write_text(HTML_HEADER + "# Project rules\n", encoding="utf-8")
+    for path in instructions:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(HTML_HEADER + "# Project rules\n", encoding="utf-8")
+    (workspace / ".agents" / "skills" / "linked.md").symlink_to(
+        workspace / "AGENTS.md"
+    )
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(
+        "---\nname: agents\ndescription: Review code.\n---\n\n"
+        + PLAIN_HEADER
+        + "Review carefully.\n",
+        encoding="utf-8",
+    )
     definition.write_text(
-        "---\nname: review\ndescription: Review code.\n---\n\n"
+        "---\nname: review\ndescription: Review code.\nskills:\n  - agents\n---\n\n"
         + PLAIN_HEADER
         + "Review carefully.\n",
         encoding="utf-8",
@@ -97,9 +122,21 @@ def test_project_instructions_and_file_agents_are_sanitized_without_mutation(
     skills = sanitized_project_skills(workspace)
     definitions = sanitized_agent_definitions(workspace)
 
-    assert "SPDX-" not in next(skill.content for skill in skills if skill.name == "agents")
-    assert "SPDX-" not in next(item.system_prompt for item in definitions if item.name == "review")
-    assert instructions.read_text(encoding="utf-8").startswith("<!--\nSPDX-")
+    assert [skill.name for skill in skills] == ["agents"]
+    assert skills[0].source == str(skill_file)
+    assert "SPDX-" not in skills[0].content
+    assert "Review carefully." in skills[0].content
+    assert "Project rules" not in skills[0].content
+    review = next(item for item in definitions if item.name == "review")
+    assert "SPDX-" not in review.system_prompt
+    assert review.skills == ["agents"]
+    assert resolve_agent_skills(review, skills) == [skills[0]]
+    assert without_eager_skill_discovery(review).skills == []
+    assert all(
+        path.read_text(encoding="utf-8").startswith("<!--\nSPDX-")
+        for path in instructions
+    )
+    assert "# SPDX-" in skill_file.read_text(encoding="utf-8")
     assert "# SPDX-" in definition.read_text(encoding="utf-8")
 
 
@@ -164,13 +201,35 @@ def test_resolved_config_discovers_one_level_program_from_target_workspace(
     )
     config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
-    assert config.program.program_path == "senpai/program.md"
-    assert config.program.prompt == (
+    assert config.instructions.program.program_path == "senpai/program.md"
+    assert config.instructions.program.prompt == (
         "# program.md - senpai/program.md\n\n"
         "# Mission\n\nImprove the model."
     )
+    assert config.instructions.prompt == (
+        "# Senpai harness\n\nharness instructions\n\n"
+        "# Senpai role\n\nadvisor role\n\n"
+        "# program.md - senpai/program.md\n\n"
+        "# Mission\n\nImprove the model.\n"
+    )
     delegated = runner.delegation_config(config)
-    assert delegated.program_path == config.program.program_path
+    assert delegated.program_path == config.instructions.program.program_path
+
+
+def test_resolved_system_instructions_do_not_change_with_source_files(
+    tmp_path: Path,
+):
+    env = runtime_env(tmp_path)
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+    prompt = config.instructions.prompt
+
+    Path(env["SENPAI_OPENHANDS_HARNESS_FILE"]).write_text("changed harness")
+    Path(env["SENPAI_OPENHANDS_ROLE_FILE"]).write_text("changed role")
+    (Path(env["SENPAI_OPENHANDS_WORKSPACE"]) / "program.md").write_text(
+        "changed program"
+    )
+
+    assert config.instructions.prompt == prompt
 
 
 @pytest.mark.parametrize(
