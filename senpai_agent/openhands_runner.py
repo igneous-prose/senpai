@@ -66,7 +66,6 @@ from openhands.sdk.plugin import PluginSource
 from openhands.sdk.skills import (
     Skill,
     load_skills_from_dir,
-    load_user_skills,
     merge_skills_by_name,
 )
 from openhands.sdk.subagent import (
@@ -516,9 +515,7 @@ def resolve_agent_skills(
 
     if not definition.skills:
         return []
-    user_skills = (skill for skill in load_user_skills() if is_exposed_skill(skill))
-    available = {skill.name: skill for skill in user_skills}
-    available.update({skill.name: skill for skill in project_skills})
+    available = {skill.name: skill for skill in project_skills}
     missing = [name for name in definition.skills if name not in available]
     if missing:
         raise ValueError(
