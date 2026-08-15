@@ -34,6 +34,17 @@ from pydantic import BaseModel, Field, model_validator
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.processes import terminate_process_group
 from senpai_agent.program_context import PROGRAM_PATH_ENV
+from senpai_agent.prompts import (
+    AWAIT_AGENTS_SATISFIED_PROMPT,
+    AWAIT_AGENTS_TIMEOUT_PROMPT,
+    DELEGATE_AGENT_DEPRECATION_PROMPT,
+    DELEGATED_SEARCH_MODE_PROMPT,
+    DELEGATED_TASK_BACKGROUND_PROMPT,
+    DELEGATED_TASK_FINISHED_PROMPT,
+    DELEGATED_TASK_PROMPT,
+    DELEGATED_TASK_WITH_CONTEXT_PROMPT,
+    render_prompt,
+)
 from senpai_agent.secrets import scrub_github_credentials
 
 if TYPE_CHECKING:
@@ -201,24 +212,27 @@ def configured_child_runner_factory() -> ChildAgentRunnerFactory:
 def render_child_prompt(request: DelegationRequest, task: str) -> str:
     assignment = task.strip()
     if request.search_mode is not None:
-        assignment = f"Search mode: {request.search_mode}\n\n{assignment}"
+        assignment = render_prompt(
+            DELEGATED_SEARCH_MODE_PROMPT,
+            SEARCH_MODE=request.search_mode,
+            ASSIGNMENT=assignment,
+        )
     if not request.parent_context:
         return (
-            "# Delegated task\n\n"
-            "You are a fresh Senpai subagent. Perform only the assigned task "
-            "and return a concise, evidence-linked report to the parent.\n\n"
-            f"{assignment}\n"
+            render_prompt(
+                DELEGATED_TASK_PROMPT,
+                ASSIGNMENT=assignment,
+            )
+            + "\n"
         )
     context = [message.model_dump(mode="json") for message in request.parent_context]
     return (
-        "# Delegated task with parent context\n\n"
-        "The JSON below is the complete model-visible parent context at "
-        "delegation time. Use it as evidence, perform only the assigned task, "
-        "and return a concise, evidence-linked report.\n\n"
-        "<parent_context_json>\n"
-        f"{json.dumps(context, separators=(',', ':'))}\n"
-        "</parent_context_json>\n\n"
-        f"{assignment}\n"
+        render_prompt(
+            DELEGATED_TASK_WITH_CONTEXT_PROMPT,
+            PARENT_CONTEXT_JSON=json.dumps(context, separators=(",", ":")),
+            ASSIGNMENT=assignment,
+        )
+        + "\n"
     )
 
 
@@ -563,14 +577,18 @@ class DelegateAgentObservation(Observation):
         if self.status == "finished":
             return [
                 TextContent(
-                    text=f"Subagent task {self.task_id} finished.\n\n{self.result or ''}"
+                    text=render_prompt(
+                        DELEGATED_TASK_FINISHED_PROMPT,
+                        TASK_ID=self.task_id,
+                        RESULT=self.result or "",
+                    )
                 )
             ]
         return [
             TextContent(
-                text=(
-                    f"Subagent task {self.task_id} is running in the background. "
-                    "Its result or error will arrive as a durable local event."
+                text=render_prompt(
+                    DELEGATED_TASK_BACKGROUND_PROMPT,
+                    TASK_ID=self.task_id,
                 )
             )
         ]
@@ -1773,10 +1791,7 @@ class _AwaitAgentsExecutor(ToolExecutor[AwaitAgentsAction, AwaitAgentsObservatio
                     tasks=tasks,
                     changed_task_ids=changed,
                     waited_seconds=round(time.monotonic() - started, 3),
-                    guidance=(
-                        "Use the returned state now; unfinished sibling tasks keep "
-                        "running unless you cancel them explicitly."
-                    ),
+                    guidance=AWAIT_AGENTS_SATISFIED_PROMPT,
                 )
             remaining = deadline - time.time()
             if remaining <= 0 or self._interrupted.wait(min(0.1, remaining)):
@@ -1788,12 +1803,7 @@ class _AwaitAgentsExecutor(ToolExecutor[AwaitAgentsAction, AwaitAgentsObservatio
                     tasks=tasks,
                     changed_task_ids=changed,
                     waited_seconds=round(time.monotonic() - started, 3),
-                    guidance=(
-                        "The tasks keep running. Continue useful parent work, inspect "
-                        "later with agent_status, or use join='change' for the next "
-                        "bounded wait; repeating the same long all-results "
-                        "wait will block on the same unfinished tasks."
-                    ),
+                    guidance=AWAIT_AGENTS_TIMEOUT_PROMPT,
                 )
             tasks, uncollected_terminal = self.manager.await_snapshot(
                 action.task_ids,
@@ -1839,12 +1849,6 @@ class _CancelAgentsExecutor(ToolExecutor[CancelAgentsAction, CancelAgentsObserva
         )
 
 
-_DELEGATE_AGENT_DEPRECATION = (
-    "delegate_agent is deprecated and cannot launch an agent. Use spawn_agents "
-    "with a stable batch_key, then pass its task IDs to await_agents."
-)
-
-
 class _DeprecatedDelegateAgentExecutor(
     ToolExecutor[DelegateAgentAction, DelegateAgentObservation]
 ):
@@ -1856,7 +1860,7 @@ class _DeprecatedDelegateAgentExecutor(
         return DelegateAgentObservation(
             task_id="deprecated",
             status="finished",
-            result=_DELEGATE_AGENT_DEPRECATION,
+            result=DELEGATE_AGENT_DEPRECATION_PROMPT,
         )
 
 

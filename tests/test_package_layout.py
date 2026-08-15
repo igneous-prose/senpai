@@ -19,3 +19,12 @@ def test_setuptools_discovers_only_source_packages():
     assert all(
         fnmatchcase(package, find["include"][0]) for package in packages
     )
+
+
+def test_python_prompt_catalog_is_packaged():
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text())
+
+    assert config["tool"]["setuptools"]["package-data"]["senpai_agent"] == [
+        "PROMPTS.md"
+    ]
+    assert (ROOT / "senpai_agent" / "PROMPTS.md").is_file()
