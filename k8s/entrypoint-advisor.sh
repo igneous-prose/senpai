@@ -31,7 +31,7 @@ envsubst '$PROBLEM_DIR $TARGET_REPO_URL $GH_REPO $ADVISOR_BRANCH $RESEARCH_TAG $
     > "$SENPAI_OPENHANDS_ROLE_FILE"
 
 echo "=== Senpai Advisor ==="
-echo "Runner repo:  $REPO_URL (revision: $REPO_REVISION)"
+echo "Runner repo:  $SENPAI_REPO_URL (revision: $SENPAI_REPO_REVISION)"
 echo "Target repo:  $TARGET_REPO_URL (base branch: ${TARGET_REPO_BRANCH:-<default>}; advisor branch: $ADVISOR_BRANCH)"
 echo "Problem dir:  $PROBLEM_DIR"
 echo "Tag:          $RESEARCH_TAG"

@@ -26,7 +26,7 @@ fi
 : "${GITHUB_TOKEN:?GitHub bootstrap token is required}"
 
 echo "=== Senpai Student: $STUDENT_NAME ==="
-echo "Runner repo:  $REPO_URL (revision: $REPO_REVISION)"
+echo "Runner repo:  $SENPAI_REPO_URL (revision: $SENPAI_REPO_REVISION)"
 echo "Target repo:  $TARGET_REPO_URL (base branch: ${TARGET_REPO_BRANCH:-<default>}; advisor branch: $ADVISOR_BRANCH)"
 echo "Problem dir:  $PROBLEM_DIR"
 echo "GitHub history: $GH_HISTORY_SCOPE"
