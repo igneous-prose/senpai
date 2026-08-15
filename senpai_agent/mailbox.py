@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 from senpai_agent.advisor import AdvisorEventStore
-from senpai_agent.prompts import EVENT_PROMPT, render_prompt
+from senpai_agent.PROMPTS import EVENT_PROMPT, render_prompt
 
 
 @dataclass(frozen=True, slots=True)
