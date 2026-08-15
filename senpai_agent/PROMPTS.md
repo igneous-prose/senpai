@@ -32,9 +32,9 @@ Actionable events follow as separately tracked messages.
 
 Continue the {{ROLE}} loop. Current time (UTC): {{CURRENT_TIME}}. Actionable GitHub events follow as separately tracked messages.
 
-## ADDITIONAL_LAUNCH_INSTRUCTIONS_PROMPT
+## OPERATOR_INSTRUCTIONS_PROMPT
 
-# Additional launch instructions
+# Additional operator instructions
 
 {{INSTRUCTIONS}}
 
@@ -61,6 +61,8 @@ Role: student; repository: {{REPOSITORY}}; advisor branch: {{ADVISOR_BRANCH}}; W
 {{ROLE}}
 
 {{PROGRAM}}
+
+{{LAUNCH}}
 
 ## PROGRAM_SYSTEM_PROMPT
 

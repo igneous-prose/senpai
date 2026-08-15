@@ -57,6 +57,7 @@ to README.md or SPEC.md as appropriate.
 - `system_instructions/SENPAI-HARNESS.md` - shared OpenHands harness contract.
 - `system_instructions/ADVISOR.md` - advisor role workflow.
 - `system_instructions/STUDENT.md` - student role workflow.
+- `system_instructions/SENPAI-LAUNCH-CONTEXT.md` - authoritative per-launch runtime and isolation rules.
 
 ### Architecture
 
@@ -81,13 +82,13 @@ to README.md or SPEC.md as appropriate.
 
 ### system_instructions/
 
-The OpenHands base prompt is extended with a stable merged suffix from the
-shared harness file and one rendered role file:
+The OpenHands base prompt is extended with one stable system suffix, assembled in this order:
 
 - `system_instructions/SENPAI-HARNESS.md`
-- `system_instructions/ADVISOR.md` or
-  `system_instructions/STUDENT.md`
+- `system_instructions/ADVISOR.md` or `system_instructions/STUDENT.md`
+- the selected target `program.md`, with its repository-relative path in the header
+- the rendered `system_instructions/SENPAI-LAUNCH-CONTEXT.md`
 
-The selected or discovered target `program.md` is loaded once when the agent process starts and appended to that suffix with its repository-relative path in the header.
+The runner loads this complete suffix once when the agent process starts and does not refresh it during the session. Optional human operator instructions remain user context.
 
 Target skills are loaded explicitly through OpenHands skill context. Target and runner `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` instruction files are human-facing development context and are not loaded as Senpai project context; the checked-in root `CLAUDE.md` links to this canonical guide.

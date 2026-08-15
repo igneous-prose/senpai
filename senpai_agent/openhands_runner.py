@@ -87,6 +87,7 @@ from senpai_agent.github.tools import (
     clear_github_credentials,
     configure_github_credentials,
 )
+from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV, decode_launch_context
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
     load_program_system_prompt,
@@ -610,6 +611,7 @@ def resolve_config(
         harness=read_instruction_file(harness_file),
         role=read_instruction_file(role_file),
         program=program,
+        launch=decode_launch_context(env.get(LAUNCH_CONTEXT_ENV, "")),
     )
     try:
         training_max_timeout_seconds = round(
@@ -1172,6 +1174,7 @@ def delegation_config(
         command_secrets=config.command_secrets,
         role=config.role,
         program_path=config.instructions.program.program_path,
+        launch_context=config.instructions.launch,
         root_state_dir=config.delegation_root_state_dir,
         tree_id=config.delegation_tree_id,
         depth=config.delegation_depth,

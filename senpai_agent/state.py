@@ -49,7 +49,7 @@ class AssignmentConversationRegistry:
 
 
 class StartedConversationLedger:
-    """Record conversations that received their initial launch context."""
+    """Record conversations that received their initial controller context."""
 
     def __init__(self, path: Path):
         self.path = path

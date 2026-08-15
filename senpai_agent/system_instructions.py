@@ -15,6 +15,7 @@ class SenpaiSystemInstructions:
     harness: str
     role: str
     program: ProgramSystemPrompt
+    launch: str
 
     @property
     def prompt(self) -> str:
@@ -24,6 +25,7 @@ class SenpaiSystemInstructions:
                 HARNESS=self.harness.strip(),
                 ROLE=self.role.strip(),
                 PROGRAM=self.program.prompt.strip(),
+                LAUNCH=self.launch.strip(),
             )
             + "\n"
         )

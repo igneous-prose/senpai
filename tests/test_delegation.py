@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from base64 import b64decode
 
 import pytest
 import psutil
@@ -21,6 +22,7 @@ from senpai_agent.delegation import (
     render_child_prompt,
     run_child_process,
 )
+from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV
 from senpai_agent.program_context import PROGRAM_PATH_ENV
 
 
@@ -81,6 +83,7 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "command_secrets": {"EXA_API_KEY": "exa-secret"},
         "role": "advisor",
         "program_path": "program.md",
+        "launch_context": "# Authoritative launch context\n\nSystem policy.",
     }
     values.update(updates)
     return DelegationConfig(**values)
@@ -222,6 +225,10 @@ def test_child_environment_carries_the_resolved_program_path(tmp_path: Path):
     )
 
     assert child.environment[PROGRAM_PATH_ENV] == "senpai/program.md"
+    assert (
+        b64decode(child.environment[LAUNCH_CONTEXT_ENV], validate=True).decode()
+        == "# Authoritative launch context\n\nSystem policy."
+    )
 
 
 def test_child_environment_replaces_ambient_model_credentials(
