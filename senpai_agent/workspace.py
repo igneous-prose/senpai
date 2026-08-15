@@ -15,7 +15,7 @@ from pydantic import SecretStr
 
 from senpai_agent.git_workflow import git_process_env
 from senpai_agent.mailbox import ControllerEvent
-from senpai_agent.prompts import WORKSPACE_DIVERGENCE_PROMPT
+from senpai_agent.PROMPTS import WORKSPACE_DIVERGENCE_PROMPT
 
 
 _HEAD_REF = "refs/senpai/assignment/head"

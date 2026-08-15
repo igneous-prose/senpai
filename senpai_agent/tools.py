@@ -38,7 +38,7 @@ from senpai_agent.delegation import (
 from senpai_agent.git_workflow import require_clean_training_worktree
 from senpai_agent.github.tools import GitHubWorkflowToolSet
 from senpai_agent.monitor import MetricGate, MonitorStore, TrainingMonitorSpec
-from senpai_agent.prompts import MONITOR_TRAINING_STARTED_PROMPT, render_prompt
+from senpai_agent.PROMPTS import MONITOR_TRAINING_STARTED_PROMPT, render_prompt
 from senpai_agent.training import (
     TrainingResult,
     TrainingSpec,

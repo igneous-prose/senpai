@@ -40,7 +40,7 @@ from senpai_agent.monitor import (
     TrainingMonitorEngine,
     WandbMetricSource,
 )
-from senpai_agent.prompts import (
+from senpai_agent.PROMPTS import (
     ADVISOR_RUNTIME_IDENTITY_PROMPT,
     CONTEXT_RECOVERY_PROMPT,
     CONTINUATION_CONTROLLER_PROMPT,

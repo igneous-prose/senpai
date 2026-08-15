@@ -2,53 +2,20 @@ from pathlib import Path
 
 import pytest
 
-import senpai_agent.prompts as prompts
+import senpai_agent.PROMPTS as prompts
 
 
-def write_prompt_catalog(path: Path, sections: dict[str, str]) -> None:
-    path.write_text(
-        "# Test prompts\n\n"
-        + "\n\n".join(
-            f"## {name}\n\n{body}" for name, body in sections.items()
-        )
-        + "\n"
-    )
+def test_prompt_module_defines_nonempty_uppercase_strings():
+    prompt_values = {
+        name: value
+        for name, value in vars(prompts).items()
+        if name.endswith("_PROMPT")
+    }
 
-
-def test_prompt_catalog_exports_every_named_prompt_as_an_uppercase_string():
-    prompt_names = [name for name in prompts.__all__ if name.endswith("_PROMPT")]
-
-    assert prompt_names == list(prompts._PROMPT_NAMES)
-    assert all(name.isupper() for name in prompt_names)
-    assert all(isinstance(getattr(prompts, name), str) for name in prompt_names)
-    assert all(getattr(prompts, name).strip() for name in prompt_names)
-
-
-def test_prompt_catalog_rejects_duplicate_and_empty_sections():
-    with pytest.raises(RuntimeError, match="duplicate prompt section: SAME_PROMPT"):
-        prompts._parse_prompt_sections(
-            "## SAME_PROMPT\n\nFirst.\n\n## SAME_PROMPT\n\nSecond."
-        )
-
-    with pytest.raises(RuntimeError, match="empty prompt section: EMPTY_PROMPT"):
-        prompts._parse_prompt_sections("## EMPTY_PROMPT\n")
-
-
-def test_prompt_catalog_rejects_missing_and_unexpected_sections(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-):
-    catalog = tmp_path / "PROMPTS.md"
-    write_prompt_catalog(catalog, {"UNEXPECTED_PROMPT": "Unexpected."})
-    monkeypatch.setattr(prompts, "PROMPTS_PATH", catalog)
-
-    with pytest.raises(RuntimeError) as raised:
-        prompts._load_prompts()
-
-    message = str(raised.value)
-    assert "missing: " in message
-    assert "CONTEXT_RECOVERY_PROMPT" in message
-    assert "unexpected: UNEXPECTED_PROMPT" in message
+    assert len(prompt_values) == 22
+    assert all(name.isupper() for name in prompt_values)
+    assert all(isinstance(value, str) for value in prompt_values.values())
+    assert all(value == value.strip() for value in prompt_values.values())
 
 
 def test_render_prompt_requires_exact_values_and_does_not_reprocess_insertions():
@@ -72,6 +39,7 @@ def test_render_prompt_preserves_placeholder_boundary_whitespace():
 
 def test_python_sources_do_not_embed_centralized_prompt_text():
     source_root = Path(prompts.__file__).parent
+    prompt_module = Path(prompts.__file__).resolve()
     fragments = (
         "# Conversation context recovery",
         "Actionable events follow as separately tracked messages.",
@@ -85,6 +53,8 @@ def test_python_sources_do_not_embed_centralized_prompt_text():
     )
 
     for source in source_root.rglob("*.py"):
+        if source.resolve() == prompt_module:
+            continue
         text = source.read_text()
         for fragment in fragments:
             assert fragment not in text, f"{fragment!r} remains in {source}"

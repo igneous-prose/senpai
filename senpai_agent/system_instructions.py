@@ -7,7 +7,7 @@
 from dataclasses import dataclass
 
 from senpai_agent.program_context import ProgramSystemPrompt
-from senpai_agent.prompts import SENPAI_SYSTEM_INSTRUCTIONS_PROMPT, render_prompt
+from senpai_agent.PROMPTS import SENPAI_SYSTEM_INSTRUCTIONS_PROMPT, render_prompt
 
 
 @dataclass(frozen=True, slots=True)

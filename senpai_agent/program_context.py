@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from senpai_agent.agent_markdown import read_agent_markdown
-from senpai_agent.prompts import PROGRAM_SYSTEM_PROMPT, render_prompt
+from senpai_agent.PROMPTS import PROGRAM_SYSTEM_PROMPT, render_prompt
 
 PROGRAM_PATH_ENV = "SENPAI_PROGRAM_PATH"
 PROGRAM_PATH_GUIDANCE = (
