@@ -41,6 +41,17 @@ from senpai_agent.monitor import (
     TrainingMonitorEngine,
     WandbMetricSource,
 )
+from senpai_agent.prompts import (
+    ADDITIONAL_LAUNCH_INSTRUCTIONS_PROMPT,
+    ADVISOR_RUNTIME_IDENTITY_PROMPT,
+    CONTEXT_RECOVERY_PROMPT,
+    CONTINUATION_CONTROLLER_PROMPT,
+    CURRENT_LAUNCH_CONTEXT_PROMPT,
+    INITIAL_CONTROLLER_PROMPT,
+    STUDENT_RUNTIME_IDENTITY_PROMPT,
+    SYSTEM_CONTEXT_REFRESH_PROMPT,
+    render_prompt,
+)
 from senpai_agent.state import (
     AssignmentConversationRegistry,
     ConversationBatch,
@@ -103,13 +114,9 @@ def _is_context_history_failure(error: Exception) -> bool:
 
 def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
     launch_context = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
-    return launch_context + (
-        "# Conversation context recovery\n\n"
-        "The previous model-visible conversation branch exhausted or corrupted "
-        "its context. Its complete raw trace and workspace are preserved, but "
-        "the active model context was reset. Inspect preserved state as needed, "
-        "and verify any interrupted action before relying on it."
-        f"\n\n# Current actionable state\n\n{current_prompt}"
+    return launch_context + render_prompt(
+        CONTEXT_RECOVERY_PROMPT,
+        CURRENT_PROMPT=current_prompt,
     )
 
 
@@ -722,21 +729,25 @@ class Controller:
     ) -> str:
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         if not continuing:
-            return (
-                f"{self.full_prompt}\n\nCurrent time (UTC): {now}\n\n"
-                "# Current GitHub state\n\n"
-                "Actionable events follow as separately tracked messages."
+            return render_prompt(
+                INITIAL_CONTROLLER_PROMPT,
+                FULL_PROMPT=self.full_prompt,
+                CURRENT_TIME=now,
             )
-        prompt = (
-            f"Continue the {self.role} loop. Current time (UTC): {now}. "
-            "Actionable GitHub events follow as separately tracked messages."
+        prompt = render_prompt(
+            CONTINUATION_CONTROLLER_PROMPT,
+            ROLE=self.role,
+            CURRENT_TIME=now,
         )
         if refresh_system_context:
-            prompt += (
-                "\n\n# Updated Senpai system context\n\n"
-                "The Senpai operating or launch context changed since "
-                "this conversation last ran. Treat the following as current:\n\n"
-                f"{self.system_context}"
+            prompt = "\n\n".join(
+                (
+                    prompt,
+                    render_prompt(
+                        SYSTEM_CONTEXT_REFRESH_PROMPT,
+                        SYSTEM_CONTEXT=self.system_context,
+                    ),
+                )
             )
         return prompt
 
@@ -747,19 +758,30 @@ def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) ->
     if encoded_extra:
         extra = b64decode(encoded_extra, validate=True).decode()
         sections.append(
-            "# Additional launch instructions\n\n"
-            f"{strip_spdx_header(extra).strip()}"
+            render_prompt(
+                ADDITIONAL_LAUNCH_INSTRUCTIONS_PROMPT,
+                INSTRUCTIONS=strip_spdx_header(extra).strip(),
+            )
         )
-    identity = (
-        f"Role: {role}; repository: {env['GH_REPO']}; "
-        f"advisor branch: {env['ADVISOR_BRANCH']}; "
-        f"W&B: {env['WANDB_ENTITY']}/{env['WANDB_PROJECT']}."
-    )
     if role == "advisor":
-        identity += f" Students: {env.get('STUDENT_NAMES', '')}."
+        identity = render_prompt(
+            ADVISOR_RUNTIME_IDENTITY_PROMPT,
+            REPOSITORY=env["GH_REPO"],
+            ADVISOR_BRANCH=env["ADVISOR_BRANCH"],
+            WANDB_ENTITY=env["WANDB_ENTITY"],
+            WANDB_PROJECT=env["WANDB_PROJECT"],
+            STUDENT_NAMES=env.get("STUDENT_NAMES", ""),
+        )
     else:
-        identity += f" Student: {env['STUDENT_NAME']}."
-    sections.append(f"# Runtime identity\n\n{identity}")
+        identity = render_prompt(
+            STUDENT_RUNTIME_IDENTITY_PROMPT,
+            REPOSITORY=env["GH_REPO"],
+            ADVISOR_BRANCH=env["ADVISOR_BRANCH"],
+            WANDB_ENTITY=env["WANDB_ENTITY"],
+            WANDB_PROJECT=env["WANDB_PROJECT"],
+            STUDENT_NAME=env["STUDENT_NAME"],
+        )
+    sections.append(identity)
     return "\n\n".join(sections)
 
 
@@ -884,9 +906,10 @@ def controller_main(
         read_role_instructions(runner_config.harness_file),
         read_role_instructions(runner_config.role_file),
     ).strip()
-    continuation_context = (
-        f"{senpai_instructions}\n\n"
-        f"# Current launch context\n\n{full_prompt}"
+    continuation_context = render_prompt(
+        CURRENT_LAUNCH_CONTEXT_PROMPT,
+        SENPAI_INSTRUCTIONS=senpai_instructions,
+        FULL_PROMPT=full_prompt,
     )
     inbox = PersistentInbox(
         runner_config.state_dir / "delivery-inbox.sqlite3",
