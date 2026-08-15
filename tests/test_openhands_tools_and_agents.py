@@ -207,6 +207,7 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
         "assign-experiment",
         "bootstrap-target",
         "check-human-issues",
+        "delegate-subagents",
         "review-experiment",
         "submit-experiment-results",
     }
@@ -494,7 +495,13 @@ def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
         path.read_text(encoding="utf-8").lower() for path in prompt_paths
     )
 
-    for domain_assumption in ("physic", "fluid dynamics", "cfd", "aerodynamic"):
+    for domain_assumption in (
+        "physical ai",
+        "physically meaningful",
+        "fluid dynamics",
+        "cfd",
+        "aerodynamic",
+    ):
         assert domain_assumption not in prompts
 
 
@@ -517,6 +524,57 @@ def test_claude_discovers_project_skills():
     assert os.readlink(REPO_ROOT / ".claude" / "skills") == "../.agents/skills"
 
 
+def test_delegation_guidance_lives_in_the_plugin_skill():
+    harness = (
+        REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
+    ).read_text(encoding="utf-8")
+    advisor = (
+        REPO_ROOT / "system_instructions" / "ADVISOR.md"
+    ).read_text(encoding="utf-8")
+    student = (
+        REPO_ROOT / "system_instructions" / "STUDENT.md"
+    ).read_text(encoding="utf-8")
+    skill = (
+        REPO_ROOT
+        / "plugins"
+        / "senpai"
+        / "skills"
+        / "delegate-subagents"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    normalized_harness = " ".join(harness.split())
+    normalized_skill = " ".join(skill.split())
+
+    assert "`delegate-subagents` skill" in normalized_harness
+    assert "`spawn_agents`" not in advisor
+    assert "`spawn_agents`" not in student
+
+    for required in (
+        "`spawn_agents`",
+        "`await_agents`",
+        "`agent_status`",
+        "`cancel_agents`",
+        "`search_general_web`",
+        "`search_research_publications`",
+        '`model="frontier"`',
+        '`agent="general-purpose"`',
+        "ask for research, critique, ideas, or a plan rather than edits",
+        "timeout of at most 300 seconds",
+    ):
+        assert required in normalized_skill
+
+
+def test_advisor_prompt_uses_general_research_domains_and_typed_assignment_body():
+    advisor = " ".join(
+        (REPO_ROOT / "system_instructions" / "ADVISOR.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+
+    assert "adjacent research fields such as physics, chemistry or biology" in advisor
+    assert "Pass the complete actionable experiment brief in `body`" in advisor
+
+
 def test_harness_states_bounded_delegation_tree_contract():
     instructions = (
         REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
@@ -524,11 +582,6 @@ def test_harness_states_bounded_delegation_tree_contract():
     normalized = " ".join(instructions.split())
 
     for required in (
-        "`spawn_agents`",
-        "`await_agents`",
-        "`agent_status`",
-        "`cancel_agents`",
-        "timeout of at most five minutes",
         "at most eight children in total",
         "depth-one general-purpose child",
         "Explore, Search, Bash Runner, and every depth-two child are leaves",
