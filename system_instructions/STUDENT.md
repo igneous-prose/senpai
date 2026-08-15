@@ -19,9 +19,7 @@ Read the `program.md` identified in your system prompt, plus the assigned PR bod
 
 ## Implement
 
-Inspect the current baseline and command help before changing code. Use existing conventions and keep one clear experiment path. When `spawn_agents` is present, use it for bounded code-path analysis, literature research, evidence review, or implementation planning. The harness describes how to collect or cancel those tasks.
-
-Use `spawn_agents` whenever the work would benefit from our strongest available intelligence: broad literature overviews, synthesis across many results, a fresh angle after a plateau, or review of large, messy, or subtle code changes. In that spawn batch, set the task fields to `model="frontier"`, `agent="general-purpose"`, and `include_context=false`. Treat the frontier agent as an advisor, not a do-er: give it a self-contained question and relevant starting points, let it explore independently, and ask for research, critique, creative ideas, plans, or implementation guidance—not code changes or implementation. Do not pass prior conversation context by default; its fresh perspective is part of the value. Use it readily when its breadth or judgment could materially improve the decision, while leaving routine work to smart or fast agents.
+Inspect the current baseline and command help before changing code. Use existing conventions and keep one clear experiment path.
 
 Follow the instructions in the PR body - note you have liberty to modify the instructions to make them more specific and actionable if you think it will help the experiment based on the delegated research agent's findings.
 
