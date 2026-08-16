@@ -36,6 +36,11 @@ def test_default_config_exposes_every_model_profile_and_effort():
         "frontier_model": "openai/gpt-5.6-sol",
         "frontier_reasoning_effort": "max",
     }.items() <= config.items()
+    assert config["program_path"] == ""
+    assert config["senpai_repo_url"] == "https://github.com/wandb/senpai.git"
+    assert config["senpai_repo_revision"] == ""
+    assert "repo_url" not in config
+    assert "repo_revision" not in config
 
 
 @pytest.mark.parametrize(
@@ -74,7 +79,9 @@ def test_digest_image_requires_an_explicit_source_revision():
     image = f"ghcr.io/wandb/senpai@sha256:{'b' * 64}"
 
     assert launch_helpers.source_revision_for_image(image, REVISION) == REVISION
-    with pytest.raises(ValueError, match="require an explicit repo_revision"):
+    with pytest.raises(
+        ValueError, match="require an explicit senpai_repo_revision"
+    ):
         launch_helpers.source_revision_for_image(image)
 
 
@@ -111,10 +118,24 @@ def test_dry_run_binds_each_role_image_to_the_derived_source_revision():
         for role, deployment in deployments.items()
     } == {"advisor": ADVISOR_IMAGE, "student": STUDENT_IMAGE}
     assert {
-        document["data"]["REPO_REVISION"]
+        document["data"]["SENPAI_REPO_REVISION"]
         for document in documents
         if document.get("kind") == "ConfigMap"
     } == {REVISION}
+
+
+@pytest.mark.parametrize("role", ["advisor", "student"])
+def test_runner_repository_is_explicit_in_every_role_configmap(role):
+    args = launch_args(
+        senpai_repo_url="https://github.com/example/senpai-fork.git"
+    )
+
+    configmap, _deployment, _secret = render_role(role, args)
+    config = yaml.safe_load(configmap)["data"]
+
+    assert config["SENPAI_REPO_URL"] == args.senpai_repo_url
+    assert config["SENPAI_REPO_REVISION"] == REVISION
+    assert config["TARGET_REPO_URL"] == args.target_repo_url
 
 
 def test_launch_rejects_role_images_from_different_source_revisions():
@@ -152,9 +173,13 @@ def test_role_bootstrap_verifies_both_checkout_and_image_source_revision(role):
         0
     ]["args"][0]
 
-    assert 'fetch --depth 1 "$REPO_URL" "$REPO_REVISION"' in command
-    assert 'test "$(git rev-parse HEAD)" = "$REPO_REVISION"' in command
-    assert 'test "$SENPAI_IMAGE_REVISION" = "$REPO_REVISION"' in command
+    assert (
+        'fetch --depth 1 "$SENPAI_REPO_URL" "$SENPAI_REPO_REVISION"' in command
+    )
+    assert 'test "$(git rev-parse HEAD)" = "$SENPAI_REPO_REVISION"' in command
+    assert (
+        'test "$SENPAI_IMAGE_REVISION" = "$SENPAI_REPO_REVISION"' in command
+    )
 
 
 @pytest.mark.parametrize(
@@ -180,6 +205,17 @@ def test_start_gate_is_rendered_when_it_is_beneath_the_shared_pvc():
     assert yaml.safe_load(configmap)["data"]["SENPAI_START_GATE_PATH"] == (
         "/mnt/shared/gates/start"
     )
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/program.md", "../program.md", "senpai/../program.md", "policy.md"],
+)
+def test_launch_rejects_a_program_path_outside_the_target_repo(path):
+    result = run_launch("--program_path", path)
+
+    assert result.returncode != 0
+    assert "--program_path" in result.stderr
 
 
 def test_launch_secret_contains_each_credential_and_both_roles_reference_it():

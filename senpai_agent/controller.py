@@ -13,15 +13,13 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from string import Template
 from typing import Literal, Protocol
 from uuid import UUID
 
-from senpai_agent.agent_markdown import read_agent_markdown, strip_spdx_header
+from senpai_agent.agent_markdown import strip_spdx_header
 from senpai_agent.advisor import (
     AdvisorEvent,
     AdvisorEventStore,
-    compose_system_instructions,
 )
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
@@ -42,10 +40,19 @@ from senpai_agent.monitor import (
     TrainingMonitorEngine,
     WandbMetricSource,
 )
+from senpai_agent.PROMPTS import (
+    ADVISOR_RUNTIME_IDENTITY_PROMPT,
+    CONTEXT_RECOVERY_PROMPT,
+    CONTINUATION_CONTROLLER_PROMPT,
+    INITIAL_CONTROLLER_PROMPT,
+    OPERATOR_INSTRUCTIONS_PROMPT,
+    STUDENT_RUNTIME_IDENTITY_PROMPT,
+    render_prompt,
+)
 from senpai_agent.state import (
     AssignmentConversationRegistry,
     ConversationBatch,
-    ConversationStateLedger,
+    StartedConversationLedger,
     StudentConversationSelector,
     WorkspaceDivergenceLedger,
 )
@@ -54,20 +61,6 @@ from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergen
 
 
 _EDGE_TRIGGERED_EVENT_KINDS = frozenset({"research_base_changed"})
-_PROMPT_TEMPLATE_VARIABLES = frozenset(
-    {
-        "ADVISOR_BRANCH",
-        "GH_REPO",
-        "GPUS_PER_STUDENT",
-        "PROBLEM_DIR",
-        "RESEARCH_TAG",
-        "STUDENT_NAME",
-        "STUDENT_NAMES",
-        "TARGET_REPO_URL",
-        "WANDB_ENTITY",
-        "WANDB_PROJECT",
-    }
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,14 +110,10 @@ def _is_context_history_failure(error: Exception) -> bool:
 
 
 def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
-    research_brief = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
-    return research_brief + (
-        "# Conversation context recovery\n\n"
-        "The previous model-visible conversation branch exhausted or corrupted "
-        "its context. Its complete raw trace and workspace are preserved, but "
-        "the active model context was reset. Inspect preserved state as needed, "
-        "and verify any interrupted action before relying on it."
-        f"\n\n# Current actionable state\n\n{current_prompt}"
+    initial_context = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
+    return initial_context + render_prompt(
+        CONTEXT_RECOVERY_PROMPT,
+        CURRENT_PROMPT=current_prompt,
     )
 
 
@@ -289,8 +278,7 @@ class Controller:
         turns: TurnRunner,
         conversation_id: UUID,
         full_prompt: str,
-        system_context: str = "",
-        conversation_state: ConversationStateLedger | None = None,
+        started_conversations: StartedConversationLedger | None = None,
         inbox: PersistentInbox | None = None,
         workspace_divergence_state: WorkspaceDivergenceLedger | None = None,
         conversation_for_events: (
@@ -332,8 +320,7 @@ class Controller:
         )
         self.start_gate_poll_seconds = start_gate_poll_seconds
         self.full_prompt = full_prompt.strip()
-        self.system_context = system_context.strip()
-        self.conversation_state = conversation_state
+        self.started_conversations = started_conversations
         self.inbox = inbox or PersistentInbox()
         self.workspace_divergence_state = workspace_divergence_state
         self.sleep = sleep
@@ -564,29 +551,11 @@ class Controller:
             ):
                 continue
             continuing = self._has_started(conversation_id)
-            refresh_system_context = (
-                continuing
-                and self.conversation_state is not None
-                and not self.conversation_state.is_context_current(
-                    conversation_id,
-                    self.system_context,
-                )
-            )
             turn = self.inbox.next_turn(
                 conversation_id,
-                self._prompt(
-                    (),
-                    continuing=continuing,
-                    refresh_system_context=refresh_system_context,
-                ),
+                self._prompt((), continuing=continuing),
                 legacy_prompt_identity=(
-                    f"initial:{self.full_prompt}"
-                    if not continuing
-                    else (
-                        f"system-context:{self.system_context}"
-                        if refresh_system_context
-                        else None
-                    )
+                    f"initial:{self.full_prompt}" if not continuing else None
                 ),
             )
             if turn is not None:
@@ -663,17 +632,14 @@ class Controller:
 
     def _has_started(self, conversation_id: UUID) -> bool:
         return conversation_id in self._started or (
-            self.conversation_state is not None
-            and self.conversation_state.has_started(conversation_id)
+            self.started_conversations is not None
+            and self.started_conversations.has_started(conversation_id)
         )
 
     def _mark_success(self, conversation_id: UUID) -> None:
         self._started.add(conversation_id)
-        if self.conversation_state is not None:
-            self.conversation_state.mark_success(
-                conversation_id,
-                self.system_context,
-            )
+        if self.started_conversations is not None:
+            self.started_conversations.mark_started(conversation_id)
 
     def _workspace_divergence_key(self, conversation_id: UUID) -> str | None:
         if self.workspace_divergence_state is not None:
@@ -733,62 +699,52 @@ class Controller:
         _events: Sequence[ControllerEvent],
         *,
         continuing: bool,
-        refresh_system_context: bool = False,
     ) -> str:
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         if not continuing:
-            return (
-                f"{self.full_prompt}\n\nCurrent time (UTC): {now}\n\n"
-                "# Current GitHub state\n\n"
-                "Actionable events follow as separately tracked messages."
+            return render_prompt(
+                INITIAL_CONTROLLER_PROMPT,
+                FULL_PROMPT=self.full_prompt,
+                CURRENT_TIME=now,
             )
-        prompt = (
-            f"Continue the {self.role} loop. Current time (UTC): {now}. "
-            "Actionable GitHub events follow as separately tracked messages."
+        return render_prompt(
+            CONTINUATION_CONTROLLER_PROMPT,
+            ROLE=self.role,
+            CURRENT_TIME=now,
         )
-        if refresh_system_context:
-            prompt += (
-                "\n\n# Updated Senpai system context\n\n"
-                "The Senpai operating context or research brief changed since "
-                "this conversation last ran. Treat the following as current:\n\n"
-                f"{self.system_context}"
-            )
-        return prompt
 
 
 def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) -> str:
-    workspace = Path(env["SENPAI_OPENHANDS_WORKSPACE"]).resolve()
-    instructions = workspace / "instructions" / f"prompt-{role}.md"
-    program = workspace / "program.md"
-    template_env = {
-        key: env[key] for key in _PROMPT_TEMPLATE_VARIABLES if key in env
-    }
-    role_prompt = Template(read_agent_markdown(instructions)).safe_substitute(
-        template_env
-    )
-    prompt = (
-        "# Research programme\n\n"
-        f"{read_agent_markdown(program).strip()}\n\n"
-        f"# {role.title()} task\n\n"
-        f"{role_prompt.strip()}"
-    )
+    sections = []
     encoded_extra = env.get("EXTRA_INSTRUCTIONS_B64")
     if encoded_extra:
         extra = b64decode(encoded_extra, validate=True).decode()
-        prompt += (
-            "\n\n# Additional launch instructions\n\n"
-            f"{strip_spdx_header(extra).strip()}"
+        sections.append(
+            render_prompt(
+                OPERATOR_INSTRUCTIONS_PROMPT,
+                INSTRUCTIONS=strip_spdx_header(extra).strip(),
+            )
         )
-    identity = (
-        f"Role: {role}; repository: {env['GH_REPO']}; "
-        f"advisor branch: {env['ADVISOR_BRANCH']}; "
-        f"W&B: {env['WANDB_ENTITY']}/{env['WANDB_PROJECT']}."
-    )
     if role == "advisor":
-        identity += f" Students: {env.get('STUDENT_NAMES', '')}."
+        identity = render_prompt(
+            ADVISOR_RUNTIME_IDENTITY_PROMPT,
+            REPOSITORY=env["GH_REPO"],
+            ADVISOR_BRANCH=env["ADVISOR_BRANCH"],
+            WANDB_ENTITY=env["WANDB_ENTITY"],
+            WANDB_PROJECT=env["WANDB_PROJECT"],
+            STUDENT_NAMES=env.get("STUDENT_NAMES", ""),
+        )
     else:
-        identity += f" Student: {env['STUDENT_NAME']}."
-    return f"{prompt}\n\n# Runtime identity\n\n{identity}"
+        identity = render_prompt(
+            STUDENT_RUNTIME_IDENTITY_PROMPT,
+            REPOSITORY=env["GH_REPO"],
+            ADVISOR_BRANCH=env["ADVISOR_BRANCH"],
+            WANDB_ENTITY=env["WANDB_ENTITY"],
+            WANDB_PROJECT=env["WANDB_PROJECT"],
+            STUDENT_NAME=env["STUDENT_NAME"],
+        )
+    sections.append(identity)
+    return "\n\n".join(sections)
 
 
 def _role_interval(
@@ -815,7 +771,6 @@ def controller_main(
     from senpai_agent.delegation import reconcile_delegated_tasks
     from senpai_agent.openhands_runner import (
         parse_runner_args,
-        read_role_instructions,
         resolve_config,
         scrub_model_credentials,
     )
@@ -908,14 +863,6 @@ def controller_main(
         )
 
     full_prompt = _full_prompt(role, env)
-    system_context = compose_system_instructions(
-        read_role_instructions(runner_config.harness_file),
-        read_role_instructions(runner_config.role_file),
-    )
-    continuation_context = (
-        f"{system_context.strip()}\n\n"
-        f"# Current research brief\n\n{full_prompt}"
-    )
     inbox = PersistentInbox(
         runner_config.state_dir / "delivery-inbox.sqlite3",
         legacy_path=runner_config.state_dir / "pending-message-deliveries.json",
@@ -933,9 +880,8 @@ def controller_main(
         mailbox=mailbox,
         turns=turns,
         conversation_id=runner_config.conversation_id,
-        system_context=continuation_context,
-        conversation_state=ConversationStateLedger(
-            runner_config.state_dir / "conversation-state.json"
+        started_conversations=StartedConversationLedger(
+            runner_config.state_dir / "started-conversations.json"
         ),
         inbox=inbox,
         workspace_divergence_state=(

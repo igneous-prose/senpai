@@ -19,6 +19,10 @@ import psutil
 from pydantic import SecretStr
 
 from senpai_agent.processes import terminate_process_group
+from senpai_agent.program_context import (
+    PROGRAM_PATH_ENV,
+    load_program_system_prompt,
+)
 from senpai_agent.secrets import (
     GITHUB_TOKEN_FD_ENV,
     GITHUB_TOKEN_FILE_ENV,
@@ -342,6 +346,7 @@ def supervisor_main(
         return 0 if lease_is_healthy(args.lease_path) else 1
 
     state_dir = Path(env["SENPAI_OPENHANDS_STATE_DIR"]).resolve()
+    worker_environment = prepare_program_context_environment(env)
     github_token = _consume_github_token(env)
     stop = threading.Event()
 
@@ -361,12 +366,30 @@ def supervisor_main(
                 args.command,
             ),
             lease_path=state_dir / "controller-lease.json",
-            environment=env,
+            environment=worker_environment,
             github_token=github_token,
         ).run(stop)
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
+
+
+def prepare_program_context_environment(
+    env: Mapping[str, str],
+) -> dict[str, str]:
+    """Resolve program.md before any model process starts."""
+
+    environment = dict(env)
+    program = load_program_system_prompt(
+        Path(environment["SENPAI_OPENHANDS_WORKSPACE"]),
+        environment.get(PROGRAM_PATH_ENV, ""),
+    )
+    environment[PROGRAM_PATH_ENV] = program.program_path
+    print(
+        f"SENPAI_PROGRAM_CONTEXT path={program.program_path}",
+        flush=True,
+    )
+    return environment
 
 
 def _consume_github_token(env: Mapping[str, str]) -> SecretStr:

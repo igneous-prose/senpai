@@ -18,7 +18,7 @@ python "$HOME/.agents/skills/exa-search/scripts/search_exa.py" \
 ```bash
 python "$HOME/.agents/skills/exa-search/scripts/search_exa.py" \
   research-publications \
-  "mesh-based neural operators for aerodynamic surrogate modeling"
+  "uncertainty calibration for neural networks"
 ```
 
 The script returns Markdown rather than raw JSON. Each result contains a direct

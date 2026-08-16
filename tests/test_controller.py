@@ -20,8 +20,10 @@ from senpai_agent.inbox import (
     deliver_turn_messages,
 )
 from senpai_agent.mailbox import ControllerEvent
-from senpai_agent.state import ConversationStateLedger, WorkspaceDivergenceLedger
+from senpai_agent.program_context import ProgramSystemPrompt
+from senpai_agent.state import StartedConversationLedger, WorkspaceDivergenceLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
+from senpai_agent.system_instructions import SenpaiSystemInstructions
 from senpai_agent.workspace import WorkspaceDivergence
 from test_agent_markdown import HTML_HEADER
 
@@ -143,23 +145,10 @@ def research_base_event(current_sha="def"):
     )
 
 
-def test_first_turn_combines_programme_role_template_and_runtime_identity(
-    tmp_path: Path,
-):
-    workspace = tmp_path / "target"
-    instructions = workspace / "instructions"
-    instructions.mkdir(parents=True)
-    (workspace / "program.md").write_text(HTML_HEADER + "Minimize test error.")
-    (instructions / "prompt-student.md").write_text(
-        HTML_HEADER
-        + "Work as $STUDENT_NAME on $ADVISOR_BRANCH in $WANDB_PROJECT. "
-        + "Never expose $WANDB_API_KEY."
-    )
-
+def test_first_turn_combines_operator_instructions_and_runtime_identity():
     prompt = _full_prompt(
         "student",
         {
-            "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
             "GH_REPO": "acme/widgets",
             "ADVISOR_BRANCH": "research",
             "WANDB_ENTITY": "acme",
@@ -169,16 +158,38 @@ def test_first_turn_combines_programme_role_template_and_runtime_identity(
             "EXTRA_INSTRUCTIONS_B64": b64encode(
                 (HTML_HEADER + "Use typed tools.").encode()
             ).decode(),
+            "SENPAI_LAUNCH_CONTEXT_B64": b64encode(
+                b"# Authoritative launch context\n\nSystem policy."
+            ).decode(),
         },
     )
 
-    assert "# Research programme\n\nMinimize test error." in prompt
-    assert "# Student task\n\nWork as fern on research in cfd." in prompt
-    assert "$WANDB_API_KEY" in prompt
+    assert "# Research programme" not in prompt
+    assert "# Student task" not in prompt
     assert "live-secret" not in prompt
-    assert "# Additional launch instructions\n\nUse typed tools." in prompt
+    assert "# Additional operator instructions\n\nUse typed tools." in prompt
+    assert "Authoritative launch context" not in prompt
     assert "Role: student; repository: acme/widgets" in prompt
     assert "SPDX-" not in prompt
+
+
+def test_advisor_first_turn_contains_only_runtime_identity_without_launch_text():
+    prompt = _full_prompt(
+        "advisor",
+        {
+            "GH_REPO": "acme/widgets",
+            "ADVISOR_BRANCH": "research",
+            "WANDB_ENTITY": "acme",
+            "WANDB_PROJECT": "cfd",
+            "STUDENT_NAMES": "fern,frieren",
+        },
+    )
+
+    assert prompt == (
+        "# Runtime identity\n\n"
+        "Role: advisor; repository: acme/widgets; advisor branch: research; "
+        "W&B: acme/cfd. Students: fern,frieren."
+    )
 
 
 def test_empty_mailbox_does_not_start_a_model_turn():
@@ -651,6 +662,15 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         timeout_seconds=3600,
         harness_file=tmp_path / "harness.md",
         role_file=tmp_path / "role.md",
+        instructions=SenpaiSystemInstructions(
+            harness="harness instructions",
+            role="advisor role",
+            program=ProgramSystemPrompt(
+                program_path="program.md",
+                prompt="# program.md - program.md\n\nTest programme.",
+            ),
+            launch="# Authoritative launch context\n\nSystem policy.",
+        ),
     )
     monkeypatch.setattr(runner_module, "parse_runner_args", lambda _argv: object())
     monkeypatch.setattr(
@@ -659,18 +679,12 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         lambda _args, _env: config,
     )
     monkeypatch.setattr(runner_module, "scrub_model_credentials", lambda *_: None)
-    monkeypatch.setattr(runner_module, "read_role_instructions", lambda _: "")
     monkeypatch.setattr(tools_module, "close_training_runtimes", lambda: None)
     monkeypatch.setattr(weave_module, "finish_weave_monitoring", lambda: None)
     monkeypatch.setattr(
         controller_module,
         "GitHubMailbox",
         lambda **_kwargs: Mailbox([]),
-    )
-    monkeypatch.setattr(
-        controller_module,
-        "compose_system_instructions",
-        lambda *_: "",
     )
     monkeypatch.setattr(controller_module, "_full_prompt", lambda *_: "programme")
 
@@ -697,9 +711,6 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     assert created[0].event_reminder_seconds == 600
     assert created[0].full_prompt == "programme"
     assert created[0].turns.full_prompt == "programme"
-    assert created[0].system_context.endswith(
-        "# Current research brief\n\nprogramme"
-    )
 
 
 def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():
@@ -1160,8 +1171,8 @@ def test_controller_requires_start_and_launch_gates_before_polling(
 
 def test_restart_continues_a_conversation_after_its_first_success(tmp_path: Path):
     conversation_id = UUID("00000000-0000-0000-0000-000000000004")
-    state_path = tmp_path / "conversation-state.json"
-    ConversationStateLedger(state_path).mark_success(conversation_id, "")
+    state_path = tmp_path / "started-conversations.json"
+    StartedConversationLedger(state_path).mark_started(conversation_id)
     turns = Turns()
 
     controller(
@@ -1180,7 +1191,7 @@ def test_restart_continues_a_conversation_after_its_first_success(tmp_path: Path
         turns,
         role="student",
         conversation_id=conversation_id,
-        conversation_state=ConversationStateLedger(state_path),
+        started_conversations=StartedConversationLedger(state_path),
     ).run(max_cycles=1)
 
     assert turns.calls[0][1] == conversation_id
@@ -1240,26 +1251,3 @@ def test_failed_acknowledgement_does_not_advance_supervisor_progress(tmp_path: P
         ).run(max_cycles=1)
 
     assert WorkerLease.read(lease_path).completed_turns == 0
-
-
-def test_changed_system_context_is_injected_once_into_the_existing_conversation(
-    tmp_path: Path,
-):
-    conversation_id = UUID("00000000-0000-0000-0000-000000000006")
-    state = ConversationStateLedger(tmp_path / "conversation-state.json")
-    state.mark_success(conversation_id, "old harness and role")
-    turns = Turns()
-
-    controller(
-        Mailbox([(review_event(17),), (review_event(18),), ()]),
-        turns,
-        conversation_id=conversation_id,
-        system_context="current harness and role",
-        conversation_state=state,
-    ).run(max_cycles=1)
-
-    assert [call[1] for call in turns.calls] == [conversation_id, conversation_id]
-    assert "# Updated Senpai system context" in turns.calls[0][0]
-    assert "current harness and role" in turns.calls[0][0]
-    assert "# Updated Senpai system context" not in turns.calls[1][0]
-    assert state.is_context_current(conversation_id, "current harness and role")

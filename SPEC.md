@@ -129,7 +129,7 @@ Advisor state:
 ├── advisor-conversation-id
 ├── controller-lease.json
 ├── advisor-events.sqlite3
-├── conversation-state.json
+├── started-conversations.json
 ├── github/
 └── conversations managed by OpenHands
 ```
@@ -145,7 +145,7 @@ Student state:
 ├── github-feedback.json
 ├── student-conversations.json
 ├── student-events.sqlite3
-├── conversation-state.json
+├── started-conversations.json
 ├── training/
 │   ├── <training-id>.json
 │   ├── <training-id>.log
@@ -155,34 +155,18 @@ Student state:
 └── conversations managed by OpenHands
 ```
 
-`student-conversations.json` maps one `(assignment_id, revision_id)` to one
-UUID. `conversation-state.json` records, per UUID, both successful initial
-instruction delivery and the digest of the delivered merged system context.
-The controller replaces this one document atomically after a successful turn,
-so a restart cannot observe those two facts at different revisions. A
-`training_monitor` event carries its original conversation UUID and therefore
-resumes, rather than replaces, the student conversation.
+`student-conversations.json` maps one `(assignment_id, revision_id)` to one UUID. `started-conversations.json` records the UUIDs that successfully received their initial controller context. A `training_monitor` event carries its original conversation UUID and therefore resumes, rather than replaces, the student conversation.
 
 `github-feedback.json` records every immutable PR feedback key's first-seen
 assignment revision, then marks it acknowledged only after its student turn
 succeeds. This prevents pending or completed feedback from replaying or
 rebinding to a later assignment revision after a restart.
 
-When `conversation-state.json` does not yet exist, startup atomically migrates
-the previous `started-conversations.json` and
-`system-context-revisions.json` files. A conversation caught between those
-legacy files' two writes resumes without replaying its initial brief and
-receives the current system context once.
-
 OpenHands stores base state and individual events beneath that UUID. A killed
 worker resumes from the last persisted event. An in-flight response or tool
 call without a durable event is retried from the preceding event.
 
-The controller marks a conversation's initial instructions delivered and
-records its current system-context digest in the same atomic update, only after
-the OpenHands turn succeeds. A crash or nonzero first turn therefore retries
-the complete programme and assignment prompt instead of incorrectly
-continuing from instructions that were never delivered.
+The controller marks a conversation's initial controller context delivered only after the OpenHands turn succeeds. A crash or nonzero first turn therefore retries that context instead of incorrectly continuing from information that was never delivered.
 
 Role state uses pod-local storage and survives controller or container restarts
 within the same pod. Replacing or rescheduling a pod starts fresh local state;
@@ -200,19 +184,13 @@ The model receives:
 1. OpenHands' native base system prompt and tool schemas.
 2. One stable system suffix assembled from:
    - `system_instructions/SENPAI-HARNESS.md`; and
-   - the rendered advisor or student role charter.
-3. Applicable target `AGENTS.md` and compatible `CLAUDE.md` project context.
-4. A compact skill catalog whose bodies are loaded only when invoked.
-5. User turns containing `program.md`, target role instructions, current state,
-   and current UTC time.
+   - the rendered advisor or student role charter; and
+   - the selected target-repository `program.md` under `# program.md - <path>`; and
+   - the rendered `system_instructions/SENPAI-LAUNCH-CONTEXT.md`, containing authoritative runtime and isolation rules after `program.md`. A blank `program_path` searches root `program.md` and one-level `*/program.md` paths and requires exactly one total match.
+3. Explicit project and Senpai skills through OpenHands skill context. Agent Skills bodies are loaded only when invoked. Repository `AGENTS.md`, `AGENT.md`, and `CLAUDE.md` instruction files are not loaded as project context.
+4. User turns containing optional human operator instructions, runtime identity, current state, and current UTC time.
 
-Harness and role remain separate source documents because they have different
-owners, but are merged into one system suffix so the agent knows both the
-OpenHands operating contract and its Senpai role. The complete role is not
-periodically duplicated in user messages; OpenHands includes the system suffix
-on every inference. A persisted merged-context hash detects a changed deployed
-harness or role and injects the current text once into the same conversation
-UUID. Current time is rendered for every controller wake.
+At process startup, the runner loads the harness, selected role, `program.md`, and authoritative launch context once into one immutable `SenpaiSystemInstructions` value. Its prompt is the stable system suffix for that process and is never reread, monitored, or refreshed during the agent session. Before constructing a model worker, the supervisor resolves the configured program path or fails with the missing or ambiguous candidates. Delegated children inherit the resolved repository-relative path and exact launch context, then build their own immutable value when their process starts. Optional operator instructions remain user context. Use GitHub Issues for live human direction. OpenHands includes the system suffix on every inference, and current time is rendered for every controller wake.
 
 File-based subagents are discovered from `.agents/agents`. Skill bodies are not
 concatenated into agent definitions. The OpenHands fork's `main` branch applies

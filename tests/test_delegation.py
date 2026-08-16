@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from base64 import b64decode
 
 import pytest
 import psutil
@@ -21,6 +22,8 @@ from senpai_agent.delegation import (
     render_child_prompt,
     run_child_process,
 )
+from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV
+from senpai_agent.program_context import PROGRAM_PATH_ENV
 
 
 def delegation_request(
@@ -79,6 +82,8 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": True,
         "command_secrets": {"EXA_API_KEY": "exa-secret"},
         "role": "advisor",
+        "program_path": "program.md",
+        "launch_context": "# Authoritative launch context\n\nSystem policy.",
     }
     values.update(updates)
     return DelegationConfig(**values)
@@ -203,6 +208,22 @@ def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path)
     )
     assert fast.environment["SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT"] == (
         config.frontier_reasoning_effort
+    )
+
+
+def test_child_environment_carries_the_resolved_program_path(tmp_path: Path):
+    child = OpenHandsChildProcess(
+        delegation_config(
+            tmp_path,
+            program_path="senpai/program.md",
+        ),
+        delegation_request(),
+    )
+
+    assert child.environment[PROGRAM_PATH_ENV] == "senpai/program.md"
+    assert (
+        b64decode(child.environment[LAUNCH_CONTEXT_ENV], validate=True).decode()
+        == "# Authoritative launch context\n\nSystem policy."
     )
 
 

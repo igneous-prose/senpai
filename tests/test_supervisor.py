@@ -7,10 +7,16 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
 from pydantic import SecretStr
 
 import senpai_agent.supervisor as supervisor_module
-from senpai_agent.supervisor import SupervisorConfig, WorkerLease, WorkerSupervisor
+from senpai_agent.supervisor import (
+    SupervisorConfig,
+    WorkerLease,
+    WorkerSupervisor,
+    prepare_program_context_environment,
+)
 
 
 def wait_for(path: Path, timeout: float = 5) -> None:
@@ -45,6 +51,53 @@ def test_supervisor_default_termination_grace_is_sixty_seconds():
 
 def test_supervisor_caps_repeated_restart_backoff_at_five_minutes():
     assert SupervisorConfig().max_backoff_seconds == 300
+
+
+def test_supervisor_resolves_program_path_before_starting_workers(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    workspace = tmp_path / "target"
+    program = workspace / "senpai" / "program.md"
+    program.parent.mkdir(parents=True)
+    program.write_text("Research policy.")
+
+    environment = prepare_program_context_environment(
+        {"SENPAI_OPENHANDS_WORKSPACE": str(workspace)},
+    )
+
+    assert environment["SENPAI_PROGRAM_PATH"] == "senpai/program.md"
+    assert capsys.readouterr().out == (
+        "SENPAI_PROGRAM_CONTEXT path=senpai/program.md\n"
+    )
+
+
+def test_supervisor_does_not_start_a_worker_without_a_discoverable_program(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("No programme here.")
+
+    def unexpected_worker(*_args, **_kwargs):
+        pytest.fail("worker must not be constructed when program.md is missing")
+
+    monkeypatch.setattr(supervisor_module, "WorkerSupervisor", unexpected_worker)
+
+    with pytest.raises(RuntimeError) as error:
+        supervisor_module.supervisor_main(
+            ["advisor"],
+            {
+                "SENPAI_OPENHANDS_STATE_DIR": str(tmp_path / "state"),
+                "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+            },
+        )
+
+    message = str(error.value)
+    assert "searched program.md and */program.md" in message
+    assert "--program_path" in message
+    assert "senpai.yaml" in message
 
 
 def test_pid_one_reaps_adopted_children_without_reaping_its_worker(monkeypatch):
