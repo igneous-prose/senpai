@@ -560,6 +560,10 @@ def test_program_md_onboarding_context_is_shared_across_agent_clients():
     assert all(url in agents_context for url in example_urls)
 
 
+def test_claude_discovers_project_skills():
+    assert os.readlink(REPO_ROOT / ".claude" / "skills") == "../.agents/skills"
+
+
 def test_grilling_autoresearch_skill_guides_human_program_design():
     agents_context = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
     skill_dir = REPO_ROOT / ".agents" / "skills" / "grilling-autoresearch"
