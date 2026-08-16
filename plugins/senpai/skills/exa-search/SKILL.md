@@ -10,13 +10,13 @@ official `exa_py` client, loads the nearest `.env` through `python-dotenv`, and
 preserves an `EXA_API_KEY` already set in the environment.
 
 ```bash
-python "$HOME/.agents/skills/exa-search/scripts/search_exa.py" \
+python "$SENPAI_PLUGIN/skills/exa-search/scripts/search_exa.py" \
   general-web \
   "current OpenHands SDK file-based agent documentation"
 ```
 
 ```bash
-python "$HOME/.agents/skills/exa-search/scripts/search_exa.py" \
+python "$SENPAI_PLUGIN/skills/exa-search/scripts/search_exa.py" \
   research-publications \
   "uncertainty calibration for neural networks"
 ```

@@ -17,10 +17,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from senpai_agent.agent_markdown import strip_spdx_header
-from senpai_agent.advisor import (
-    AdvisorEvent,
-    AdvisorEventStore,
-)
+from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
     DeliveryState,
@@ -41,12 +38,10 @@ from senpai_agent.monitor import (
     WandbMetricSource,
 )
 from senpai_agent.PROMPTS import (
-    ADVISOR_RUNTIME_IDENTITY_PROMPT,
     CONTEXT_RECOVERY_PROMPT,
     CONTINUATION_CONTROLLER_PROMPT,
     INITIAL_CONTROLLER_PROMPT,
     OPERATOR_INSTRUCTIONS_PROMPT,
-    STUDENT_RUNTIME_IDENTITY_PROMPT,
     render_prompt,
 )
 from senpai_agent.state import (
@@ -110,7 +105,11 @@ def _is_context_history_failure(error: Exception) -> bool:
 
 
 def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
-    initial_context = "" if full_prompt in current_prompt else f"{full_prompt}\n\n"
+    initial_context = (
+        ""
+        if not full_prompt or full_prompt in current_prompt
+        else f"{full_prompt}\n\n"
+    )
     return initial_context + render_prompt(
         CONTEXT_RECOVERY_PROMPT,
         CURRENT_PROMPT=current_prompt,
@@ -128,8 +127,6 @@ class OpenHandsTurnRunner:
     ):
         self.config = config
         self.full_prompt = full_prompt.strip()
-        if not self.full_prompt:
-            raise ValueError("full prompt must not be empty")
         self.github_mailbox = github_mailbox
         self.active_poll_interval_seconds = active_poll_interval_seconds
 
@@ -706,7 +703,7 @@ class Controller:
                 INITIAL_CONTROLLER_PROMPT,
                 FULL_PROMPT=self.full_prompt,
                 CURRENT_TIME=now,
-            )
+            ).lstrip()
         return render_prompt(
             CONTINUATION_CONTROLLER_PROMPT,
             ROLE=self.role,
@@ -714,37 +711,15 @@ class Controller:
         )
 
 
-def _full_prompt(role: Literal["advisor", "student"], env: Mapping[str, str]) -> str:
-    sections = []
+def _full_prompt(env: Mapping[str, str]) -> str:
     encoded_extra = env.get("EXTRA_INSTRUCTIONS_B64")
-    if encoded_extra:
-        extra = b64decode(encoded_extra, validate=True).decode()
-        sections.append(
-            render_prompt(
-                OPERATOR_INSTRUCTIONS_PROMPT,
-                INSTRUCTIONS=strip_spdx_header(extra).strip(),
-            )
-        )
-    if role == "advisor":
-        identity = render_prompt(
-            ADVISOR_RUNTIME_IDENTITY_PROMPT,
-            REPOSITORY=env["GH_REPO"],
-            ADVISOR_BRANCH=env["ADVISOR_BRANCH"],
-            WANDB_ENTITY=env["WANDB_ENTITY"],
-            WANDB_PROJECT=env["WANDB_PROJECT"],
-            STUDENT_NAMES=env.get("STUDENT_NAMES", ""),
-        )
-    else:
-        identity = render_prompt(
-            STUDENT_RUNTIME_IDENTITY_PROMPT,
-            REPOSITORY=env["GH_REPO"],
-            ADVISOR_BRANCH=env["ADVISOR_BRANCH"],
-            WANDB_ENTITY=env["WANDB_ENTITY"],
-            WANDB_PROJECT=env["WANDB_PROJECT"],
-            STUDENT_NAME=env["STUDENT_NAME"],
-        )
-    sections.append(identity)
-    return "\n\n".join(sections)
+    if not encoded_extra:
+        return ""
+    extra = b64decode(encoded_extra, validate=True).decode()
+    return render_prompt(
+        OPERATOR_INSTRUCTIONS_PROMPT,
+        INSTRUCTIONS=strip_spdx_header(extra).strip(),
+    )
 
 
 def _role_interval(
@@ -862,7 +837,7 @@ def controller_main(
             token=runner_config.github_token,
         )
 
-    full_prompt = _full_prompt(role, env)
+    full_prompt = _full_prompt(env)
     inbox = PersistentInbox(
         runner_config.state_dir / "delivery-inbox.sqlite3",
         legacy_path=runner_config.state_dir / "pending-message-deliveries.json",
