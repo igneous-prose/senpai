@@ -560,6 +560,34 @@ def test_program_md_onboarding_context_is_shared_across_agent_clients():
     assert all(url in agents_context for url in example_urls)
 
 
+def test_grilling_autoresearch_skill_guides_human_program_design():
+    agents_context = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    skill_dir = REPO_ROOT / ".agents" / "skills" / "grilling-autoresearch"
+    skill = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    normalized_skill = " ".join(skill.split())
+    example_urls = {
+        "https://github.com/morganmcg1/TandemFoilSet-Balanced/blob/main/program.md",
+        "https://github.com/morganmcg1/DrivAerML/blob/main/program.md",
+        "https://github.com/morganmcg1/mlxfast-challenge_senpai/blob/main/senpai/program.md",
+        "https://github.com/karpathy/autoresearch/blob/master/program.md",
+    }
+
+    assert (skill_dir / ".senpai-developer-only").exists()
+    assert "name: grilling-autoresearch" in skill
+    assert "$grilling-autoresearch" in agents_context
+    for requirement in (
+        "Finding facts is your job, never the user's",
+        "Ask the whole frontier in one round",
+        "The decisions are the user's",
+        "Do not act on it until the user confirms",
+        "exact primary metric names and definitions",
+        "shapes, sizes, splits, exclusions",
+        "without unnecessarily narrowing the search space",
+    ):
+        assert requirement in normalized_skill
+    assert all(url in skill for url in example_urls)
+
+
 def test_delegation_guidance_lives_in_the_plugin_skill():
     harness = (
         REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
