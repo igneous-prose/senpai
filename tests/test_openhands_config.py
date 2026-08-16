@@ -78,7 +78,8 @@ def test_main_agent_context_appends_program_after_harness_and_role():
 def test_student_charter_requires_typed_workflow_and_training_tools():
     instructions = (ROOT / "system_instructions" / "STUDENT.md").read_text()
 
-    assert "When `post_assignment_comment` is present" in instructions
+    assert "Use `post_assignment_comment`" in instructions
+    assert "When `post_assignment_comment` is present" not in instructions
     assert "ask the advisor a meaningful interim question" in instructions
     assert "Use `submit_experiment_result` for the terminal result" in instructions
     assert "must use `run_training`" in instructions

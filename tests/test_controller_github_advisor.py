@@ -3,6 +3,7 @@ from pydantic import SecretStr
 
 from senpai_agent.github.mailbox import GitHubMailbox
 from senpai_agent.models import (
+    AssignmentCommentRecord,
     AssignmentKey,
     AssignmentRecord,
     ExperimentResult,
@@ -10,6 +11,7 @@ from senpai_agent.models import (
     ResultStatus,
     experiment_result_digest,
     render_assignment_marker,
+    render_assignment_comment_marker,
     render_research_base_acceptance_marker,
     render_result_comment,
 )
@@ -70,6 +72,114 @@ def assignment(
         base_sha=base_sha,
         head_ref=f"student/candidate-{number}",
         head_sha=str(number % 10) * 40,
+    )
+
+
+def assignment_comment(
+    *,
+    github_id: int = 501,
+    comment_id: str = "paired-run-started",
+    student: str = "student-1",
+    revision_id: str = "revision-2",
+    author: str = "senpai-bot",
+):
+    marker = render_assignment_comment_marker(
+        AssignmentCommentRecord(
+            repo="acme/widgets",
+            pr_number=17,
+            assignment_id="assignment-17",
+            revision_id=revision_id,
+            student=student,
+            comment_id=comment_id,
+        )
+    )
+    return {
+        "id": github_id,
+        "body": f"{marker}\n\nSTUDENT: The paired run has started.",
+        "html_url": (
+            "https://github.test/acme/widgets/pull/17"
+            f"#issuecomment-{github_id}"
+        ),
+        "created_at": "2026-08-11T07:20:00Z",
+        "updated_at": "2026-08-11T07:20:00Z",
+        "user": {"login": author, "type": "Bot"},
+        "author_association": "MEMBER",
+    }
+
+
+def test_student_assignment_comment_wakes_advisor_once_per_semantic_message(
+    monkeypatch,
+):
+    comments_url = "https://api.github.test/repos/acme/widgets/issues/17/comments"
+    assigned = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body=render_assignment_marker(assignment()),
+        head_sha="7" * 40,
+        comments_url=comments_url,
+    )
+    advisor = mailbox(monkeypatch, [assigned], students=("student-1",))
+    monkeypatch.setattr(advisor._github, "actor", lambda: "senpai-bot")
+    monkeypatch.setattr(
+        advisor._github,
+        "objects",
+        lambda _url: [
+            assignment_comment(github_id=502),
+            assignment_comment(github_id=501),
+        ],
+    )
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    comments = [
+        event for event in advisor.poll() if event.kind == "student_assignment_comment"
+    ]
+
+    assert len(comments) == 1
+    assert comments[0].payload == {
+        "number": 17,
+        "pr_url": "https://github.test/acme/widgets/pull/17",
+        "comment_url": (
+            "https://github.test/acme/widgets/pull/17#issuecomment-501"
+        ),
+        "github_comment_id": 501,
+        "comment_id": "paired-run-started",
+        "assignment_id": "assignment-17",
+        "revision_id": "revision-2",
+        "student": "student-1",
+        "message": "STUDENT: The paired run has started.",
+        "created_at": "2026-08-11T07:20:00Z",
+    }
+
+
+def test_advisor_ignores_forged_or_stale_assignment_comments(monkeypatch):
+    assigned = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body=render_assignment_marker(assignment()),
+        head_sha="7" * 40,
+        comments_url="https://api.github.test/repos/acme/widgets/issues/17/comments",
+    )
+    advisor = mailbox(monkeypatch, [assigned], students=("student-1",))
+    monkeypatch.setattr(advisor._github, "actor", lambda: "senpai-bot")
+    monkeypatch.setattr(
+        advisor._github,
+        "objects",
+        lambda _url: [
+            assignment_comment(github_id=501, student="student-2"),
+            assignment_comment(github_id=502, revision_id="revision-old"),
+            assignment_comment(github_id=503, author="mallory"),
+        ],
+    )
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    assert not any(
+        event.kind == "student_assignment_comment" for event in advisor.poll()
     )
 
 
