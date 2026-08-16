@@ -63,11 +63,6 @@ Every real experiment must log the artifacts required by `program.md` to W&B. Us
 
 ## Report and submit
 
-Post material interim updates with `post_assignment_comment`, especially when
-the advisor asked for a response or the experiment is blocked or delayed. Use a
-fresh `comment_id` for each new message and reuse that ID only for an exact
-retry. Keep the PR concise rather than mirroring routine internal narration.
-
 Report:
 
 - the terminal structured Senpai result;
