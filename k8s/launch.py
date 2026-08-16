@@ -19,7 +19,11 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from senpai_agent.launch_context import render_launch_context
+from senpai_agent.launch_context import (
+    LAUNCH_CONTEXT_ENV,
+    load_operator_instructions,
+    render_launch_context,
+)
 from senpai_agent.program_context import PROGRAM_PATH_ENV, normalize_program_path
 
 from launch_helpers import (
@@ -73,10 +77,10 @@ class Args:
     gpus_per_student: int = 1  # GPUs requested by each student pod
     cpu_per_gpu: int = 15  # CPU requested per student GPU
     memory_gi_per_gpu: int = 120  # memory Gi requested per student GPU
-    repo_url: str = (
-        "https://github.com/wandb/senpai.git"  # git repo URL (senpai runner)
+    senpai_repo_url: str = (
+        "https://github.com/wandb/senpai.git"  # public read-only runner source
     )
-    repo_revision: str = (
+    senpai_repo_revision: str = (
         ""  # exact runner commit; derived from :sha-<commit> image tags
     )
     advisor_image: str = ""  # advisor source-SHA tag or image digest — REQUIRED
@@ -289,7 +293,7 @@ def validate_program_path(args: Args) -> None:
         sys.exit(f"ERROR: --program_path: {error}")
 
 
-def build_extra_instructions(
+def build_launch_context(
     args: Args,
     tag: str,
     student_list: list[str],
@@ -305,11 +309,10 @@ def build_extra_instructions(
         advisor_branch=args.advisor_branch,
         target_base=args.target_repo_branch,
         students=student_list,
-        extra_instructions=args.extra_instructions,
     )
 
 
-def encoded_extra_instructions(
+def encoded_launch_context(
     args: Args,
     tag: str,
     student_list: list[str],
@@ -317,12 +320,18 @@ def encoded_extra_instructions(
     backend: str,
 ) -> str:
     return base64.b64encode(
-        build_extra_instructions(
+        build_launch_context(
             args,
             tag,
             student_list,
             backend=backend,
         ).encode()
+    ).decode()
+
+
+def encoded_operator_instructions(args: Args) -> str:
+    return base64.b64encode(
+        load_operator_instructions(args.extra_instructions).encode()
     ).decode()
 
 
@@ -343,8 +352,8 @@ def render_student(
         labels={"app": "senpai", "role": "student", "research-tag": tag},
         data={
             **role_model_config(args, "student"),
-            "REPO_URL": args.repo_url,
-            "REPO_REVISION": args.repo_revision,
+            "SENPAI_REPO_URL": args.senpai_repo_url,
+            "SENPAI_REPO_REVISION": args.senpai_repo_revision,
             "TARGET_REPO_URL": args.target_repo_url,
             "TARGET_REPO_BRANCH": args.target_repo_branch,
             PROGRAM_PATH_ENV: args.program_path,
@@ -362,12 +371,13 @@ def render_student(
             "SENPAI_MAX_EPOCHS": str(args.max_epochs),
             "SENPAI_POLL_INTERVAL_S": str(args.poll_interval_s),
             "SENPAI_POLL_JITTER_S": str(args.poll_jitter_s),
-            "EXTRA_INSTRUCTIONS_B64": encoded_extra_instructions(
+            LAUNCH_CONTEXT_ENV: encoded_launch_context(
                 args,
                 tag,
                 [student_name],
                 backend="kubernetes",
             ),
+            "EXTRA_INSTRUCTIONS_B64": encoded_operator_instructions(args),
             "PROBLEM_DIR": args.problem_dir,
             "PVC_MOUNT_PATH": args.pvc_mount_path,
             "SENPAI_START_GATE_PATH": args.start_gate_path,
@@ -407,8 +417,8 @@ def render_advisor(
     advisor_deployment_name = f"senpai-advisor-{tag}"
     data = {
         **role_model_config(args, "advisor"),
-        "REPO_URL": args.repo_url,
-        "REPO_REVISION": args.repo_revision,
+        "SENPAI_REPO_URL": args.senpai_repo_url,
+        "SENPAI_REPO_REVISION": args.senpai_repo_revision,
         "TARGET_REPO_URL": args.target_repo_url,
         "TARGET_REPO_BRANCH": args.target_repo_branch,
         PROGRAM_PATH_ENV: args.program_path,
@@ -429,12 +439,13 @@ def render_advisor(
         "PVC_MOUNT_PATH": args.pvc_mount_path,
         "SENPAI_START_GATE_PATH": args.start_gate_path,
     }
-    data["EXTRA_INSTRUCTIONS_B64"] = encoded_extra_instructions(
+    data[LAUNCH_CONTEXT_ENV] = encoded_launch_context(
         args,
         tag,
         student_list,
         backend="kubernetes",
     )
+    data["EXTRA_INSTRUCTIONS_B64"] = encoded_operator_instructions(args)
     configmap = render_configmap(
         name=advisor_configmap_name,
         labels={"app": "senpai", "role": "advisor", "research-tag": tag},
@@ -478,10 +489,10 @@ def main():
                 )
         try:
             advisor_revision = source_revision_for_image(
-                args.advisor_image, args.repo_revision
+                args.advisor_image, args.senpai_repo_revision
             )
             student_revision = source_revision_for_image(
-                args.student_image, args.repo_revision
+                args.student_image, args.senpai_repo_revision
             )
         except ValueError as error:
             sys.exit(f"ERROR: {error}")
@@ -490,11 +501,16 @@ def main():
                 "ERROR: --advisor_image and --student_image must use the "
                 "same source revision"
             )
-        args.repo_revision = advisor_revision
+        args.senpai_repo_revision = advisor_revision
     if args.gh_history_scope not in {"branch", "repo", "fresh"}:
         sys.exit("ERROR: --gh_history_scope must be one of: branch, repo, fresh")
-    if target_repo_slug(args.target_repo_url) == target_repo_slug(args.repo_url):
-        sys.exit("ERROR: --target_repo_url must be a different repo from --repo_url")
+    if target_repo_slug(args.target_repo_url) == target_repo_slug(
+        args.senpai_repo_url
+    ):
+        sys.exit(
+            "ERROR: --target_repo_url must be a different repo from "
+            "--senpai_repo_url"
+        )
 
     # Resolve student list before backend-independent GitHub preflight.
     if args.names:

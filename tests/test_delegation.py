@@ -5,6 +5,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from base64 import b64decode
 
 import pytest
 import psutil
@@ -21,12 +22,13 @@ from senpai_agent.delegation import (
     render_child_prompt,
     run_child_process,
 )
-from senpai_agent.launch_context import INSTRUCTIONS_ROOT, PLACEHOLDER
-from senpai_agent.openhands_runner import delegation_config as runner_delegation_config
-from senpai_agent.program_context import (
-    PROGRAM_PATH_ENV,
-    ProgramSystemPromptSnapshot,
+from senpai_agent.launch_context import (
+    INSTRUCTIONS_ROOT,
+    LAUNCH_CONTEXT_ENV,
+    PLACEHOLDER,
 )
+from senpai_agent.openhands_runner import delegation_config as runner_delegation_config
+from senpai_agent.program_context import PROGRAM_PATH_ENV
 from senpai_agent.supervisor import prepare_system_context_environment
 from openhands_support import runtime_config
 
@@ -87,10 +89,8 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "enable_browser": True,
         "command_secrets": {"EXA_API_KEY": "exa-secret"},
         "role": "advisor",
-        "program": ProgramSystemPromptSnapshot(
-            program_path="program.md",
-            prompt="## program.md - program.md\n\nTest programme.",
-        ),
+        "program_path": "program.md",
+        "launch_context": "# Authoritative launch context\n\nSystem policy.",
     }
     values.update(updates)
     return DelegationConfig(**values)
@@ -225,17 +225,16 @@ def test_child_environment_carries_the_resolved_program_path(tmp_path: Path):
     child = OpenHandsChildProcess(
         delegation_config(
             tmp_path,
-            program=ProgramSystemPromptSnapshot(
-                program_path="senpai/program.md",
-                prompt=(
-                    "## program.md - senpai/program.md\n\nParent programme."
-                ),
-            ),
+            program_path="senpai/program.md",
         ),
         delegation_request(),
     )
 
     assert child.environment[PROGRAM_PATH_ENV] == "senpai/program.md"
+    assert (
+        b64decode(child.environment[LAUNCH_CONTEXT_ENV], validate=True).decode()
+        == "# Authoritative launch context\n\nSystem policy."
+    )
 
 
 def test_child_reuses_the_supervisor_rendered_role_prompt(tmp_path: Path):
@@ -267,12 +266,16 @@ def test_child_reuses_the_supervisor_rendered_role_prompt(tmp_path: Path):
 
     assert delegated.role_file == parent.role_file
     assert delegated.harness_file == parent.harness_file
-    assert delegated.program == parent.program
+    assert delegated.program_path == parent.instructions.program.program_path
+    assert delegated.launch_context == parent.instructions.launch
     assert child.command[child.command.index("--role-file") + 1] == str(role_file)
     assert child.command[child.command.index("--harness-file") + 1] == str(
         parent.harness_file
     )
-    assert child.environment[PROGRAM_PATH_ENV] == parent.program.program_path
+    assert (
+        child.environment[PROGRAM_PATH_ENV]
+        == parent.instructions.program.program_path
+    )
     role_prompt = role_file.read_text()
     assert "Role: `advisor`" in role_prompt
     assert "Students: `fern,frieren`" in role_prompt

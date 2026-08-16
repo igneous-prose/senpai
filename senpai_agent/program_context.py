@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from senpai_agent.agent_markdown import read_agent_markdown
+from senpai_agent.PROMPTS import PROGRAM_SYSTEM_PROMPT, render_prompt
 
 PROGRAM_PATH_ENV = "SENPAI_PROGRAM_PATH"
 PROGRAM_PATH_GUIDANCE = (
@@ -19,7 +20,7 @@ PROGRAM_PATH_GUIDANCE = (
 
 
 @dataclass(frozen=True, slots=True)
-class ProgramSystemPromptSnapshot:
+class ProgramSystemPrompt:
     program_path: str
     prompt: str
 
@@ -46,14 +47,18 @@ def normalize_program_path(value: str) -> str:
 def load_program_system_prompt(
     workspace: Path,
     value: str,
-) -> ProgramSystemPromptSnapshot:
+) -> ProgramSystemPrompt:
     """Resolve, read, and format one program.md."""
 
     workspace = workspace.resolve()
     program_path = normalize_program_path(value) or _discover_program_path(workspace)
     source = _program_file(workspace, program_path)
-    prompt = f"## program.md - {program_path}\n\n{read_agent_markdown(source).strip()}"
-    return ProgramSystemPromptSnapshot(program_path=program_path, prompt=prompt)
+    prompt = render_prompt(
+        PROGRAM_SYSTEM_PROMPT,
+        PROGRAM_PATH=program_path,
+        PROGRAM_CONTENT=read_agent_markdown(source).strip(),
+    )
+    return ProgramSystemPrompt(program_path=program_path, prompt=prompt)
 
 
 def _discover_program_path(workspace: Path) -> str:

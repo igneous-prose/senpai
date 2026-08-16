@@ -28,7 +28,7 @@ export SENPAI_OPENHANDS_STATE_DIR="$LOGDIR/openhands_state"
 export SENPAI_OPENHANDS_ROLE_FILE="$WORKDIR/system_instructions/ADVISOR.md"
 
 echo "=== Senpai Advisor ==="
-echo "Runner repo:  $REPO_URL (revision: $REPO_REVISION)"
+echo "Runner repo:  $SENPAI_REPO_URL (revision: $SENPAI_REPO_REVISION)"
 echo "Target repo:  $TARGET_REPO_URL (base branch: ${TARGET_REPO_BRANCH:-<default>}; advisor branch: $ADVISOR_BRANCH)"
 echo "Problem dir:  $PROBLEM_DIR"
 echo "Tag:          $RESEARCH_TAG"

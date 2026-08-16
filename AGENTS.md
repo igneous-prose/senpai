@@ -10,35 +10,16 @@ SPDX-PackageName: senpai
 
 ### Creating a target program.md
 
-When helping a user onboard a target repository, inspect an explicitly
-configured `program_path` first. When it is blank, look for `program.md` at the
-root and exactly one directory below it. If there is no usable file, coach the
-user through creating one by following the
-[`grilling-autoresearch`](.agents/skills/grilling-autoresearch/SKILL.md) skill
-(`$grilling-autoresearch`).
-Inspect the repository before interviewing them, establish facts yourself, ask
-the user to decide the remaining intent and tradeoffs, and wait for shared
-understanding before drafting the file. Multiple auto-discovered files are
-ambiguous; do not choose one silently.
+When helping a user onboard a target repository, inspect an explicitly configured `program_path` first. When it is blank, look for `program.md` at the root and exactly one directory below it. If there is no usable file, coach the user through creating one. Inspect the repository before interviewing them, establish facts yourself, ask the user to decide the remaining intent and tradeoffs, and wait for shared understanding before drafting the file. Multiple auto-discovered files are ambiguous; do not choose one silently.
 
-`program.md` is appended to every Senpai model's system prompt, so keep it
-concise, plain-language, and high-signal. It should clearly define:
+`program.md` is appended to every Senpai model's system prompt, so keep it concise, plain-language, and high-signal. It should clearly define:
 
-- the project goal and the exact primary metrics, including how each metric is
-  calculated, which direction is better, and which split or benchmark decides
-  success;
-- the data paths, shapes, sizes, train/validation/test splits, exclusions,
-  leakage risks, and important footguns;
-- operational guardrails such as commands, budgets, allowed edits, protected
-  artifacts, and result-reporting expectations; and
-- optional research avenues, papers, models, and libraries that provide useful
-  starting points without forcing a narrow solution path.
+- the project goal and the exact primary metrics, including how each metric is calculated, which direction is better, and which split or benchmark decides success;
+- the data paths, shapes, sizes, train/validation/test splits, exclusions, leakage risks, and important footguns;
+- operational guardrails such as commands, budgets, allowed edits, protected artifacts, and result-reporting expectations; and
+- optional research avenues, papers, models, and libraries that provide useful starting points without forcing a narrow solution path.
 
-Favor high-level goals and guardrails that let research agents discover the
-details. Avoid micromanaging methods or over-prompting one idea unless that
-narrow focus is the user's explicit goal. The
-[`bootstrap-target`](plugins/senpai/skills/bootstrap-target/SKILL.md) guide and
-its template can turn the confirmed decisions into the target contract.
+Favor high-level goals and guardrails that let research agents discover the details. Avoid micromanaging methods or over-prompting one idea unless that narrow focus is the user's explicit goal. The [`bootstrap-target`](plugins/senpai/skills/bootstrap-target/SKILL.md) guide and its template can turn the confirmed decisions into the target contract.
 
 Reference examples:
 
@@ -49,9 +30,7 @@ Reference examples:
 
 ## Senpai developers
 
-Development of a problem-agnostic autonomous ML research loop for target ML
-problem repositories. The runner and its guidance must stay target-repo
-agnostic.
+Development of a problem-agnostic autonomous ML research loop for target ML problem repositories. The runner and its guidance must stay target-repo agnostic.
 
 ### Clarifying development work
 
@@ -73,11 +52,12 @@ to README.md or SPEC.md as appropriate.
 
 - `README.md` - operator-facing overview, launch examples, and problem-package layout.
 - `SPEC.md` - target architecture and rewrite contract for the senpai orchestration loop.
-- `senpai.yaml` - launch defaults, including the target repo, target branch, advisor branch, and `problem_dir`.
+- `senpai.yaml` - launch defaults for the Senpai runner, target branch, advisor branch, and `problem_dir`; supply the required target repository by CLI or local config.
 - `$PROBLEM_DIR/program.md` - conventional authoritative target research context, goals, metrics, training constraints, and file boundaries. A blank `program_path` requires exactly one `program.md` across the repository root and directories one level below; an explicit value selects a target-repository-relative `program.md`.
 - `system_instructions/SENPAI-HARNESS.md` - shared OpenHands harness contract.
 - `system_instructions/ADVISOR.md` - advisor role workflow.
 - `system_instructions/STUDENT.md` - student role workflow.
+- `system_instructions/SENPAI-LAUNCH-CONTEXT.md` - authoritative per-launch runtime and isolation rules.
 
 ### Architecture
 
@@ -102,17 +82,13 @@ to README.md or SPEC.md as appropriate.
 
 ### system_instructions/
 
-The OpenHands base prompt is extended with a stable merged suffix from the
-shared harness file and one rendered role file:
+The OpenHands base prompt is extended with one stable system suffix, assembled in this order:
 
 - `system_instructions/SENPAI-HARNESS.md`
-- `system_instructions/ADVISOR.md` or
-  `system_instructions/STUDENT.md`
+- `system_instructions/ADVISOR.md` or `system_instructions/STUDENT.md`
+- the selected target `program.md`, with its repository-relative path in the header
+- the rendered `system_instructions/SENPAI-LAUNCH-CONTEXT.md`
 
-The selected or discovered target `program.md` is appended to that suffix with
-its repository-relative path in the header.
+The runner loads this complete suffix once when the agent process starts and does not refresh it during the session. Optional human operator instructions remain user context.
 
-Target `AGENTS.md`, compatible `CLAUDE.md`, and skills are loaded through
-OpenHands project context and progressive disclosure. The checked-in root
-`CLAUDE.md` links to this canonical development context; neither root file is a
-pod role instruction.
+Target skills are loaded explicitly through OpenHands skill context. Target and runner `AGENTS.md`, `AGENT.md`, or `CLAUDE.md` instruction files are human-facing development context and are not loaded as Senpai project context; the checked-in root `CLAUDE.md` links to this canonical guide.

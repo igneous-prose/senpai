@@ -207,6 +207,7 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
         "assign-experiment",
         "bootstrap-target",
         "check-human-issues",
+        "delegate-subagents",
         "review-experiment",
         "submit-experiment-results",
     }
@@ -435,6 +436,7 @@ def test_file_agent_definitions_keep_bounded_tools_and_no_github_mutations(
         "get_prs",
         "create_assignment",
         "publish_advisor_branch",
+        "post_assignment_comment",
         "repair_assignment_routing",
         "send_assignment_feedback",
         "request_assignment_revision",
@@ -466,11 +468,37 @@ def test_system_instructions_refer_to_program_md_by_filename():
     }
 
     assert all("programme" not in prompt.lower() for prompt in prompts.values())
+    assert "program.md" not in prompts["SENPAI-HARNESS.md"]
     advisor = " ".join(prompts["ADVISOR.md"].split())
     assert (
         "NEVER accept results where the primary validation metrics required by "
         "the program.md identified in your system prompt"
     ) in advisor
+
+
+def test_event_guidance_lives_in_the_shared_harness():
+    prompt_dir = REPO_ROOT / "system_instructions"
+    advisor = (prompt_dir / "ADVISOR.md").read_text(encoding="utf-8")
+    harness = (prompt_dir / "SENPAI-HARNESS.md").read_text(encoding="utf-8")
+
+    assert "A `review_ready`, `training_monitor`, human-message" not in advisor
+    assert "A `review_ready`, `training_monitor`, human-message" in harness
+
+
+def test_shared_harness_omits_project_instructions_and_generic_reminders():
+    harness = (
+        REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
+    ).read_text(encoding="utf-8")
+
+    for omitted in (
+        "AGENTS.md",
+        "CLAUDE.md",
+        "OpenHands presents Agent Skills",
+        "Assignment details, optional launch instructions",
+        "current UTC time",
+        "Finish when the current brief",
+    ):
+        assert omitted not in harness
 
 
 def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
@@ -484,21 +512,18 @@ def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
         path.read_text(encoding="utf-8").lower() for path in prompt_paths
     )
 
-    for domain_assumption in ("physic", "fluid dynamics", "cfd", "aerodynamic"):
+    for domain_assumption in (
+        "physical ai",
+        "physically meaningful",
+        "fluid dynamics",
+        "cfd",
+        "aerodynamic",
+    ):
         assert domain_assumption not in prompts
 
 
-def test_program_md_onboarding_is_shared_across_agent_clients():
+def test_program_md_onboarding_context_is_shared_across_agent_clients():
     agents_context = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    skill_path = (
-        REPO_ROOT
-        / ".agents"
-        / "skills"
-        / "grilling-autoresearch"
-        / "SKILL.md"
-    )
-    skill = skill_path.read_text(encoding="utf-8")
-    normalized_skill = " ".join(skill.split())
     normalized_context = " ".join(agents_context.split())
     example_urls = {
         "https://github.com/morganmcg1/TandemFoilSet-Balanced/blob/main/program.md",
@@ -508,20 +533,59 @@ def test_program_md_onboarding_is_shared_across_agent_clients():
     }
 
     assert os.readlink(REPO_ROOT / "CLAUDE.md") == "AGENTS.md"
-    assert os.readlink(REPO_ROOT / ".claude" / "skills") == "../.agents/skills"
-    assert "name: grilling-autoresearch" in skill
-    for requirement in (
-        "Finding facts is your job, never the user's",
-        "Ask the whole frontier in one round",
-        "The decisions are the user's",
-        "Do not act on it until the user confirms",
-        "exact primary metric names and definitions",
-        "shapes, sizes, splits, exclusions",
-        "without unnecessarily narrowing the search space",
-    ):
-        assert requirement in normalized_skill
     assert "wait for shared understanding before drafting" in normalized_context
-    assert all(url in agents_context and url in skill for url in example_urls)
+    assert all(url in agents_context for url in example_urls)
+
+
+def test_delegation_guidance_lives_in_the_plugin_skill():
+    harness = (
+        REPO_ROOT / "system_instructions" / "SENPAI-HARNESS.md"
+    ).read_text(encoding="utf-8")
+    advisor = (
+        REPO_ROOT / "system_instructions" / "ADVISOR.md"
+    ).read_text(encoding="utf-8")
+    student = (
+        REPO_ROOT / "system_instructions" / "STUDENT.md"
+    ).read_text(encoding="utf-8")
+    skill = (
+        REPO_ROOT
+        / "plugins"
+        / "senpai"
+        / "skills"
+        / "delegate-subagents"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    normalized_harness = " ".join(harness.split())
+    normalized_skill = " ".join(skill.split())
+
+    assert "`delegate-subagents` skill" in normalized_harness
+    assert "`spawn_agents`" not in advisor
+    assert "`spawn_agents`" not in student
+
+    for required in (
+        "`spawn_agents`",
+        "`await_agents`",
+        "`agent_status`",
+        "`cancel_agents`",
+        "`search_general_web`",
+        "`search_research_publications`",
+        '`model="frontier"`',
+        '`agent="general-purpose"`',
+        "ask for research, critique, ideas, or a plan rather than edits",
+        "timeout of at most 300 seconds",
+    ):
+        assert required in normalized_skill
+
+
+def test_advisor_prompt_uses_general_research_domains_and_typed_assignment_body():
+    advisor = " ".join(
+        (REPO_ROOT / "system_instructions" / "ADVISOR.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+
+    assert "adjacent research fields such as physics, chemistry or biology" in advisor
+    assert "Pass the complete actionable experiment brief in `body`" in advisor
 
 
 def test_harness_states_bounded_delegation_tree_contract():
@@ -531,11 +595,6 @@ def test_harness_states_bounded_delegation_tree_contract():
     normalized = " ".join(instructions.split())
 
     for required in (
-        "`spawn_agents`",
-        "`await_agents`",
-        "`agent_status`",
-        "`cancel_agents`",
-        "timeout of at most five minutes",
         "at most eight children in total",
         "depth-one general-purpose child",
         "Explore, Search, Bash Runner, and every depth-two child are leaves",

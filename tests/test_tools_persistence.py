@@ -128,6 +128,10 @@ def test_legacy_delegate_agent_events_and_tool_definition_still_restore():
     assert restored_action.action.background is True
     assert isinstance(restored_observation.observation, DelegateAgentObservation)
     assert restored_observation.observation.status == "dispatched"
+    assert restored_observation.observation.to_llm_content[0].text == (
+        "Subagent task legacy-task is running in the background. Its result or "
+        "error will arrive as a durable local event."
+    )
     assert isinstance(restored_system.tools[0], DelegateAgentTool)
 
 

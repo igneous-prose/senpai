@@ -1,14 +1,18 @@
 import uuid
+from base64 import b64encode
 from pathlib import Path
 
 from pydantic import SecretStr
 
 from senpai_agent.openhands_runner import RunnerConfig
-from senpai_agent.program_context import ProgramSystemPromptSnapshot
+from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV
+from senpai_agent.program_context import ProgramSystemPrompt
+from senpai_agent.system_instructions import SenpaiSystemInstructions
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_ROOT / "plugins" / "senpai"
 AGENT_DIR = REPO_ROOT / ".agents" / "agents"
+TEST_LAUNCH_CONTEXT = "# Authoritative launch context\n\nTest launch policy."
 
 
 def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
@@ -47,9 +51,14 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "harness_file": harness_file,
         "role_file": role_file,
         "plugin_dir": PLUGIN_DIR,
-        "program": ProgramSystemPromptSnapshot(
-            program_path="program.md",
-            prompt="## program.md - program.md\n\nTest programme.",
+        "instructions": SenpaiSystemInstructions(
+            harness="harness instructions",
+            role="advisor role",
+            program=ProgramSystemPrompt(
+                program_path="program.md",
+                prompt="# program.md - program.md\n\nTest programme.",
+            ),
+            launch=TEST_LAUNCH_CONTEXT,
         ),
     }
     values.update(updates)
@@ -83,11 +92,11 @@ def runtime_env(
         "SENPAI_OPENHANDS_ROLE_FILE": str(role_file),
         "SENPAI_OPENHANDS_HARNESS_FILE": str(harness_file),
         "SENPAI_PLUGIN": str(PLUGIN_DIR),
+        LAUNCH_CONTEXT_ENV: b64encode(TEST_LAUNCH_CONTEXT.encode()).decode(),
     }
 
 
 def isolate_agent_discovery(monkeypatch, runner) -> None:
     monkeypatch.setattr(runner, "discover_agents", lambda _: [])
     monkeypatch.setattr(runner, "sanitized_agent_definitions", lambda _: [])
-    monkeypatch.setattr(runner, "register_agent_definitions", lambda *_: None)
     monkeypatch.setattr(runner, "sanitized_project_skills", lambda _: [])
