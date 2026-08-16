@@ -19,7 +19,7 @@ When helping a user onboard a target repository, inspect an explicitly configure
 - operational guardrails such as commands, budgets, allowed edits, protected artifacts, and result-reporting expectations; and
 - optional research avenues, papers, models, and libraries that provide useful starting points without forcing a narrow solution path.
 
-Favor high-level goals and guardrails that let research agents discover the details. Avoid micromanaging methods or over-prompting one idea unless that narrow focus is the user's explicit goal. The [`bootstrap-target`](plugins/senpai/skills/bootstrap-target/SKILL.md) guide and its template can turn the confirmed decisions into the target contract.
+Favor high-level goals and guardrails that let research agents discover the details. Avoid micromanaging methods or over-prompting one idea unless that narrow focus is the user's explicit goal. The [`bootstrap-target`](.agents/skills/bootstrap-target/SKILL.md) guide and its template can turn the confirmed decisions into the target contract.
 
 Reference examples:
 

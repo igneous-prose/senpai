@@ -31,14 +31,6 @@ OPERATOR_INSTRUCTIONS_PROMPT = """# Additional operator instructions
 
 {{INSTRUCTIONS}}"""
 
-ADVISOR_RUNTIME_IDENTITY_PROMPT = """# Runtime identity
-
-Role: advisor; repository: {{REPOSITORY}}; advisor branch: {{ADVISOR_BRANCH}}; W&B: {{WANDB_ENTITY}}/{{WANDB_PROJECT}}. Students: {{STUDENT_NAMES}}."""
-
-STUDENT_RUNTIME_IDENTITY_PROMPT = """# Runtime identity
-
-Role: student; repository: {{REPOSITORY}}; advisor branch: {{ADVISOR_BRANCH}}; W&B: {{WANDB_ENTITY}}/{{WANDB_PROJECT}}. Student: {{STUDENT_NAME}}."""
-
 SENPAI_SYSTEM_INSTRUCTIONS_PROMPT = """# Senpai harness
 
 {{HARNESS}}

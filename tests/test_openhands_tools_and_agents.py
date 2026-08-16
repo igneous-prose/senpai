@@ -6,9 +6,9 @@ import textwrap
 from types import SimpleNamespace
 
 import pytest
-from openhands.sdk import Agent, LLM, Tool
+from openhands.sdk import Agent, LLM, LocalConversation, Tool
 from openhands.sdk.tool import resolve_tool
-from openhands.sdk.plugin import Plugin
+from openhands.sdk.plugin import Plugin, PluginSource
 from openhands.sdk.subagent import AgentDefinition, agent_definition_to_factory
 from openhands.tools.preset.default import register_default_tools
 from pydantic import SecretStr
@@ -204,13 +204,33 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
     assert plugin.manifest.name == "senpai"
     skills = {skill.name: skill for skill in plugin.skills}
     assert set(skills) == {
+        "alphaxiv-paper-lookup",
         "assign-experiment",
-        "bootstrap-target",
         "check-human-issues",
         "delegate-subagents",
+        "exa-search",
         "review-experiment",
+        "senpai-status-check",
         "submit-experiment-results",
+        "wandb-primary",
     }
+    operator_skills = {
+        path.parent.name
+        for path in (REPO_ROOT / ".agents" / "skills").glob("*/SKILL.md")
+    }
+    assert {
+        "analyze-experiments",
+        "bootstrap-target",
+        "experiment-report",
+        "git-research-log",
+        "list-experiments",
+        "plot-experiment-charts",
+        "rlm",
+        "senpai-tool-telemetry",
+        "slidev",
+    } <= operator_skills
+    assert set(skills).isdisjoint(operator_skills)
+    assert all(skill.is_agentskills_format for skill in skills.values())
     assert "merge_experiment" in skills["review-experiment"].content
     assert "close_experiment" in skills["review-experiment"].content
     assert plugin.mcp_config == {}
@@ -279,7 +299,10 @@ def test_markdown_agents_register_and_construct_with_the_native_loader(tmp_path)
     home = tmp_path / "home"
     workspace = tmp_path / "target"
     workspace.mkdir()
-    shutil.copytree(REPO_ROOT / ".agents", home / ".agents")
+    shutil.copytree(
+        REPO_ROOT / ".agents" / "agents",
+        home / ".agents" / "agents",
+    )
     program = textwrap.dedent(
         """
         import os
@@ -347,38 +370,39 @@ def test_markdown_agents_register_and_construct_with_the_native_loader(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_search_agent_loads_its_progressive_skills_and_inherits_reasoning_effort(
+def test_search_agent_receives_skills_from_the_runtime_plugin(
     monkeypatch,
+    tmp_path,
 ):
-    import openhands.sdk.skills.skill as skill_module
-
-    monkeypatch.setattr(
-        skill_module,
-        "USER_SKILLS_DIRS",
-        [REPO_ROOT / ".agents" / "skills", PLUGIN_DIR / "skills"],
-    )
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("SENPAI_ROLE", "advisor")
     register_default_tools(enable_browser=False)
     register_senpai_tools()
     definition = AgentDefinition.load(AGENT_DIR / "search.md")
-    agent = agent_definition_to_factory(definition, work_dir=REPO_ROOT)(
+    agent = agent_definition_to_factory(definition, work_dir=tmp_path)(
         LLM(
             model="anthropic/claude-opus-4-8",
             api_key=SecretStr("test-key"),
             reasoning_effort="low",
         )
     )
-
-    assert agent.llm.reasoning_effort == "low"
-    assert {skill.name for skill in agent.agent_context.skills} == {
-        "exa-search",
-        "alphaxiv-paper-lookup",
-    }
-    assert all(skill.is_agentskills_format for skill in agent.agent_context.skills)
-    assert all(
-        skill.content not in agent.agent_context.system_message_suffix
-        for skill in agent.agent_context.skills
+    conversation = LocalConversation(
+        agent=agent,
+        workspace=tmp_path,
+        plugins=[PluginSource(source=str(PLUGIN_DIR))],
+        visualizer=None,
     )
+
+    assert definition.skills == []
+    assert agent.agent_context.skills == []
+    conversation._ensure_plugins_loaded()
+    try:
+        assert {skill.name for skill in conversation.agent.agent_context.skills} >= {
+            "exa-search",
+            "alphaxiv-paper-lookup",
+        }
+    finally:
+        conversation.close()
 
 
 @pytest.mark.parametrize(
@@ -412,7 +436,7 @@ def test_search_agent_loads_its_progressive_skills_and_inherits_reasoning_effort
             "search",
             None,
             {"terminal", "file_editor"},
-            {"exa-search", "alphaxiv-paper-lookup"},
+            set(),
         ),
     ],
 )
@@ -506,7 +530,6 @@ def test_core_senpai_prompts_do_not_assume_a_physical_ai_target():
         *(REPO_ROOT / "system_instructions").glob("*.md"),
         *(REPO_ROOT / ".agents" / "agents").glob("*.md"),
         *(REPO_ROOT / "plugins" / "senpai" / "skills").glob("**/*.md"),
-        REPO_ROOT / ".agents" / "skills" / "exa-search" / "SKILL.md",
     ]
     prompts = "\n".join(
         path.read_text(encoding="utf-8").lower() for path in prompt_paths
