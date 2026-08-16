@@ -184,13 +184,36 @@ The model receives:
 1. OpenHands' native base system prompt and tool schemas.
 2. One stable system suffix assembled from:
    - `system_instructions/SENPAI-HARNESS.md`; and
-   - the rendered advisor or student role charter; and
-   - the selected target-repository `program.md` under `# program.md - <path>`; and
-   - the rendered `system_instructions/SENPAI-LAUNCH-CONTEXT.md`, containing authoritative runtime and isolation rules after `program.md`. A blank `program_path` searches root `program.md` and one-level `*/program.md` paths and requires exactly one total match.
+   - the rendered advisor or student role charter, including its non-secret
+     runtime identity; and
+   - the selected target-repository `program.md` under
+     `# program.md - <path>`; and
+   - the rendered `system_instructions/SENPAI-LAUNCH-CONTEXT.md`, containing
+     authoritative runtime and isolation rules after `program.md`. A blank
+     `program_path` searches root
+     `program.md` and one-level `*/program.md` paths and requires exactly one
+     total match.
 3. Explicit project and Senpai skills through OpenHands skill context. Agent Skills bodies are loaded only when invoked. Repository `AGENTS.md`, `AGENT.md`, and `CLAUDE.md` instruction files are not loaded as project context.
-4. User turns containing optional human operator instructions, runtime identity, current state, and current UTC time.
+4. User turns containing optional human operator instructions, current state, and current UTC time.
 
-At process startup, the runner loads the harness, selected role, `program.md`, and authoritative launch context once into one immutable `SenpaiSystemInstructions` value. Its prompt is the stable system suffix for that process and is never reread, monitored, or refreshed during the agent session. Before constructing a model worker, the supervisor resolves the configured program path or fails with the missing or ambiguous candidates. Delegated children inherit the resolved repository-relative path and exact launch context, then build their own immutable value when their process starts. Optional operator instructions remain user context. Use GitHub Issues for live human direction. OpenHands includes the system suffix on every inference, and current time is rendered for every controller wake.
+Before constructing a model worker, the supervisor resolves the configured
+program path and renders the role's `{{VARIABLE}}` placeholders once from an
+explicit non-secret allowlist. A missing referenced value fails the launch;
+unrelated environment variables and credentials are never considered. The
+rendered role is persisted in role state and reused across worker restarts.
+
+At process startup, the runner loads the harness, rendered role, `program.md`,
+and authoritative launch context into one immutable
+`SenpaiSystemInstructions` value. Its prompt is the stable system suffix for
+that process and is never reread, monitored, or refreshed during the agent
+session. Delegated children inherit the rendered role snapshot, resolved
+repository-relative program path, and exact launch context, then build their
+own immutable value. Runtime identity and `program.md` are not duplicated in
+ordinary user messages. Optional operator instructions remain user context;
+use GitHub Issues for live human direction. OpenHands includes the system
+suffix on every inference, and current time is rendered for every controller
+wake. Operators must start fresh role state to apply a changed identity,
+program, or role charter.
 
 File-based subagents are discovered from `.agents/agents`. Skill bodies are not
 concatenated into agent definitions. The OpenHands fork's `main` branch applies

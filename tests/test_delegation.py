@@ -22,8 +22,15 @@ from senpai_agent.delegation import (
     render_child_prompt,
     run_child_process,
 )
-from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV
+from senpai_agent.launch_context import (
+    INSTRUCTIONS_ROOT,
+    LAUNCH_CONTEXT_ENV,
+    PLACEHOLDER,
+)
+from senpai_agent.openhands_runner import delegation_config as runner_delegation_config
 from senpai_agent.program_context import PROGRAM_PATH_ENV
+from senpai_agent.supervisor import prepare_system_context_environment
+from openhands_support import runtime_config
 
 
 def delegation_request(
@@ -170,6 +177,9 @@ def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path)
     assert fast.command[fast.command.index("--api-key-env") + 1] == (
         "ANTHROPIC_API_KEY"
     )
+    assert fast.command[fast.command.index("--role-file") + 1] == str(
+        config.role_file
+    )
     assert "anthropic/claude-opus-4-8" in smart.command
     assert smart.command[smart.command.index("--reasoning-effort") + 1] == "xhigh"
     assert "openai/gpt-5.6" in frontier.command
@@ -225,6 +235,53 @@ def test_child_environment_carries_the_resolved_program_path(tmp_path: Path):
         b64decode(child.environment[LAUNCH_CONTEXT_ENV], validate=True).decode()
         == "# Authoritative launch context\n\nSystem policy."
     )
+
+
+def test_child_reuses_the_supervisor_rendered_role_prompt(tmp_path: Path):
+    workspace = tmp_path / "target"
+    workspace.mkdir()
+    (workspace / "program.md").write_text("Research policy.\n")
+    prepared = prepare_system_context_environment(
+        "advisor",
+        tmp_path / "state",
+        {
+            "SENPAI_OPENHANDS_WORKSPACE": str(workspace),
+            "SENPAI_OPENHANDS_ROLE_FILE": str(INSTRUCTIONS_ROOT / "ADVISOR.md"),
+            "GH_REPO": "acme/widgets",
+            "ADVISOR_BRANCH": "research",
+            "WANDB_ENTITY": "acme",
+            "WANDB_PROJECT": "cfd",
+            "STUDENT_NAMES": "fern,frieren",
+            "GITHUB_TOKEN": "github-secret-sentinel",
+            "WANDB_API_KEY": "wandb-secret-sentinel",
+        },
+    )
+    role_file = Path(prepared["SENPAI_OPENHANDS_ROLE_FILE"])
+    parent = runtime_config(tmp_path, role_file=role_file)
+    delegated = runner_delegation_config(parent)
+    child = OpenHandsChildProcess(
+        delegated,
+        delegation_request(),
+    )
+
+    assert delegated.role_file == parent.role_file
+    assert delegated.harness_file == parent.harness_file
+    assert delegated.program_path == parent.instructions.program.program_path
+    assert delegated.launch_context == parent.instructions.launch
+    assert child.command[child.command.index("--role-file") + 1] == str(role_file)
+    assert child.command[child.command.index("--harness-file") + 1] == str(
+        parent.harness_file
+    )
+    assert (
+        child.environment[PROGRAM_PATH_ENV]
+        == parent.instructions.program.program_path
+    )
+    role_prompt = role_file.read_text()
+    assert "Role: `advisor`" in role_prompt
+    assert "Students: `fern,frieren`" in role_prompt
+    assert PLACEHOLDER.search(role_prompt) is None
+    assert "github-secret-sentinel" not in role_prompt
+    assert "wandb-secret-sentinel" not in role_prompt
 
 
 def test_child_environment_replaces_ambient_model_credentials(
