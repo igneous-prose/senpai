@@ -80,7 +80,7 @@ def controller(mailbox, turns, **overrides):
         mailbox=mailbox,
         turns=turns,
         conversation_id=overrides.pop("conversation_id", CONVERSATION_ID),
-        full_prompt="programme",
+        full_prompt=overrides.pop("full_prompt", "programme"),
         sleep=lambda _seconds: None,
         poll_interval_seconds=600,
         jitter_seconds=0,
@@ -145,9 +145,8 @@ def research_base_event(current_sha="def"):
     )
 
 
-def test_first_turn_combines_operator_instructions_and_runtime_identity():
+def test_first_turn_contains_operator_instructions_without_runtime_identity():
     prompt = _full_prompt(
-        "student",
         {
             "GH_REPO": "acme/widgets",
             "ADVISOR_BRANCH": "research",
@@ -168,14 +167,17 @@ def test_first_turn_combines_operator_instructions_and_runtime_identity():
     assert "# Student task" not in prompt
     assert "live-secret" not in prompt
     assert "# Additional operator instructions\n\nUse typed tools." in prompt
+    assert "# Runtime identity" not in prompt
+    assert "acme/widgets" not in prompt
+    assert "research" not in prompt
+    assert "acme/cfd" not in prompt
+    assert "fern" not in prompt
     assert "Authoritative launch context" not in prompt
-    assert "Role: student; repository: acme/widgets" in prompt
     assert "SPDX-" not in prompt
 
 
-def test_advisor_first_turn_contains_only_runtime_identity_without_launch_text():
+def test_first_turn_without_launch_instructions_has_no_user_level_identity():
     prompt = _full_prompt(
-        "advisor",
         {
             "GH_REPO": "acme/widgets",
             "ADVISOR_BRANCH": "research",
@@ -185,11 +187,18 @@ def test_advisor_first_turn_contains_only_runtime_identity_without_launch_text()
         },
     )
 
-    assert prompt == (
-        "# Runtime identity\n\n"
-        "Role: advisor; repository: acme/widgets; advisor branch: research; "
-        "W&B: acme/cfd. Students: fern,frieren."
-    )
+    assert prompt == ""
+
+
+def test_controller_accepts_an_empty_optional_launch_prompt():
+    prompt = controller(
+        Mailbox([]),
+        Turns(),
+        full_prompt="",
+    )._prompt((), continuing=False)
+
+    assert prompt.startswith("Current time (UTC):")
+    assert "Runtime identity" not in prompt
 
 
 def test_empty_mailbox_does_not_start_a_model_turn():

@@ -6,25 +6,59 @@
 
 import binascii
 import re
+from collections.abc import Mapping
 from base64 import b64decode
 from pathlib import Path
+from typing import Literal
 
 from senpai_agent.agent_markdown import read_agent_markdown, strip_spdx_header
 
 INSTRUCTIONS_ROOT = Path(__file__).resolve().parent.parent / "system_instructions"
 LAUNCH_CONTEXT_TEMPLATE = INSTRUCTIONS_ROOT / "SENPAI-LAUNCH-CONTEXT.md"
 LAUNCH_CONTEXT_ENV = "SENPAI_LAUNCH_CONTEXT_B64"
-PLACEHOLDER = re.compile(r"{{([A-Z_]+)}}")
+PLACEHOLDER = re.compile(r"{{([A-Z_][A-Z0-9_]*)}}")
+ROLE_TEMPLATE_VALUES = {
+    "advisor": (
+        "GH_REPO",
+        "ADVISOR_BRANCH",
+        "WANDB_ENTITY",
+        "WANDB_PROJECT",
+        "STUDENT_NAMES",
+    ),
+    "student": (
+        "GH_REPO",
+        "ADVISOR_BRANCH",
+        "WANDB_ENTITY",
+        "WANDB_PROJECT",
+        "STUDENT_NAME",
+    ),
+}
 
 
-def _render(path: Path, values: dict[str, str]) -> str:
+def _render(path: Path, values: Mapping[str, str]) -> str:
     template = read_agent_markdown(path)
     missing = sorted(set(PLACEHOLDER.findall(template)) - values.keys())
     if missing:
         raise ValueError(f"Missing {path.name} values: {', '.join(missing)}")
-    for key, value in values.items():
-        template = template.replace(f"{{{{{key}}}}}", value)
-    return template.strip()
+    return PLACEHOLDER.sub(lambda match: values[match.group(1)], template).strip()
+
+
+def render_role_prompt(
+    path: Path,
+    role: Literal["advisor", "student"],
+    env: Mapping[str, str],
+) -> str:
+    """Render one role charter from explicitly allowlisted non-secret values."""
+
+    values = {
+        "ROLE": role,
+        **{
+            name: env[name]
+            for name in ROLE_TEMPLATE_VALUES[role]
+            if env.get(name)
+        },
+    }
+    return _render(path, values)
 
 
 def render_launch_context(
