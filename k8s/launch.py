@@ -200,7 +200,7 @@ def validate_model_config(args: Args) -> None:
             args.advisor_reasoning_effort,
         )
     for name, (model, effort) in profiles.items():
-        model_provider(model)
+        provider = model_provider(model)
         if effort not in REASONING_EFFORTS:
             choices = ", ".join(sorted(REASONING_EFFORTS))
             sys.exit(f"ERROR: --{name}_reasoning_effort must be one of: {choices}")
@@ -212,7 +212,11 @@ def validate_model_config(args: Args) -> None:
                     f"unsupported for {model}"
                 )
             continue
-        if effort == "max" and not _supports_openai_pro(model):
+        if (
+            effort == "max"
+            and provider != "anthropic"
+            and not _supports_openai_pro(model)
+        ):
             sys.exit(
                 f"ERROR: --{name}_reasoning_effort={effort} is unsupported for {model}"
             )

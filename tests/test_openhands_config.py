@@ -459,6 +459,41 @@ def test_all_model_profiles_accept_independent_cli_model_and_effort_settings(
     )
 
 
+def test_anthropic_max_is_accepted_across_model_profiles(tmp_path: Path):
+    env = runtime_env(tmp_path)
+    env.update(
+        {
+            "SENPAI_OPENHANDS_MODEL": "anthropic/claude-fable-5",
+            "SENPAI_OPENHANDS_REASONING_EFFORT": "max",
+            "SENPAI_OPENHANDS_SMART_MODEL": "anthropic/claude-opus-5",
+            "SENPAI_OPENHANDS_SMART_REASONING_EFFORT": "max",
+            "SENPAI_OPENHANDS_FAST_MODEL": "anthropic/claude-sonnet-5",
+            "SENPAI_OPENHANDS_FAST_REASONING_EFFORT": "max",
+            "SENPAI_OPENHANDS_FRONTIER_MODEL": "anthropic/claude-fable-5",
+            "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": "max",
+        }
+    )
+
+    config = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
+
+    assert (config.model, config.reasoning_effort) == (
+        "anthropic/claude-fable-5",
+        "max",
+    )
+    assert (config.smart_model, config.smart_reasoning_effort) == (
+        "anthropic/claude-opus-5",
+        "max",
+    )
+    assert (config.fast_model, config.fast_reasoning_effort) == (
+        "anthropic/claude-sonnet-5",
+        "max",
+    )
+    assert (config.frontier_model, config.frontier_reasoning_effort) == (
+        "anthropic/claude-fable-5",
+        "max",
+    )
+
+
 @pytest.mark.parametrize(
     ("updates", "message"),
     [
@@ -469,10 +504,6 @@ def test_all_model_profiles_accept_independent_cli_model_and_effort_settings(
                 "SENPAI_OPENHANDS_REASONING_EFFORT": "ultra",
             },
             "unsupported",
-        ),
-        (
-            {"SENPAI_OPENHANDS_FRONTIER_MODEL": "anthropic/claude-opus-4-8"},
-            "unsupported for",
         ),
     ],
 )

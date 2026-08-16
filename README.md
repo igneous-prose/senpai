@@ -132,7 +132,11 @@ timeout_minutes: 30
 max_epochs: 50
 ```
 
-OpenHands uses LiteLLM, so LLM provider names are required as prefixes. 
+OpenHands uses LiteLLM, so LLM provider names are required as prefixes. For
+example, configure Claude Fable 5 as `anthropic/claude-fable-5`. Anthropic
+`reasoning_effort: max` on Claude Fable 5, Opus 5, and Sonnet 5 stays
+provider-native and is sent as `output_config.effort: max`; it does not enable
+OpenAI Pro mode.
 
 If using W&B Inference use `wandb/` provider as the provider. For example `wandb/zai-org/GLM-5.2`, SENPAI
 uses `WANDB_API_KEY` for auth.

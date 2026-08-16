@@ -291,6 +291,23 @@ def test_openai_ultra_launch_value_is_rejected():
         launch.validate_model_config(args)
 
 
+def test_launch_accepts_anthropic_max_for_every_model_profile():
+    args = launch_args(
+        advisor_model="anthropic/claude-fable-5",
+        advisor_reasoning_effort="max",
+        student_model="anthropic/claude-opus-5",
+        student_reasoning_effort="max",
+        smart_model="anthropic/claude-opus-5",
+        smart_reasoning_effort="max",
+        fast_model="anthropic/claude-sonnet-5",
+        fast_reasoning_effort="max",
+        frontier_model="anthropic/claude-fable-5",
+        frontier_reasoning_effort="max",
+    )
+
+    launch.validate_model_config(args)
+
+
 def test_wandb_gateway_is_rendered_for_every_role():
     model = "wandb/zai-org/GLM-5.2"
     args = launch_args(

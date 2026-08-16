@@ -251,11 +251,15 @@ def openhands_reasoning_effort(reasoning_effort: str, model: str) -> str:
                 f"model {model!r}; use 'high' or 'max'"
             )
         return reasoning_effort
-    if reasoning_effort == "max" and not supports_openai_pro:
+    if (
+        reasoning_effort == "max"
+        and provider != "anthropic"
+        and not supports_openai_pro
+    ):
         raise ValueError(
             f"reasoning effort {reasoning_effort!r} is unsupported for model "
             f"{model!r}; "
-            "use an openai/gpt-5.6 model or select a lower effort"
+            "use an anthropic model, an openai/gpt-5.6 model, or select a lower effort"
         )
     return reasoning_effort
 

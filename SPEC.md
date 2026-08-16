@@ -261,6 +261,11 @@ accepts `max`, which uses API `max` effort with Responses
 chain, but its complete local event log remains durable and is used to recover
 the latest response ID after restart.
 
+Claude Fable 5, Opus 5, and Sonnet 5 profiles pass `max` through as
+provider-native `output_config.effort: max` with adaptive thinking. Senpai
+never adds the OpenAI-only `reasoning.mode: pro` request body to Anthropic
+calls.
+
 Direct Anthropic models use native server-side compaction with a 200,000-input-
 token trigger. OpenHands persists the returned typed compaction block in the
 normal event log and replays it first in each later request, including after a
