@@ -1,33 +1,15 @@
 """Student-authored comments on current assignments."""
 
-from senpai_agent.github.workflow.errors import (
-    ReconciliationError,
-    WorkflowPreconditionError,
-)
-from senpai_agent.github.workflow.responses import MutationResult, PullRequestSnapshot
-from senpai_agent.github.workflow.text import marker_body, role_prefixed_comment
-from senpai_agent.github.workflow.validation import require_current_revision, require_open
+from senpai_agent.github.workflow.errors import ReconciliationError
+from senpai_agent.github.workflow.responses import MutationResult
+from senpai_agent.github.workflow.text import marker_body
 from senpai_agent.models import (
     AssignmentCommentRecord,
-    AssignmentRecord,
     render_assignment_comment_marker,
 )
 
 
-def _require_assigned_routing(
-    snapshot: PullRequestSnapshot,
-    assignment: AssignmentRecord,
-) -> None:
-    labels = set(snapshot.labels)
-    student_labels = {label for label in labels if label.startswith("student:")}
-    if student_labels != {f"student:{assignment.student}"}:
-        raise WorkflowPreconditionError(
-            "pull request must retain exactly its assigned student label"
-        )
-    if len(labels & {"status:wip", "status:review"}) != 1:
-        raise WorkflowPreconditionError(
-            "pull request must retain exactly one active assignment status"
-        )
+_COMMENT_STATUSES = frozenset({"status:wip", "status:review"})
 
 
 class StudentCommentMixin:
@@ -49,14 +31,13 @@ class StudentCommentMixin:
         if self._role != "student":
             raise PermissionError("post_assignment_comment requires a student workflow")
         with self._assignment_lifecycle_lock:
-            before, assignment = self._assigned_pull_at_head(
+            _before, assignment = self._routed_assignment_at_head(
                 number,
                 assignment_id=assignment_id,
+                revision_id=revision_id,
                 expected_head_sha=expected_head_sha,
+                allowed_statuses=_COMMENT_STATUSES,
             )
-            require_open(before)
-            require_current_revision(assignment, revision_id)
-            _require_assigned_routing(before, assignment)
             if assignment.student != student:
                 raise PermissionError(
                     f"assignment student {assignment.student!r} does not match this "
@@ -78,31 +59,23 @@ class StudentCommentMixin:
                 )
             )
             rendered = marker_body(marker, content)
-            existing = self._marker_comments(number, marker)
-            if len(existing) > 1:
-                raise ReconciliationError(
-                    f"GitHub contains multiple comments for marker {marker!r}"
-                )
-            desired_body = role_prefixed_comment(rendered, self._role)
-            if existing and existing[0].body != desired_body:
-                raise WorkflowPreconditionError(
-                    "comment_id already identifies a different message; "
-                    "use a new comment_id"
-                )
-
             changed, verified = self._upsert_marker_comment(
                 number,
                 marker=marker,
                 body=rendered,
+                conflict_message=(
+                    "comment_id already identifies a different message; "
+                    "use a new comment_id"
+                ),
+                exact_conflict=True,
             )
-            after, current_assignment = self._assigned_pull_at_head(
+            after, current_assignment = self._routed_assignment_at_head(
                 number,
                 assignment_id=assignment_id,
+                revision_id=revision_id,
                 expected_head_sha=expected_head_sha,
+                allowed_statuses=_COMMENT_STATUSES,
             )
-            require_open(after)
-            require_current_revision(current_assignment, revision_id)
-            _require_assigned_routing(after, current_assignment)
             if current_assignment.student != student:
                 raise ReconciliationError(
                     "assignment student changed while posting comment"

@@ -594,10 +594,24 @@ def test_fast_poll_defaults_to_ten_minute_level_trigger_reminders(monkeypatch):
     ]
 
 
-def test_unchanged_research_base_change_does_not_repeat_on_reminder_cadence(
+@pytest.mark.parametrize(
+    "event",
+    [
+        pytest.param(research_base_event(), id="research-base"),
+        pytest.param(
+            ControllerEvent(
+                kind="student_assignment_comment",
+                dedupe_key="student_assignment_comment:v2:message-1",
+                payload={"comment_id": "message-1"},
+            ),
+            id="student-comment",
+        ),
+    ],
+)
+def test_edge_triggered_event_does_not_repeat_on_reminder_cadence(
     monkeypatch,
+    event,
 ):
-    event = research_base_event()
     clock = [0.0]
     monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
 
@@ -624,38 +638,48 @@ def test_unchanged_research_base_change_does_not_repeat_on_reminder_cadence(
     ]
 
 
-def test_student_assignment_comment_does_not_repeat_on_reminder_cadence(
-    monkeypatch,
-):
+def test_student_assignment_comment_is_not_replayed_after_restart(tmp_path: Path):
     event = ControllerEvent(
         kind="student_assignment_comment",
-        dedupe_key="student_assignment_comment:v1:message-1",
-        payload={"comment_id": "message-1"},
+        dedupe_key="student_assignment_comment:v2:message-1",
+        payload={"comment_id": "message-1", "message": "STUDENT: Running."},
     )
-    clock = [0.0]
-    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+    inbox_path = tmp_path / "inbox.sqlite3"
 
-    class PersistentMailbox(Mailbox):
-        def poll(self):
-            self.calls += 1
-            return (event,)
+    controller(
+        Mailbox([(event,), (event,)]),
+        Turns(),
+        inbox=PersistentInbox(inbox_path),
+    ).run(max_cycles=1)
+    restarted_turns = Turns()
 
-    turns = Turns()
-    controller_module.Controller(
-        role="advisor",
-        mailbox=PersistentMailbox([]),
-        turns=turns,
-        conversation_id=CONVERSATION_ID,
-        full_prompt="programme",
-        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
-        poll_interval_seconds=600,
-        jitter_seconds=0,
-        event_reminder_seconds=600,
-    ).run(max_cycles=3)
+    controller(
+        Mailbox([(event,)]),
+        restarted_turns,
+        inbox=PersistentInbox(inbox_path),
+    ).run(max_cycles=1)
 
-    assert [call[2] for call in turns.calls] == [
-        frozenset({event.dedupe_key}),
-    ]
+    assert restarted_turns.calls == []
+
+
+def test_visible_event_identity_cannot_change_payload_between_polls(tmp_path: Path):
+    first = ControllerEvent(
+        kind="student_assignment_comment",
+        dedupe_key="student_assignment_comment:v2:message-1",
+        payload={"comment_id": "message-1", "message": "STUDENT: Running."},
+    )
+    edited = ControllerEvent(
+        kind=first.kind,
+        dedupe_key=first.dedupe_key,
+        payload={"comment_id": "message-1", "message": "STUDENT: Changed."},
+    )
+
+    with pytest.raises(RuntimeError, match="reused with a different payload"):
+        controller(
+            Mailbox([(first,), (edited,)]),
+            Turns(),
+            inbox=PersistentInbox(tmp_path / "inbox.sqlite3"),
+        ).run(max_cycles=1)
 
 
 def test_changed_research_base_sha_wakes_immediately():

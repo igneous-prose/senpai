@@ -481,6 +481,13 @@ class Controller:
                 flush=True,
             )
             return
+        for event in polled:
+            if event.kind == "student_assignment_comment":
+                self.inbox.require_event_payload(
+                    self.conversation_id,
+                    event.dedupe_key,
+                    event.to_prompt(),
+                )
         events = self._new_events(
             polled,
             allow_reminders=allow_reminders,

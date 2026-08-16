@@ -100,6 +100,14 @@ def test_student_charter_requires_typed_workflow_and_training_tools():
     assert "`cancel_training`" in instructions
 
 
+def test_advisor_charter_explains_student_comment_events():
+    instructions = (ROOT / "system_instructions" / "ADVISOR.md").read_text()
+
+    assert "`student_assignment_comment` event" in instructions
+    assert "retain an earlier revision" in instructions
+    assert "reply on the current revision with `send_assignment_feedback`" in instructions
+
+
 def test_project_instruction_files_are_not_loaded_but_explicit_skills_are(
     tmp_path: Path,
 ):

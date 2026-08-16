@@ -29,7 +29,8 @@ from .values import (
     result_matches_assignment,
     versioned_event,
 )
-from .communications import advisor_communication_events
+from .issues import human_issue_events
+from .student_comments import student_assignment_comment_events
 
 if TYPE_CHECKING:
     from .core import GitHubMailbox
@@ -136,7 +137,8 @@ def advisor_events(
             )
 
     events.extend(_research_base_events(mailbox, active_assignments))
-    events.extend(advisor_communication_events(mailbox, active_assignments, issues))
+    events.extend(student_assignment_comment_events(mailbox, active_assignments))
+    events.extend(human_issue_events(mailbox, issues))
     return tuple(events)
 
 
@@ -230,12 +232,9 @@ def has_research_base_acceptance(
     head_sha: str,
     current_base_sha: str,
 ) -> bool:
-    comments_url = pull.get("comments_url")
-    if not comments_url:
-        return False
     try:
         actor = mailbox._github.actor()
-        comments = mailbox._github.objects(f"{comments_url}?per_page=100")
+        comments = mailbox._pull_comments(int(pull["number"]))
     except (GitHubReadError, TypeError) as error:
         print(
             "SENPAI_RESEARCH_BASE_ACCEPTANCE_READ_ERROR "

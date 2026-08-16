@@ -1,7 +1,9 @@
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from openhands.sdk.conversation import ConversationExecutionStatus
 
 from senpai_agent.git_workflow import PushResult
 from senpai_agent.github.tools import (
@@ -26,7 +28,7 @@ from senpai_agent.github.tools import (
     SendAssignmentFeedbackAction,
     SendAssignmentFeedbackTool,
 )
-from senpai_agent.github.workflow import MutationResult
+from senpai_agent.github.workflow import MutationResult, StaleAssignmentRevisionError
 from senpai_agent.models import DispositionRecord, render_disposition_marker
 
 
@@ -140,6 +142,34 @@ def test_student_comment_requires_configured_student_before_mutation(tmp_path: P
         )
 
     assert workflow.calls == []
+
+
+def test_stale_student_comment_finishes_the_obsolete_conversation(tmp_path: Path):
+    class StaleWorkflow(RecordingWorkflow):
+        def post_assignment_comment(self, number, **kwargs):
+            self.calls.append(("post_assignment_comment", number, kwargs))
+            raise StaleAssignmentRevisionError(
+                "assignment revision is 'revision-2', expected 'revision-1'"
+            )
+
+    workflow = StaleWorkflow()
+    tool = PostAssignmentCommentTool.create(student_runtime(workflow, tmp_path))[0]
+    conversation = SimpleNamespace(
+        state=SimpleNamespace(execution_status=ConversationExecutionStatus.RUNNING)
+    )
+
+    with pytest.raises(ValueError, match="controller can resume"):
+        tool(
+            PostAssignmentCommentAction(
+                assignment=assignment(),
+                comment_id="stale-progress",
+                comment="This turn is obsolete.",
+            ),
+            conversation,
+        )
+
+    assert conversation.state.execution_status is ConversationExecutionStatus.FINISHED
+    assert [call[0] for call in workflow.calls] == ["post_assignment_comment"]
 
 
 def test_create_assignment_uses_the_created_branch_head_for_the_pr(

@@ -90,7 +90,7 @@ class GitHubWorkflowToolSet(
             if not runtime.student_names:
                 raise ValueError("advisor GitHub tools require configured student names")
         else:
-            runtime.human_issue_audience()
+            runtime.current_student()
 
         common = (
             *GetPRsTool.create(

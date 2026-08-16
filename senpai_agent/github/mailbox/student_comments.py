@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from senpai_agent.github.http import GitHubReadError
@@ -27,75 +28,95 @@ if TYPE_CHECKING:
     from .core import GitHubMailbox
 
 
+@dataclass(frozen=True, slots=True)
+class _CommentCandidate:
+    event: ControllerEvent
+    content_digest: str
+    created_at: str
+    github_comment_id: int
+
+
 def student_assignment_comment_events(
     mailbox: GitHubMailbox,
     assignments: Sequence[tuple[Mapping[str, object], AssignmentRecord]],
 ) -> list[ControllerEvent]:
     """Wake the advisor for trusted typed messages from assigned students."""
 
-    assignments = tuple(
-        (pull, assignment)
-        for pull, assignment in assignments
-        if pull.get("comments_url")
-    )
     if not assignments:
         return []
     try:
         actor = mailbox._github.actor()
-    except (GitHubReadError, TypeError) as error:
+    except GitHubReadError as error:
         _report_read_error(f"actor {type(error).__name__}: {error}")
         return []
 
-    events_by_key: dict[str, ControllerEvent] = {}
+    candidates_by_key: dict[str, _CommentCandidate] = {}
+    conflicted_keys: set[str] = set()
     for pull, assignment in assignments:
         number = int(pull["number"])
         try:
-            comments = mailbox._github.objects(
-                f"{pull['comments_url']}?per_page=100"
-            )
-        except (GitHubReadError, TypeError) as error:
+            comments = mailbox._pull_comments(number)
+        except GitHubReadError as error:
             _report_read_error(f"pr={number} {type(error).__name__}: {error}")
             continue
         for comment in comments:
-            event = _comment_event(
+            candidate = _comment_candidate(
                 mailbox,
                 pull,
                 assignment,
                 comment,
                 actor=actor,
             )
-            if event is None:
+            if candidate is None:
                 continue
-            previous = events_by_key.get(event.dedupe_key)
-            if previous is None or int(event.payload["github_comment_id"]) < int(
-                previous.payload["github_comment_id"]
+            event = candidate.event
+            if event.dedupe_key in conflicted_keys:
+                continue
+            previous = candidates_by_key.get(event.dedupe_key)
+            if (
+                previous is not None
+                and previous.content_digest != candidate.content_digest
             ):
-                events_by_key[event.dedupe_key] = event
+                candidates_by_key.pop(event.dedupe_key)
+                conflicted_keys.add(event.dedupe_key)
+                _report_read_error(
+                    "conflicting bodies for assignment comment identity "
+                    f"pr={number} comment_id={event.payload['comment_id']!r}"
+                )
+                continue
+            if (
+                previous is None
+                or candidate.github_comment_id < previous.github_comment_id
+            ):
+                candidates_by_key[event.dedupe_key] = candidate
 
-    return sorted(
-        events_by_key.values(),
-        key=lambda event: (
-            github_datetime(str(event.payload["created_at"])),
-            int(event.payload["github_comment_id"]),
-        ),
-    )
+    return [
+        candidate.event
+        for candidate in sorted(
+            candidates_by_key.values(),
+            key=lambda candidate: (
+                github_datetime(candidate.created_at),
+                candidate.github_comment_id,
+            ),
+        )
+    ]
 
 
-def _comment_event(
+def _comment_candidate(
     mailbox: GitHubMailbox,
     pull: Mapping[str, object],
     assignment: AssignmentRecord,
     comment: Mapping[str, object],
     *,
     actor: str,
-) -> ControllerEvent | None:
+) -> _CommentCandidate | None:
     try:
         author = str(object_value(comment["user"])["login"])
         body = str(comment.get("body") or "")
         records = parse_assignment_comment_markers(body)
         github_comment_id = int(comment["id"])
-        comment_url = str(comment["html_url"])
         created_at = str(comment["created_at"])
+        updated_at = str(comment["updated_at"])
     except (KeyError, TypeError, ValueError):
         return None
     if author.casefold() != actor.casefold() or len(records) != 1:
@@ -106,7 +127,6 @@ def _comment_event(
         record.repo != mailbox.repo
         or record.pr_number != number
         or record.assignment_id != assignment.assignment_id
-        or record.revision_id != assignment.revision_id
         or record.student != assignment.student
         or authoritative_marker_line(body)
         != render_assignment_comment_marker(record)
@@ -115,32 +135,36 @@ def _comment_event(
     message = "\n".join(body.splitlines()[1:]).strip()
     if not message:
         return None
+    if updated_at != created_at:
+        _report_read_error(
+            "edited assignment comment rejected "
+            f"pr={number} comment_id={record.comment_id!r} "
+            f"github_comment_id={github_comment_id}"
+        )
+        return None
+    content_digest = payload_digest({"body": body})
     payload = {
         "number": number,
         "pr_url": str(pull["html_url"]),
-        "comment_url": comment_url,
-        "github_comment_id": github_comment_id,
         "comment_id": record.comment_id,
         "assignment_id": record.assignment_id,
         "revision_id": record.revision_id,
         "student": record.student,
         "message": bounded_text(message, limit=FEEDBACK_EXCERPT_BYTES),
-        "created_at": created_at,
+        "content_digest": content_digest,
     }
-    semantic_payload = {
-        "number": number,
-        "assignment_id": record.assignment_id,
-        "revision_id": record.revision_id,
-        "student": record.student,
-        "comment_id": record.comment_id,
-        "message": message,
-    }
-    return ControllerEvent(
-        kind="student_assignment_comment",
-        dedupe_key=(
-            "student_assignment_comment:v1:" + payload_digest(semantic_payload)
+    return _CommentCandidate(
+        event=ControllerEvent(
+            kind="student_assignment_comment",
+            dedupe_key=(
+                "student_assignment_comment:v2:"
+                + payload_digest(record.model_dump(mode="json"))
+            ),
+            payload=payload,
         ),
-        payload=payload,
+        content_digest=content_digest,
+        created_at=created_at,
+        github_comment_id=github_comment_id,
     )
 
 

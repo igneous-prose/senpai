@@ -336,7 +336,8 @@ or review assignment, revision, and PR head before posting an immutable typed
 comment. Exact replay is a no-op; changed text uses a new `comment_id`. The
 operation does not push or change the PR head, draft state, or labels, and its
 trusted marker wakes the advisor without entering the student's own feedback
-inbox.
+inbox. A comment that races with a revision request retains its original
+revision identity and is still delivered.
 
 Terminal student publication happens only inside `submit_experiment_result`, which
 derives the PR and proposed local head from the structured result, then validates
