@@ -215,7 +215,10 @@ suffix on every inference, and current time is rendered for every controller
 wake. Operators must start fresh role state to apply a changed identity,
 program, or role charter.
 
-File-based subagents are discovered from `.agents/agents`. Skill bodies are not
+File-based subagents are discovered from `.agents/agents`. Live advisor and
+student skills come only from `plugins/senpai/skills`; `.agents/skills` is for
+human operators and Senpai developers and is not installed into pods. Target
+repositories may still supply their own project skills. Skill bodies are not
 concatenated into agent definitions. The OpenHands fork's `main` branch applies
 each agent definition's `reasoning_effort` override after resolving its
 inherited LLM or stored model profile.
@@ -687,7 +690,8 @@ Removed:
 
 Retained intentionally:
 
-- Agent skills and their model/effort metadata under `.agents`;
+- runtime skills and their model/effort metadata in the Senpai plugin;
+- human and developer guides under `.agents/skills`, outside pod context;
 - OpenHands Browser, task tracker, Think, and the high-quality default
   condenser for providers not using stored OpenAI Responses continuation or
   Anthropic native compaction;
