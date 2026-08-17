@@ -1228,6 +1228,10 @@ async def arun_conversation(
                 timeout=max(0, deadline - time.monotonic()),
             )
             return
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                raise
+            return
         except TimeoutError:
             if task.done():
                 await task

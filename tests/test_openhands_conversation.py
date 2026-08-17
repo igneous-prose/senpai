@@ -1185,6 +1185,31 @@ def test_turn_activity_renews_the_inactivity_deadline():
     assert not interrupted
 
 
+def test_startup_interrupt_is_a_normal_conversation_end():
+    class Conversation:
+        task = None
+
+        async def arun(self):
+            self.task = runner.asyncio.current_task()
+            await runner.asyncio.Event().wait()
+
+        def interrupt(self):
+            assert self.task is not None
+            self.task.cancel()
+
+    conversation = Conversation()
+
+    runner.asyncio.run(
+        runner.arun_conversation(
+            conversation,
+            1,
+            started=conversation.interrupt,
+        )
+    )
+
+    assert conversation.task.cancelled()
+
+
 def test_steering_resumes_the_same_conversation_object():
     class Conversation:
         def __init__(self):

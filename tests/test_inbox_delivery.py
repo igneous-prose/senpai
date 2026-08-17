@@ -10,9 +10,13 @@ import pytest
 from openhands.sdk.event import ActionEvent, ObservationEvent
 
 from senpai_agent.inbox import (
+    MAX_EVENT_BYTES_PER_TURN,
+    MAX_EVENTS_PER_TURN,
+    MAX_INFERENCE_ATTEMPTS_PER_TURN,
     QUEUE_PRIORITY,
     STEER_PRIORITY,
     DeliveryState,
+    InboxTurnQuarantined,
     PersistentInbox,
     deliver_turn_messages,
     turn_has_finished_response,
@@ -270,7 +274,7 @@ def test_new_events_wait_behind_an_unresolved_delivery(tmp_path: Path):
     assert inbox.pending_count(CONVERSATION_ID) == 1
 
 
-def test_steering_joins_the_active_turn_once(tmp_path: Path):
+def test_human_steering_joins_the_active_turn_and_resets_its_budget(tmp_path: Path):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     inbox.enqueue(CONVERSATION_ID, "event:first", "first")
     active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
@@ -281,12 +285,21 @@ def test_steering_joins_the_active_turn_once(tmp_path: Path):
         inbox.record_inference_attempt(active.turn_id)
     assert inbox.terminal_recovery_due(active.turn_id, max_attempts=3)
 
-    steered = inbox.steer(CONVERSATION_ID, "human:1", "change direction")
-    repeated = inbox.steer(CONVERSATION_ID, "human:1", "change direction")
+    steered = inbox.steer(
+        CONVERSATION_ID,
+        "human:1",
+        "change direction",
+        priority=STEER_PRIORITY,
+    )
+    repeated = inbox.steer(
+        CONVERSATION_ID,
+        "human:1",
+        "change direction",
+        priority=STEER_PRIORITY,
+    )
 
-    assert steered is not None and repeated is not None
-    assert steered.turn_id == repeated.turn_id == active.turn_id
-    assert [event.event_key for event in steered.events] == ["event:first", "human:1"]
+    assert steered == repeated == (active.turn_id, DeliveryState.PENDING)
+    assert inbox.turn(active.turn_id).event_keys == ("event:first", "human:1")
     assert not inbox.terminal_recovery_due(active.turn_id, max_attempts=3)
     deliver_turn_messages(conversation, inbox, active.turn_id)
     assert [message for message, _sender in conversation.sent] == [
@@ -298,7 +311,39 @@ def test_steering_joins_the_active_turn_once(tmp_path: Path):
     assert len(conversation.sent) == 3
 
 
-def test_only_a_new_steer_reopens_the_same_quarantined_turn(tmp_path: Path):
+def test_steer_enqueue_and_attachment_roll_back_together(tmp_path: Path):
+    path = tmp_path / "inbox.sqlite3"
+    inbox = PersistentInbox(path)
+    inbox.enqueue(CONVERSATION_ID, "event:first", "first")
+    active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert active is not None
+    with sqlite3.connect(path) as database:
+        database.execute(
+            """
+            CREATE TRIGGER reject_steer_attachment
+            BEFORE UPDATE OF turn_id ON inbox_messages
+            WHEN NEW.event_key = 'human:1'
+            BEGIN
+                SELECT RAISE(ABORT, 'attachment failed');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="attachment failed"):
+        inbox.steer(
+            CONVERSATION_ID,
+            "human:1",
+            "change direction",
+            priority=STEER_PRIORITY,
+        )
+
+    assert inbox.pending_count(CONVERSATION_ID) == 0
+
+
+def test_only_a_new_human_steer_reopens_the_same_quarantined_turn(
+    tmp_path: Path,
+    capsys,
+):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     inbox.enqueue(CONVERSATION_ID, "event:first", "first")
     active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
@@ -309,21 +354,151 @@ def test_only_a_new_steer_reopens_the_same_quarantined_turn(tmp_path: Path):
 
     duplicate = inbox.steer(CONVERSATION_ID, "event:first", "first")
 
-    assert duplicate is not None
-    assert duplicate.turn_id == active.turn_id
-    assert duplicate.quarantine_reason == "recovery budget exhausted"
+    assert duplicate is None
+    assert inbox.turn(active.turn_id).quarantine_reason == "recovery budget exhausted"
     assert inbox.ready_conversation_ids() == ()
 
-    reopened = inbox.steer(CONVERSATION_ID, "human:1", "change direction")
+    queued = inbox.steer(
+        CONVERSATION_ID,
+        "feedback:1",
+        "try again",
+        priority=QUEUE_PRIORITY,
+    )
 
-    assert reopened is not None
-    assert reopened.turn_id == active.turn_id
-    assert reopened.quarantine_reason is None
-    assert [event.event_key for event in reopened.events] == [
+    assert queued is None
+    assert inbox.turn(active.turn_id).quarantine_reason == "recovery budget exhausted"
+    assert inbox.pending_count(CONVERSATION_ID) == 1
+
+    reopened = inbox.steer(
+        CONVERSATION_ID,
+        "human:1",
+        "change direction",
+        priority=STEER_PRIORITY,
+    )
+
+    assert reopened == (active.turn_id, DeliveryState.PENDING)
+    reopened_turn = inbox.turn(active.turn_id)
+    assert reopened_turn.quarantine_reason is None
+    assert [event.event_key for event in reopened_turn.events] == [
         "event:first",
         "human:1",
     ]
     assert not inbox.terminal_recovery_due(active.turn_id, max_attempts=1)
+    assert inbox.ready_conversation_ids() == (str(CONVERSATION_ID),)
+    assert (
+        "SENPAI_TURN_REOPENED "
+        f"conversation_id={CONVERSATION_ID} turn_id={active.turn_id} "
+        "event_key=human:1"
+    ) in capsys.readouterr().err
+
+
+def test_queued_feedback_does_not_refill_an_active_turn_budget(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:first", "first")
+    active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert active is not None
+    deliver_turn_messages(Conversation(), inbox, active.turn_id)
+    inbox.record_inference_attempt(active.turn_id)
+
+    attached = inbox.steer(
+        CONVERSATION_ID,
+        "feedback:1",
+        "try again",
+        priority=QUEUE_PRIORITY,
+    )
+
+    assert attached is not None
+    assert inbox.terminal_recovery_due(active.turn_id, max_attempts=1)
+
+
+def test_steer_overflow_waits_for_the_next_turn_and_recovery_stays_bounded(
+    tmp_path: Path,
+):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:0", "initial")
+    active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert active is not None
+
+    for index in range(1, MAX_EVENTS_PER_TURN):
+        assert inbox.steer(
+            CONVERSATION_ID,
+            f"feedback:{index}",
+            f"feedback {index}",
+            priority=QUEUE_PRIORITY,
+        ) is not None
+    assert inbox.steer(
+        CONVERSATION_ID,
+        "feedback:overflow",
+        "overflow",
+        priority=QUEUE_PRIORITY,
+    ) is None
+
+    bounded = inbox.turn(active.turn_id)
+    assert len(bounded.events) == MAX_EVENTS_PER_TURN
+    assert inbox.pending_count(CONVERSATION_ID) == 1
+    deliver_turn_messages(Conversation(), inbox, active.turn_id)
+
+    recovery = inbox.reset_turn(active.turn_id, "recovery prompt")
+
+    assert len(recovery.events) == MAX_EVENTS_PER_TURN
+    assert inbox.pending_count(CONVERSATION_ID) == 1
+    deliver_turn_messages(Conversation(), inbox, recovery.turn_id)
+    inbox.record_processed(recovery.turn_id)
+    inbox.acknowledge(recovery.turn_id)
+    overflow = inbox.next_turn(CONVERSATION_ID, "next prompt")
+    assert overflow is not None
+    assert overflow.event_keys == ("feedback:overflow",)
+
+
+def test_steer_overflow_respects_the_turn_byte_limit(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    initial = "x" * (MAX_EVENT_BYTES_PER_TURN - 4)
+    inbox.enqueue(CONVERSATION_ID, "event:initial", initial)
+    active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert active is not None
+
+    assert inbox.steer(
+        CONVERSATION_ID,
+        "feedback:overflow",
+        "12345",
+        priority=QUEUE_PRIORITY,
+    ) is None
+
+    assert active.event_keys == ("event:initial",)
+    assert inbox.pending_count(CONVERSATION_ID) == 1
+
+
+def test_human_steering_can_join_and_reopen_a_full_turn(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:0", "initial")
+    active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert active is not None
+    for index in range(1, MAX_EVENTS_PER_TURN):
+        assert inbox.steer(
+            CONVERSATION_ID,
+            f"feedback:{index}",
+            f"feedback {index}",
+            priority=QUEUE_PRIORITY,
+        ) is not None
+
+    attached = inbox.steer(
+        CONVERSATION_ID,
+        "human:active",
+        "interrupt the full turn",
+        priority=STEER_PRIORITY,
+    )
+    assert attached == (active.turn_id, DeliveryState.PENDING)
+
+    inbox.quarantine(active.turn_id, "recovery budget exhausted")
+    reopened = inbox.steer(
+        CONVERSATION_ID,
+        "human:quarantined",
+        "reopen the full turn",
+        priority=STEER_PRIORITY,
+    )
+
+    assert reopened == (active.turn_id, DeliveryState.PENDING)
+    assert inbox.turn(active.turn_id).quarantine_reason is None
     assert inbox.ready_conversation_ids() == (str(CONVERSATION_ID),)
 
 
@@ -399,6 +574,74 @@ def test_terminal_recovery_policy_survives_restart_and_bounds_attempts(
         turn.turn_id,
         max_attempts=3,
     )
+
+
+def test_progressing_retries_have_a_durable_attempt_backstop(tmp_path: Path):
+    path = tmp_path / "inbox.sqlite3"
+    inbox = PersistentInbox(path)
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    deliver_turn_messages(Conversation(), inbox, turn.turn_id)
+
+    for attempt in range(MAX_INFERENCE_ATTEMPTS_PER_TURN):
+        restarted = PersistentInbox(path)
+        restarted.record_inference_attempt(turn.turn_id)
+        restarted.record_progress(turn.turn_id, f"tool:{attempt}")
+        restarted.close()
+
+    assert PersistentInbox(path).terminal_recovery_due(
+        turn.turn_id,
+        max_attempts=3,
+    )
+
+    recovery = inbox.recover_turn(
+        turn.turn_id,
+        "recovery prompt",
+        max_generations=1,
+    )
+    deliver_turn_messages(Conversation(), inbox, recovery.turn_id)
+    for attempt in range(MAX_INFERENCE_ATTEMPTS_PER_TURN):
+        inbox.record_inference_attempt(recovery.turn_id)
+        inbox.record_progress(recovery.turn_id, f"recovery-tool:{attempt}")
+
+    assert inbox.terminal_recovery_due(recovery.turn_id, max_attempts=3)
+    with pytest.raises(InboxTurnQuarantined):
+        inbox.recover_turn(
+            recovery.turn_id,
+            "exhausted recovery",
+            max_generations=1,
+        )
+
+
+def test_one_productive_inference_run_has_no_activity_cap(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    deliver_turn_messages(Conversation(), inbox, turn.turn_id)
+    inbox.record_inference_attempt(turn.turn_id)
+
+    for event in range(MAX_INFERENCE_ATTEMPTS_PER_TURN * 2):
+        inbox.record_progress(turn.turn_id, f"tool:{event}")
+
+    assert not inbox.terminal_recovery_due(turn.turn_id, max_attempts=3)
+
+
+def test_inference_attempt_backstop_migrates_existing_inboxes(tmp_path: Path):
+    path = tmp_path / "inbox.sqlite3"
+    PersistentInbox(path).close()
+    with sqlite3.connect(path) as database:
+        database.execute("ALTER TABLE inbox_turns DROP COLUMN inference_attempts")
+
+    inbox = PersistentInbox(path)
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    deliver_turn_messages(Conversation(), inbox, turn.turn_id)
+    inbox.record_inference_attempt(turn.turn_id)
+
+    assert not inbox.terminal_recovery_due(turn.turn_id, max_attempts=3)
 
 
 def test_ordinary_tool_action_is_not_a_finished_response(tmp_path: Path):

@@ -22,7 +22,6 @@ from senpai_agent.delegation import (
     render_child_prompt,
     run_child_process,
 )
-from senpai_agent.hooks import QUEUED_FEEDBACK_ENV
 from senpai_agent.launch_context import (
     INSTRUCTIONS_ROOT,
     LAUNCH_CONTEXT_ENV,
@@ -296,7 +295,6 @@ def test_child_environment_replaces_ambient_model_credentials(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "stale-anthropic-key")
     monkeypatch.setenv("OPENAI_API_KEY", "stale-openai-key")
     monkeypatch.setenv("GEMINI_API_KEY", "unconfigured-model-key")
-    monkeypatch.setenv(QUEUED_FEEDBACK_ENV, "1")
 
     environment = OpenHandsChildProcess(
         delegation_config(tmp_path),
@@ -306,7 +304,6 @@ def test_child_environment_replaces_ambient_model_credentials(
     assert environment["ANTHROPIC_API_KEY"] == "anthropic-secret"
     assert environment["OPENAI_API_KEY"] == "openai-secret"
     assert "GEMINI_API_KEY" not in environment
-    assert QUEUED_FEEDBACK_ENV not in environment
 
 
 def test_child_process_never_receives_the_github_write_token(

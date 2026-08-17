@@ -52,6 +52,18 @@ def feedback_event(revision_id="revision-2"):
     )
 
 
+def human_issue_event():
+    return ControllerEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:v2:23:702:abc",
+        payload={
+            "number": 23,
+            "human_message_id": 702,
+            "message": "Stop and inspect the active experiment.",
+        },
+    )
+
+
 def advisor_event(number=17):
     return ControllerEvent(
         kind="review_ready",
@@ -122,16 +134,17 @@ def test_running_student_receives_only_feedback_bound_to_its_conversation(
         assert store.pending() == []
 
 
-def test_observed_feedback_is_not_reported_delivered_until_the_event_pump_sends_it(
+@pytest.mark.parametrize("incoming", [feedback_event(), human_issue_event()])
+def test_observed_student_input_routes_to_the_active_pump_until_it_is_delivered(
     tmp_path: Path,
     monkeypatch,
+    incoming: ControllerEvent,
 ):
     state_dir = tmp_path / "state"
     registry = AssignmentConversationRegistry(
         state_dir / "student-conversations.json"
     )
     conversation_id = registry.for_assignment("assignment-17", "revision-2")
-    feedback = feedback_event()
     store_path = state_dir / "student-events.sqlite3"
 
     def run_openhands(_prompt, _config):
@@ -148,7 +161,7 @@ def test_observed_feedback_is_not_reported_delivered_until_the_event_pump_sends_
     result = OpenHandsTurnRunner(
         Config("student", state_dir, conversation_id),
         full_prompt="student initial controller context",
-        github_mailbox=Mailbox((feedback,)),
+        github_mailbox=Mailbox((incoming,)),
         active_poll_interval_seconds=0.001,
     ).run(
         "student turn",
@@ -158,9 +171,12 @@ def test_observed_feedback_is_not_reported_delivered_until_the_event_pump_sends_
 
     assert result.delivered_event_keys == frozenset()
     with AdvisorEventStore(store_path) as store:
-        assert [event.dedupe_key for event in store.pending()] == [
-            feedback.dedupe_key
-        ]
+        pending = store.pending()
+        assert [event.dedupe_key for event in pending] == [incoming.dedupe_key]
+        assert pending[0].kind == incoming.kind
+        assert pending[0].payload["parent_conversation_id"] == str(
+            conversation_id
+        )
 
 
 def test_prompt_delivery_suppresses_a_late_duplicate_watcher_event(

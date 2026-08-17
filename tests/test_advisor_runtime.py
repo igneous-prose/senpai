@@ -1,5 +1,4 @@
 import json
-import os
 import threading
 import time
 from datetime import UTC, datetime
@@ -20,7 +19,7 @@ from senpai_agent.advisor import (
     deliver_pending_events,
 )
 from senpai_agent.delegation import AgentStatusAction, AgentStatusObservation
-from senpai_agent.hooks import QUEUED_FEEDBACK_ENV
+from senpai_agent.hooks import queued_feedback_marker
 from senpai_agent.inbox import PersistentInbox, deliver_turn_messages
 from senpai_agent.mailbox import ControllerEvent
 
@@ -131,6 +130,25 @@ def test_advisor_conversation_id_is_stable_and_persisted(tmp_path: Path):
 
     assert first == second
     assert (tmp_path / "advisor-conversation-id").read_text() == f"{first}\n"
+
+
+def test_advisor_conversation_id_write_preserves_the_previous_value_on_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    original = advisor_conversation_id(tmp_path)
+
+    def fail_replace(_source: Path, _target: Path) -> None:
+        raise OSError("simulated crash before rename")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated crash"):
+        advisor_conversation_id(
+            tmp_path,
+            "00000000-0000-0000-0000-000000000099",
+        )
+
+    assert (tmp_path / "advisor-conversation-id").read_text() == f"{original}\n"
 
 
 def test_event_store_deduplicates_and_survives_reopen(tmp_path: Path):
@@ -367,6 +385,19 @@ def test_event_pump_queues_into_the_controller_inbox_without_mid_turn_injection(
         assert next_turn.acknowledgement_keys == (event.dedupe_key,)
 
 
+def test_event_pump_accepts_an_in_memory_inbox(tmp_path: Path):
+    with (
+        AdvisorEventStore(tmp_path / "events.sqlite3") as store,
+        PersistentInbox() as inbox,
+    ):
+        AdvisorEventPump(
+            store,
+            SteeringConversation(),
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+        )
+
+
 def test_human_issue_steers_the_active_turn_after_the_tool_boundary(tmp_path: Path):
     event = AdvisorEvent(
         kind="human_issue",
@@ -402,7 +433,6 @@ def test_human_issue_steers_the_active_turn_after_the_tool_boundary(tmp_path: Pa
 
 def test_student_feedback_waits_for_the_step_and_marks_a_clean_unwind(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ):
     event = AdvisorEvent(
         kind="student_pr_feedback",
@@ -410,6 +440,7 @@ def test_student_feedback_waits_for_the_step_and_marks_a_clean_unwind(
         payload={"message": "Try the narrower experiment next."},
     )
     inbox, active, conversation = active_steering_turn(tmp_path)
+    marker = queued_feedback_marker(inbox.path.parent)
     conversation.state.acquire()
 
     with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
@@ -422,9 +453,9 @@ def test_student_feedback_waits_for_the_step_and_marks_a_clean_unwind(
         )
         assert pump.prepare_run()
         pump.run_started()
-        monkeypatch.setenv(QUEUED_FEEDBACK_ENV, "stale")
+        marker.touch()
         with pump:
-            assert QUEUED_FEEDBACK_ENV not in os.environ
+            assert not marker.exists()
             store.enqueue(event)
             deadline = time.monotonic() + 1
             while store.pending() and time.monotonic() < deadline:
@@ -434,10 +465,10 @@ def test_student_feedback_waits_for_the_step_and_marks_a_clean_unwind(
             assert conversation.interrupts == 0
             conversation.state.release()
             assert conversation.paused.wait(1)
-            assert os.environ[QUEUED_FEEDBACK_ENV] == "1"
+            assert marker.is_file()
             assert pump.finish_run()
 
-    assert QUEUED_FEEDBACK_ENV not in os.environ
+    assert not marker.exists()
     assert conversation.pauses == 1
     assert conversation.interrupts == 0
     assert inbox.turn(active.turn_id).event_keys == (
@@ -489,6 +520,7 @@ def test_human_issue_upgrades_queued_feedback_to_an_interrupt(tmp_path: Path):
         payload={"message": "Stop and inspect the latest frontier now."},
     )
     inbox, _active, conversation = active_steering_turn(tmp_path)
+    marker = queued_feedback_marker(inbox.path.parent)
     conversation.state.acquire()
 
     with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
@@ -514,8 +546,8 @@ def test_human_issue_upgrades_queued_feedback_to_an_interrupt(tmp_path: Path):
 
     assert conversation.pauses == 0
     assert conversation.interrupts == 1
-    assert QUEUED_FEEDBACK_ENV not in os.environ
-    assert "Trusted human steering" in conversation.messages[-3]
+    assert not marker.exists()
+    assert "interrupted the active run" in conversation.messages[-3]
     assert conversation.messages[-2:] == [
         feedback.to_inbox_message(),
         instruction.to_inbox_message(),
@@ -602,14 +634,10 @@ def test_human_issue_before_run_is_delivered_without_starting_then_cancelling(
     assert conversation.messages[-1] == event.to_inbox_message()
 
 
-@pytest.mark.parametrize("kind", ["human_issue", "student_pr_feedback"])
-def test_trusted_input_does_not_resume_an_unrelated_pause(
-    tmp_path: Path,
-    kind: str,
-):
+def test_student_feedback_does_not_resume_an_unrelated_pause(tmp_path: Path):
     event = AdvisorEvent(
-        kind=kind,
-        dedupe_key=f"{kind}:1",
+        kind="student_pr_feedback",
+        dedupe_key="student_pr_feedback:1",
         payload={"message": "Use this after restart."},
     )
     inbox, _active, conversation = active_steering_turn(tmp_path)
@@ -635,6 +663,84 @@ def test_trusted_input_does_not_resume_an_unrelated_pause(
     assert conversation.pauses == 0
     assert conversation.interrupts == 0
     assert conversation.messages[-1] == event.to_inbox_message()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ConversationExecutionStatus.PAUSED, ConversationExecutionStatus.ERROR],
+)
+def test_human_issue_interrupts_a_run_with_stale_persisted_status(
+    tmp_path: Path,
+    status: ConversationExecutionStatus,
+):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Stop the newly starting run."},
+    )
+    inbox, _active, conversation = active_steering_turn(tmp_path)
+
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+        )
+        assert pump.prepare_run()
+        conversation.state.execution_status = status
+        pump.run_started()
+        with pump:
+            store.enqueue(event)
+            assert conversation.interrupted.wait(1)
+            assert pump.finish_run()
+
+    assert conversation.interrupts == 1
+    assert conversation.messages[-1] == event.to_inbox_message()
+    assert all("Trusted human steering" not in message for message in conversation.messages)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        ConversationExecutionStatus.IDLE,
+        ConversationExecutionStatus.WAITING_FOR_CONFIRMATION,
+        ConversationExecutionStatus.FINISHED,
+        ConversationExecutionStatus.ERROR,
+        ConversationExecutionStatus.STUCK,
+    ],
+)
+def test_human_issue_does_not_claim_a_cleanly_ended_run_was_interrupted(
+    tmp_path: Path,
+    status: ConversationExecutionStatus,
+):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Apply this next."},
+    )
+    inbox, _active, conversation = active_steering_turn(tmp_path)
+    conversation.state.execution_status = status
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+        )
+        assert pump.prepare_run()
+        pump.run_started()
+        with pump:
+            store.enqueue(event)
+            deadline = time.monotonic() + 1
+            while store.pending() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert pump.finish_run()
+
+    assert conversation.messages[-1] == event.to_inbox_message()
+    assert all("Trusted human steering" not in message for message in conversation.messages)
 
 
 def test_human_issue_joins_a_failed_turn_for_its_retry(tmp_path: Path):
@@ -776,13 +882,98 @@ def test_event_pump_surfaces_delivery_failure_and_leaves_event_pending(
         store.enqueue(event)
         with (
             pytest.raises(RuntimeError, match="conversation rejected event"),
-            AdvisorEventPump(store, Conversation(), poll_interval=0.01),
+            AdvisorEventPump(store, Conversation(), poll_interval=0.01) as pump,
         ):
             deadline = time.monotonic() + 1
             while store.pending() and time.monotonic() < deadline:
                 time.sleep(0.01)
+            pump.prepare_run()
 
         assert store.pending() == [event]
+
+
+def test_event_pump_failure_after_arming_interrupts_again_when_the_run_starts(
+    tmp_path: Path,
+):
+    conversation = SteeringConversation()
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(store, conversation)
+        assert pump.prepare_run()
+        pump._fail(RuntimeError("pump failed before run startup"))
+
+        assert conversation.interrupts == 0
+        pump.run_started()
+
+    assert conversation.interrupts == 1
+
+
+def test_event_pump_surfaces_a_mid_batch_failure_without_boundary_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Change direction."},
+    )
+    inbox, _active, conversation = active_steering_turn(tmp_path)
+
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        def fail_acknowledgement(_dedupe_key: str) -> None:
+            raise RuntimeError("inbox acknowledgement failed")
+
+        monkeypatch.setattr(store, "acknowledge", fail_acknowledgement)
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+            steering_grace_seconds=1,
+        )
+        assert pump.prepare_run()
+        pump.run_started()
+        started = time.monotonic()
+        with pytest.raises(RuntimeError, match="inbox acknowledgement failed"):
+            with pump:
+                store.enqueue(event)
+                assert pump._stop.wait(1)
+
+    assert time.monotonic() - started < 1
+    assert conversation.interrupts == 1
+
+
+def test_event_pump_surfaces_a_queue_boundary_failure_and_unwinds_the_run(
+    tmp_path: Path,
+):
+    event = AdvisorEvent(
+        kind="student_pr_feedback",
+        dedupe_key="student_pr_feedback:1",
+        payload={"message": "Apply this next."},
+    )
+    inbox, _active, conversation = active_steering_turn(tmp_path)
+
+    def fail_pause() -> None:
+        raise RuntimeError("conversation pause failed")
+
+    conversation.pause = fail_pause
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+            steering_grace_seconds=1,
+        )
+        assert pump.prepare_run()
+        pump.run_started()
+        with pytest.raises(RuntimeError, match="conversation pause failed"):
+            with pump:
+                store.enqueue(event)
+                assert pump._stop.wait(1)
+
+    assert conversation.interrupts == 1
 
 
 def test_advisor_cli_reports_the_pending_event_count(

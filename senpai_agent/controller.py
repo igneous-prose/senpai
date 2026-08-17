@@ -21,7 +21,7 @@ from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
     QUEUE_PRIORITY,
-    STEER_PRIORITY,
+    STEERING_PRIORITIES,
     DeliveryState,
     InboxTurn,
     InboxTurnQuarantined,
@@ -60,6 +60,7 @@ from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergen
 _EDGE_TRIGGERED_EVENT_KINDS = frozenset(
     {"research_base_changed", "student_assignment_comment"}
 )
+_ACTIVITY_LEASE_RENEWAL_SECONDS = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +119,30 @@ def _context_recovery_prompt(full_prompt: str, current_prompt: str) -> str:
         CONTEXT_RECOVERY_PROMPT,
         CURRENT_PROMPT=current_prompt,
     )
+
+
+def _activity_lease(
+    progress: ProgressLease,
+    timeout_seconds: float,
+) -> Callable[[], None]:
+    last_attempt = float("-inf")
+
+    def renew() -> None:
+        nonlocal last_attempt
+        now = time.monotonic()
+        if now - last_attempt < _ACTIVITY_LEASE_RENEWAL_SECONDS:
+            return
+        last_attempt = now
+        try:
+            progress.update("openhands-turn", timeout_seconds)
+        except OSError as error:
+            print(
+                f"SENPAI_LEASE_UPDATE_ERROR {type(error).__name__}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    return renew
 
 
 class OpenHandsTurnRunner:
@@ -208,7 +233,7 @@ class OpenHandsTurnRunner:
                 config.state_dir / "student-conversations.json"
             )
             map_event = partial(
-                _student_feedback_event,
+                _student_live_event,
                 conversation_id=conversation_id,
                 registry=registry,
             )
@@ -235,19 +260,20 @@ class OpenHandsTurnRunner:
         )
 
 
-def _student_feedback_event(
+def _student_live_event(
     event: ControllerEvent,
     *,
     conversation_id: UUID,
     registry: AssignmentConversationRegistry,
 ) -> AdvisorEvent | None:
-    if event.kind != "student_pr_feedback":
-        return None
-    target = registry.for_assignment(
-        str(event.payload["assignment_id"]),
-        str(event.payload["revision_id"]),
-    )
-    if target != conversation_id:
+    if event.kind == "student_pr_feedback":
+        target = registry.for_assignment(
+            str(event.payload["assignment_id"]),
+            str(event.payload["revision_id"]),
+        )
+        if target != conversation_id:
+            return None
+    elif event.kind != "human_issue":
         return None
     return AdvisorEvent(
         kind=event.kind,
@@ -526,16 +552,13 @@ class Controller:
                     ):
                         self._clear_workspace_divergence(conversation_id)
             for event in batch_events:
-                if event.kind in {"human_issue", "student_pr_feedback"}:
+                steering_priority = STEERING_PRIORITIES.get(event.kind)
+                if steering_priority is not None:
                     self.inbox.steer(
                         conversation_id,
                         event.dedupe_key,
                         event.to_prompt(),
-                        priority=(
-                            STEER_PRIORITY
-                            if event.kind == "human_issue"
-                            else QUEUE_PRIORITY
-                        ),
+                        priority=steering_priority,
                     )
                 else:
                     self.inbox.enqueue(
@@ -870,11 +893,7 @@ def controller_main(
             env.get("SENPAI_ACTIVE_GITHUB_POLL_INTERVAL_S", "30")
         ),
         on_activity=(
-            partial(
-                progress.update,
-                "openhands-turn",
-                turn_lease_seconds,
-            )
+            _activity_lease(progress, turn_lease_seconds)
             if progress is not None
             else None
         ),

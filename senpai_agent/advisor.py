@@ -1,12 +1,10 @@
 import argparse
 import json
-import os
 import sqlite3
 import threading
 import uuid
 from collections.abc import Callable, Sequence, Set
 from datetime import UTC, datetime
-from enum import IntEnum
 from pathlib import Path
 from types import TracebackType
 from typing import Protocol, Self
@@ -14,9 +12,10 @@ from typing import Protocol, Self
 from openhands.sdk.conversation import ConversationExecutionStatus, ConversationState
 from pydantic import BaseModel, ConfigDict, Field
 
-from senpai_agent.hooks import QUEUED_FEEDBACK_ENV
+from senpai_agent.hooks import queued_feedback_marker
 from senpai_agent.inbox import (
     QUEUE_PRIORITY,
+    STEERING_PRIORITIES,
     STEER_PRIORITY,
     DeliveryState,
     PersistentInbox,
@@ -31,15 +30,10 @@ from senpai_agent.PROMPTS import (
 _EVENT_STORE_SETUP_LOCK = threading.Lock()
 _STEERING_GRACE_SECONDS = 60.0
 _STEERING_INTERRUPTION_NOTICE = (
-    "Trusted human steering interrupted the active advisor run. Active tools "
+    "Trusted human steering interrupted the active run. Active tools "
     "were given up to 60 seconds to finish; apply the next instruction before "
     "resuming displaced work."
 )
-
-
-class _SteeringMode(IntEnum):
-    QUEUE = QUEUE_PRIORITY
-    INTERRUPT = STEER_PRIORITY
 
 
 class AdvisorEvent(BaseModel):
@@ -194,15 +188,13 @@ def advisor_conversation_id(
 ) -> uuid.UUID:
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "advisor-conversation-id"
-    if explicit_id is not None:
-        conversation_id = uuid.UUID(explicit_id)
-        path.write_text(f"{conversation_id}\n")
-        return conversation_id
-    if path.exists():
+    if explicit_id is None and path.exists():
         return uuid.UUID(path.read_text().strip())
 
-    conversation_id = uuid.uuid4()
-    path.write_text(f"{conversation_id}\n")
+    conversation_id = uuid.UUID(explicit_id) if explicit_id else uuid.uuid4()
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(f"{conversation_id}\n")
+    temporary.replace(path)
     return conversation_id
 
 
@@ -267,6 +259,11 @@ class AdvisorEventPump:
         self._poll_interval = poll_interval
         self._parent_conversation_id = parent_conversation_id
         self._inbox = inbox
+        self._queued_feedback_marker = (
+            queued_feedback_marker(inbox.path.parent)
+            if inbox is not None and inbox.path is not None
+            else None
+        )
         self._steering_grace_seconds = steering_grace_seconds
         if inbox is not None:
             if conversation_id is None:
@@ -280,10 +277,11 @@ class AdvisorEventPump:
         self._stop = threading.Event()
         self._steer_lock = threading.Lock()
         self._steer_turn_id: str | None = None
-        self._steer_mode: _SteeringMode | None = None
+        self._steer_mode: int | None = None
         self._steer_generation = 0
         self._steer_ready = threading.Event()
-        self._steer_interrupted = False
+        self._steer_interrupt_requested = False
+        self._steer_interrupt_notice = False
         self._steer_paused = False
         self._boundary_thread: threading.Thread | None = None
         self._run_armed = False
@@ -302,8 +300,22 @@ class AdvisorEventPump:
                     self._deliver_if_safe()
                 self._stop.wait(self._poll_interval)
         except BaseException as error:  # noqa: BLE001
-            self._error = error
-            self._stop.set()
+            self._fail(error)
+
+    def _fail(self, error: BaseException) -> None:
+        with self._steer_lock:
+            first_failure = self._error is None
+            if first_failure:
+                self._error = error
+            should_interrupt = (
+                first_failure
+                and self._run_armed
+                and self._run_started.is_set()
+            )
+            self._steer_ready.set()
+        self._stop.set()
+        if should_interrupt:
+            self._conversation.interrupt()
 
     def _deliver_if_safe(self) -> int:
         if self._inbox is not None:
@@ -339,37 +351,31 @@ class AdvisorEventPump:
                 == self._parent_conversation_id
             ]
         transferred = 0
-        start_mode: _SteeringMode | None = None
+        start_mode: int | None = None
         steer_generation = 0
         steer_active_run = False
         for event in pending:
-            mode = {
-                "human_issue": _SteeringMode.INTERRUPT,
-                "student_pr_feedback": _SteeringMode.QUEUE,
-            }.get(event.kind)
+            mode = STEERING_PRIORITIES.get(event.kind)
             if mode is not None:
                 with self._steer_lock:
                     if not self._accept_steering:
                         continue
-                    turn = self._inbox.steer(
+                    steering = self._inbox.steer(
                         self._conversation_id,
                         event.dedupe_key,
                         event.to_inbox_message(),
                         priority=mode,
                     )
-                    if turn is not None:
-                        message = next(
-                            item
-                            for item in turn.events
-                            if item.event_key == event.dedupe_key
-                        )
-                        if message.state is DeliveryState.PENDING:
+                    if steering is not None:
+                        turn_id, state = steering
+                        if state == DeliveryState.PENDING:
                             if self._steer_turn_id is None:
                                 self._steer_generation += 1
                                 steer_generation = self._steer_generation
                                 start_mode = mode
                                 self._steer_ready.clear()
-                                self._steer_interrupted = False
+                                self._steer_interrupt_requested = False
+                                self._steer_interrupt_notice = False
                                 self._steer_paused = False
                                 steer_active_run = self._run_armed
                                 self._steer_mode = mode
@@ -379,7 +385,7 @@ class AdvisorEventPump:
                                 self._steer_ready.clear()
                                 steer_active_run = self._run_armed
                                 self._steer_mode = mode
-                            self._steer_turn_id = turn.turn_id
+                            self._steer_turn_id = turn_id
             else:
                 self._inbox.enqueue(
                     self._conversation_id,
@@ -388,11 +394,12 @@ class AdvisorEventPump:
                 )
             self._store.acknowledge(event.dedupe_key)
             transferred += 1
-        if start_mode is _SteeringMode.INTERRUPT:
-            os.environ.pop(QUEUED_FEEDBACK_ENV, None)
+        if start_mode == STEER_PRIORITY:
+            self._clear_queued_feedback_marker()
             self._interrupt_for_steer(steer_active_run)
-        elif start_mode is _SteeringMode.QUEUE:
-            os.environ[QUEUED_FEEDBACK_ENV] = "1"
+        elif start_mode == QUEUE_PRIORITY:
+            if self._queued_feedback_marker is not None:
+                self._queued_feedback_marker.touch()
             self._queue_for_steer(steer_active_run, steer_generation)
         return transferred
 
@@ -401,12 +408,18 @@ class AdvisorEventPump:
             self._steer_ready.set()
             return
         self._boundary_thread = threading.Thread(
-            target=self._pause_at_boundary,
+            target=self._run_boundary,
             args=(generation,),
             name="senpai-agent-steering-boundary",
             daemon=True,
         )
         self._boundary_thread.start()
+
+    def _run_boundary(self, generation: int) -> None:
+        try:
+            self._pause_at_boundary(generation)
+        except BaseException as error:  # noqa: BLE001
+            self._fail(error)
 
     def _pause_at_boundary(self, generation: int) -> None:
         """Request the next safe agent-step boundary without blocking polling."""
@@ -419,23 +432,27 @@ class AdvisorEventPump:
                 return
             if not state.acquire(timeout=self._poll_interval):
                 continue
-            idle = False
+            retry = False
             try:
                 with self._steer_lock:
                     if (
                         generation != self._steer_generation
-                        or self._steer_mode is not _SteeringMode.QUEUE
+                        or self._steer_mode != QUEUE_PRIORITY
                     ):
                         return
                     if not self._run_armed:
                         self._steer_ready.set()
                         return
-                    if state.execution_status == ConversationExecutionStatus.IDLE:
-                        idle = True
+                    if state.execution_status in (
+                        ConversationExecutionStatus.IDLE,
+                        ConversationExecutionStatus.PAUSED,
+                        ConversationExecutionStatus.ERROR,
+                    ):
+                        retry = True
                     elif state.execution_status == ConversationExecutionStatus.RUNNING:
                         self._conversation.pause()
                         self._steer_paused = True
-                    if not idle:
+                    if not retry:
                         self._steer_ready.set()
                         return
             finally:
@@ -454,33 +471,44 @@ class AdvisorEventPump:
         acquired = state is not None and state.acquire(
             timeout=self._steering_grace_seconds
         )
-        running = True
+        interrupt_notice = not acquired
         if acquired:
-            with self._steer_lock:
-                paused_for_steer = self._steer_paused
-            running = state.execution_status in (
-                ConversationExecutionStatus.IDLE,
-                ConversationExecutionStatus.RUNNING,
-            ) or (paused_for_steer and active_run)
-            state.release()
-        if self._stop.is_set():
+            try:
+                status = state.execution_status
+                running = active_run and status not in (
+                    ConversationExecutionStatus.FINISHED,
+                    ConversationExecutionStatus.STUCK,
+                )
+                interrupt_notice = status == ConversationExecutionStatus.RUNNING
+                if self._stop.is_set() or not running:
+                    self._steer_ready.set()
+                    return
+                self._conversation.interrupt()
+            finally:
+                state.release()
+        elif self._stop.is_set() or not active_run:
             self._steer_ready.set()
             return
-        if not running:
-            self._steer_ready.set()
-            return
+        else:
+            self._conversation.interrupt()
         with self._steer_lock:
-            self._steer_interrupted = True
-        self._conversation.interrupt()
+            self._steer_interrupt_requested = True
+            self._steer_interrupt_notice = interrupt_notice
         self._steer_ready.set()
 
     def run_started(self) -> None:
-        self._run_started.set()
+        with self._steer_lock:
+            self._run_started.set()
+            should_interrupt = self._error is not None and self._run_armed
+        if should_interrupt:
+            self._conversation.interrupt()
 
     def prepare_run(self) -> bool:
         """Arm one run, or deliver steering that arrived before it started."""
 
         with self._steer_lock:
+            if self._error is not None:
+                raise self._error
             if self._steer_turn_id is None:
                 self._run_armed = True
                 self._run_started.clear()
@@ -505,30 +533,39 @@ class AdvisorEventPump:
                     "trusted input did not reach a steering boundary"
                 )
             with self._steer_lock:
+                if self._error is not None:
+                    raise self._error
                 if not self._steer_ready.is_set():
                     continue
                 turn_id = self._steer_turn_id
-                interrupted = self._steer_interrupted
+                interrupt_requested = self._steer_interrupt_requested
+                interrupt_notice = self._steer_interrupt_notice
                 paused = self._steer_paused
                 self._steer_turn_id = None
                 self._steer_mode = None
                 self._steer_ready.clear()
-                self._steer_interrupted = False
+                self._steer_interrupt_requested = False
+                self._steer_interrupt_notice = False
                 self._steer_paused = False
-                os.environ.pop(QUEUED_FEEDBACK_ENV, None)
+                self._clear_queued_feedback_marker()
                 break
         assert turn_id is not None and self._inbox is not None
-        if interrupted:
+        state = getattr(self._conversation, "state", None)
+        interrupted = (
+            interrupt_requested
+            and state is not None
+            and state.execution_status == ConversationExecutionStatus.PAUSED
+        )
+        if interrupted and interrupt_notice:
             self._conversation.send_message(_STEERING_INTERRUPTION_NOTICE)
         deliver_turn_messages(self._conversation, self._inbox, turn_id)
-        state = getattr(self._conversation, "state", None)
-        return interrupted or paused or (
+        return interrupt_requested or paused or (
             state is None
             or state.execution_status != ConversationExecutionStatus.PAUSED
         )
 
     def __enter__(self) -> Self:
-        os.environ.pop(QUEUED_FEEDBACK_ENV, None)
+        self._clear_queued_feedback_marker()
         self._thread.start()
         return self
 
@@ -543,7 +580,7 @@ class AdvisorEventPump:
         self._thread.join()
         if self._boundary_thread is not None:
             self._boundary_thread.join()
-        os.environ.pop(QUEUED_FEEDBACK_ENV, None)
+        self._clear_queued_feedback_marker()
         # Failed turns may abandon their active branch; replay those events instead.
         if self._inbox is None and exc_type is None and self._error is None:
             state = getattr(self._conversation, "state", None)
@@ -553,8 +590,12 @@ class AdvisorEventPump:
             ):
                 for key in sorted(self._delivered_event_keys):
                     self._store.acknowledge(key)
-        if exc_type is None and self._error is not None:
-            raise self._error
+        if self._error is not None and _exc is not self._error:
+            raise self._error from _exc
+
+    def _clear_queued_feedback_marker(self) -> None:
+        if self._queued_feedback_marker is not None:
+            self._queued_feedback_marker.unlink(missing_ok=True)
 
 
 def advisor_main(

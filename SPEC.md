@@ -108,12 +108,15 @@ ledger. Oldest unacknowledged events are delivered in bounded count/byte
 batches; immediate post-turn polls drain later batches without dropping them.
 
 While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
-state. It enqueues all newly visible advisor events, and only PR feedback bound
-to the currently running student UUID, in the role's local event store.
-Authenticated human Issues take priority. Active tools get up to 60 seconds to
-finish; Senpai then interrupts the run, awaits cleanup, injects the instruction,
-and resumes the same conversation. Trusted student PR feedback queues at the
-next completed agent step without cancelling it. Other events remain FIFO.
+state. It enqueues all newly visible advisor events. For students, it maps
+authenticated human Issues and assignment-bound PR feedback into the active
+UUID. Authenticated humans are the interrupt tier: tools get up to 60 seconds
+to finish before Senpai interrupts and resumes the run, even when its inbox
+batch is full. Student assignments and trusted PR feedback share a FIFO queue
+tier; feedback waits for the next completed agent step without cancelling it.
+Ordinary events remain FIFO. Turn formation and non-human attachments are
+bounded to 16 events or 64 KiB; prioritized overflow remains pending to lead
+the next turn.
 Successfully injected student feedback is acknowledged in
 `github-feedback.json` only when the enclosing student turn succeeds.
 
@@ -126,6 +129,12 @@ advisor watcher/child events; `student-events.sqlite3`, for unacknowledged
 student feedback/child events; and `training/monitors.sqlite3`, for student
 monitor policy, samples, and deduplicated actionable signals. OpenHands
 conversation history is a separate file-backed per-UUID event log.
+
+A completed tool observation resets the three-attempt no-progress budget. A
+separate 36-inference-start backstop applies to each turn branch across worker
+restarts without limiting one productive run. Either exhausted budget enters
+bounded fresh-branch recovery and then quarantine. Only authenticated human
+steering can reopen quarantine; trusted PR feedback remains pending.
 
 ## State and conversations
 
@@ -600,8 +609,10 @@ turn. Each partition is acknowledged only after its own successful turn, so a
 child result for one assignment cannot consume or permanently block a training
 event for another.
 
-The Stop hook verifies the automatic monitor marker and a clean worktree,
-allowing the student turn to end while the controller supervises the process.
+The Stop hook always verifies the automatic monitor marker and normally
+requires a clean worktree. While queued PR feedback waits for a safe boundary,
+a role-local marker waives only the clean-worktree check; the pump clears it
+before delivery and on entry and exit.
 The advisor and advisor children never receive training tools.
 
 ## Hooks, deadlines, and shutdown
