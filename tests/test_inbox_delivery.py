@@ -625,7 +625,7 @@ def test_restart_after_preparing_visible_persisted_prompt_keeps_one_copy(
 def test_reset_preserves_legacy_provenance_for_a_later_compact_reminder(
     tmp_path: Path,
 ):
-    event_key = "idle_student:Fern"
+    event_key = "student_slot_available:Fern"
     compact_body = "compact event"
     legacy_id = str(UUID(int=119))
     legacy_path = tmp_path / "pending-message-deliveries.json"

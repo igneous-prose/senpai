@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from senpai_agent.inbox import PersistentInbox
 from senpai_agent.PROMPTS import (
     ADVISOR_EVENT_PROMPT,
-    EVENT_PROMPT,
+    render_event_prompt,
     render_prompt,
 )
 
@@ -46,11 +46,7 @@ class AdvisorEvent(BaseModel):
             for key, value in self.payload.items()
             if key != "parent_conversation_id"
         }
-        return render_prompt(
-            EVENT_PROMPT,
-            KIND=self.kind,
-            PAYLOAD=json.dumps(payload, sort_keys=True, separators=(",", ":")),
-        )
+        return render_event_prompt(self.kind, payload)
 
 
 class AdvisorEventStore:

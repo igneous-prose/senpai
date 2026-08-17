@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -10,7 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from senpai_agent.advisor import AdvisorEventStore
-from senpai_agent.PROMPTS import EVENT_PROMPT, render_prompt
+from senpai_agent.PROMPTS import render_event_prompt
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,11 +24,7 @@ class ControllerEvent:
             for key, value in self.payload.items()
             if key != "parent_conversation_id"
         }
-        return render_prompt(
-            EVENT_PROMPT,
-            KIND=self.kind,
-            PAYLOAD=json.dumps(payload, sort_keys=True, separators=(",", ":")),
-        )
+        return render_event_prompt(self.kind, payload)
 
 
 class Mailbox(Protocol):

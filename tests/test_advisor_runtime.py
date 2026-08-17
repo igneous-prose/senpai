@@ -461,3 +461,18 @@ def test_inbox_rendering_excludes_transport_only_parent_conversation_id():
     )
 
     assert watcher_event.to_inbox_message() == controller_event.to_prompt()
+
+
+def test_student_slot_rendering_matches_controller_and_watcher_paths():
+    controller_event = ControllerEvent(
+        kind="student_slot_available",
+        dedupe_key="student_slot_available:qwen-edward",
+        payload={"student": "qwen-edward"},
+    )
+    watcher_event = AdvisorEvent(
+        kind=controller_event.kind,
+        dedupe_key=controller_event.dedupe_key,
+        payload=controller_event.payload,
+    )
+
+    assert watcher_event.to_inbox_message() == controller_event.to_prompt()

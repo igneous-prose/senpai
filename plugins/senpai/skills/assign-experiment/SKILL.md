@@ -6,7 +6,7 @@
 name: assign-experiment
 description: >
   Create a typed assignment branch and draft PR for one student. Use when the
-  advisor has a concrete hypothesis and an idle student.
+  advisor has a concrete hypothesis and an available student slot.
 argument-hint: "<student-name> <hypothesis-slug> <problem-dir>"
 model: claude-sonnet-4-6
 effort: high

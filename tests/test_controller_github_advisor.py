@@ -312,12 +312,41 @@ def test_review_label_wakes_the_advisor_and_releases_the_student_slot(monkeypatc
 
     assert [event.kind for event in events] == [
         "review_ready",
-        "idle_student",
-        "idle_student",
+        "student_slot_available",
+        "student_slot_available",
     ]
     assert events[0].payload["number"] == 17
+    assert events[1].dedupe_key == "student_slot_available:student-1"
+    assert events[2].dedupe_key == "student_slot_available:student-2"
     assert events[1].payload == {"student": "student-1"}
     assert events[2].payload == {"student": "student-2"}
+    assert events[1].to_prompt().startswith(
+        "## Student slot available: `student-1`"
+    )
+    assert events[2].to_prompt().startswith(
+        "## Student slot available: `student-2`"
+    )
+
+
+def test_held_wip_assignment_still_reserves_the_student_slot(monkeypatch):
+    advisor = mailbox(
+        monkeypatch,
+        [
+            pull(
+                labels=(
+                    "research",
+                    "student:student-1",
+                    "status:wip",
+                    "status:hold",
+                )
+            )
+        ],
+        students=("student-1",),
+    )
+
+    assert "student_slot_available" not in {
+        event.kind for event in advisor.poll()
+    }
 
 
 def test_new_review_revision_at_the_same_head_wakes_the_advisor(monkeypatch):
@@ -1002,5 +1031,8 @@ def test_research_base_ref_failure_does_not_suppress_other_advisor_events(
 
     events = advisor.poll()
 
-    assert {event.kind for event in events} == {"review_ready", "idle_student"}
+    assert {event.kind for event in events} == {
+        "review_ready",
+        "student_slot_available",
+    }
     assert "SENPAI_RESEARCH_BASE_WATCH_ERROR" in capsys.readouterr().err

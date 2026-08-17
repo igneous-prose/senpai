@@ -211,8 +211,8 @@ def test_empty_mailbox_does_not_start_a_model_turn():
 
 def test_successful_turn_repolls_immediately_and_continues_without_full_brief():
     first = ControllerEvent(
-        kind="idle_student",
-        dedupe_key="idle_student:student-1",
+        kind="student_slot_available",
+        dedupe_key="student_slot_available:student-1",
         payload={"student": "student-1"},
     )
     second = review_event()

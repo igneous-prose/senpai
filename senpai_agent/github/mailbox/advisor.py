@@ -116,8 +116,8 @@ def advisor_events(
         if not numbers:
             events.append(
                 ControllerEvent(
-                    kind="idle_student",
-                    dedupe_key=f"idle_student:{student}",
+                    kind="student_slot_available",
+                    dedupe_key=f"student_slot_available:{student}",
                     payload={"student": student},
                 )
             )
