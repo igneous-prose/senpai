@@ -857,13 +857,7 @@ def test_restart_after_recovery_commit_resets_before_delivering(tmp_path, monkey
     ]
 
 
-def test_child_requests_ephemeral_storage_and_emits_its_terminal_report(
-    tmp_path,
-    monkeypatch,
-    capsys,
-):
-    captured = {}
-
+def _child_result_conversation(reports, captured, *, rebuild_before_second=False):
     class FakeConversation:
         def __init__(self, **kwargs):
             self.id = kwargs["conversation_id"]
@@ -873,52 +867,180 @@ def test_child_requests_ephemeral_storage_and_emits_its_terminal_report(
                 view=SimpleNamespace(events=[]),
             )
 
-        def send_message(self, _prompt):
-            pass
+        def send_message(self, prompt):
+            captured.setdefault("prompts", []).append(prompt)
+            if self.state.execution_status == ConversationExecutionStatus.FINISHED:
+                self.state.execution_status = ConversationExecutionStatus.IDLE
 
         async def arun(self):
-            self.state.view.events.append(
-                runner.MessageEvent(
-                    source="agent",
-                    llm_message=Message(
-                        role="assistant",
-                        content=[TextContent(text="bounded child report")],
-                    ),
+            report = reports[len(captured.setdefault("runs", []))]
+            captured["runs"].append(report)
+            if rebuild_before_second and len(captured["runs"]) == 2:
+                self.state.view.events = []
+            if report is not None:
+                self.state.view.events.append(
+                    runner.MessageEvent(
+                        source="agent",
+                        llm_message=Message(
+                            role="assistant",
+                            content=[TextContent(text=report)],
+                        ),
+                    )
                 )
-            )
             self.state.execution_status = ConversationExecutionStatus.FINISHED
 
         def close(self):
             captured["closed"] = True
 
-    monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
+    return FakeConversation
+
+
+def _output_record(output, prefix):
+    return json.loads(
+        next(
+            line.removeprefix(prefix)
+            for line in output.splitlines()
+            if line.startswith(prefix)
+        )
+    )
+
+
+def test_child_result_at_emergency_limit_is_returned_unchanged(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    captured = {}
+    monkeypatch.setattr(
+        runner,
+        "LocalConversation",
+        _child_result_conversation(["bounded child report"], captured),
+    )
+    monkeypatch.setattr(
+        runner.LLM,
+        "get_token_count",
+        lambda *_args, **_kwargs: runner.MAX_INLINE_CHILD_RESULT_TOKENS,
+    )
     isolate_agent_discovery(monkeypatch, runner)
     monkeypatch.setattr(runner, "WEAVE_PROJECT", "wandb-applied-ai-team/senpai-v1")
     config = runtime_config(tmp_path, child=True)
 
     assert run_openhands("child task", config) == 0
 
-    records = capsys.readouterr().out.splitlines()
-    result = json.loads(
-        next(
-            line.removeprefix("OPENHANDS_RESULT ")
-            for line in records
-            if line.startswith("OPENHANDS_RESULT ")
-        )
-    )
-    run = json.loads(
-        next(
-            line.removeprefix("OPENHANDS_RUN ")
-            for line in records
-            if line.startswith("OPENHANDS_RUN ")
-        )
-    )
-    assert captured == {"delete_on_close": True, "closed": True}
+    output = capsys.readouterr().out
+    result = _output_record(output, "OPENHANDS_RESULT ")
+    run = _output_record(output, "OPENHANDS_RUN ")
+    assert captured["delete_on_close"] is True
+    assert captured["runs"] == ["bounded child report"]
+    assert captured["closed"] is True
     assert result["result"] == "bounded child report"
     assert run["weave_url"] == (
         "https://wandb.ai/wandb-applied-ai-team/senpai-v1/"
         f"weave/agents/conversations/{config.conversation_id}"
     )
+
+
+@pytest.mark.parametrize(
+    ("initial_token_count", "rebuild_view"),
+    [(0, False), (15_001, True)],
+)
+def test_oversized_child_result_is_spilled_then_replaced_by_one_summary(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    initial_token_count,
+    rebuild_view,
+):
+    raw_report = "RAW_REPORT_MUST_NOT_REACH_THE_PARENT"
+    summary = "The strongest evidence points to the scheduler boundary."
+    task_id = "task-1"
+    role_state = tmp_path / "role-state"
+    captured = {}
+    token_counts = iter([initial_token_count, 200])
+    monkeypatch.setattr(
+        runner,
+        "LocalConversation",
+        _child_result_conversation(
+            [raw_report, summary],
+            captured,
+            rebuild_before_second=rebuild_view,
+        ),
+    )
+    monkeypatch.setattr(
+        runner.LLM,
+        "get_token_count",
+        lambda *_args, **_kwargs: next(token_counts),
+    )
+    isolate_agent_discovery(monkeypatch, runner)
+
+    assert run_openhands(
+        "child task",
+        runtime_config(
+            tmp_path,
+            child=True,
+            delegation_root_state_dir=role_state,
+            delegation_task_id=task_id,
+        ),
+    ) == 0
+
+    artifact = role_state / "delegation" / "results" / f"{task_id}.md"
+    output = capsys.readouterr().out
+    result = _output_record(output, "OPENHANDS_RESULT ")
+    assert captured["runs"] == [raw_report, summary]
+    assert len(captured["prompts"]) == 2
+    assert "at most 1,500 tokens" in captured["prompts"][1]
+    assert str(artifact) in captured["prompts"][1]
+    assert artifact.read_text(encoding="utf-8") == raw_report
+    assert artifact.parent.stat().st_mode & 0o777 == 0o700
+    assert artifact.stat().st_mode & 0o777 == 0o600
+    assert result["result"] == f"{summary}\n\nFull report: {artifact}"
+    assert raw_report not in result["result"]
+    assert raw_report not in output
+
+
+@pytest.mark.parametrize(
+    ("summary", "summary_token_count"),
+    [(None, 200), ("UNKNOWN_COUNT", 0), ("STILL_TOO_LARGE", 1_501)],
+)
+def test_oversized_child_result_fails_closed_when_compression_fails(
+    tmp_path,
+    monkeypatch,
+    capsys,
+    summary,
+    summary_token_count,
+):
+    raw_report = "RAW_REPORT_MUST_NOT_REACH_THE_PARENT"
+    task_id = "task-1"
+    role_state = tmp_path / "role-state"
+    captured = {}
+    token_counts = iter([15_001, summary_token_count])
+    monkeypatch.setattr(
+        runner,
+        "LocalConversation",
+        _child_result_conversation([raw_report, summary], captured),
+    )
+    monkeypatch.setattr(
+        runner.LLM,
+        "get_token_count",
+        lambda *_args, **_kwargs: next(token_counts),
+    )
+    isolate_agent_discovery(monkeypatch, runner)
+    config = runtime_config(
+        tmp_path,
+        child=True,
+        delegation_root_state_dir=role_state,
+        delegation_task_id=task_id,
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        run_openhands("child task", config)
+
+    artifact = role_state / "delegation" / "results" / f"{task_id}.md"
+    output = capsys.readouterr().out
+    assert str(artifact) in str(raised.value)
+    assert raw_report not in str(raised.value)
+    assert artifact.read_text(encoding="utf-8") == raw_report
+    assert raw_report not in output
 
 
 def test_student_requests_persistent_storage_for_monitor_wake(

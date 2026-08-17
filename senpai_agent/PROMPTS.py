@@ -53,19 +53,32 @@ DELEGATED_SEARCH_MODE_PROMPT = """Search mode: {{SEARCH_MODE}}
 
 DELEGATED_TASK_PROMPT = """# Delegated task
 
-You are a fresh Senpai subagent. Perform only the assigned task and return a concise, evidence-linked report to the parent.
+You are a fresh Senpai subagent. Perform only the assigned task. Return at most 1,500 tokens with the conclusion, next actions, and precise evidence pointers. Do not return raw dumps.
 
 {{ASSIGNMENT}}"""
 
 DELEGATED_TASK_WITH_CONTEXT_PROMPT = """# Delegated task with parent context
 
-The JSON below is the complete model-visible parent context at delegation time. Use it as evidence, perform only the assigned task, and return a concise, evidence-linked report.
+The JSON below is the complete model-visible parent context at delegation time. Use it as evidence and perform only the assigned task. Return at most 1,500 tokens with the conclusion, next actions, and precise evidence pointers. Do not return raw dumps.
 
 <parent_context_json>
 {{PARENT_CONTEXT_JSON}}
 </parent_context_json>
 
 {{ASSIGNMENT}}"""
+
+DELEGATED_RESULT_SUMMARY_PROMPT = """Your report is too large to send to the parent. Senpai stored the complete report at:
+
+{{RESULT_PATH}}
+
+Use only the report you just produced. Do not perform more research, edit files, or call tools. Return at most 1,500 tokens of plain-language, high-signal, actionable text:
+
+- Lead with the conclusion or recommendation.
+- Include only the strongest evidence and precise paths or identifiers.
+- State the next actions.
+- State material risks and unresolved questions.
+
+Do not reproduce long excerpts or the full-report path. Senpai will append the path."""
 
 RECOVERED_ACTION_PROMPT = """Senpai restarted before this action completed. Inspect the preserved workspace and rerun it explicitly only if it is still needed."""
 

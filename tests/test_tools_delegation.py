@@ -328,6 +328,52 @@ def test_spawn_is_nonblocking_and_await_first_collects_the_first_result(tmp_path
     releases[0].set()
 
 
+def test_compacted_result_is_the_only_parent_visible_task_value(tmp_path):
+    raw_report = "RAW_REPORT_MUST_NOT_REACH_THE_PARENT"
+    artifact = tmp_path / "state" / "delegation" / "results" / "task.md"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text(raw_report, encoding="utf-8")
+    public_result = f"Concise conclusion.\n\nFull report: {artifact}"
+    release = threading.Event()
+    release.set()
+    sink = EventSink()
+    spawn, await_tool, status, _cancel = tools(
+        tmp_path,
+        lambda _request: FakeChild(release, result=public_result),
+        sink=sink,
+    )
+    parent = parent_conversation()
+    task = spawn(
+        SpawnAgentsAction(
+            batch_key="compacted-result",
+            tasks=[AgentTask(task="Return a bounded report")],
+        ),
+        parent,
+    ).tasks[0]
+    assert sink.received.wait(1)
+
+    registry = DelegationRegistry(tmp_path / "state" / "delegation" / "tasks.sqlite3")
+    stored_result = registry.rows([task.task_id])[0]["result"]
+    status_observation = status(AgentStatusAction(task_ids=[task.task_id]), parent)
+    await_observation = await_tool(
+        AwaitAgentsAction(task_ids=[task.task_id], timeout_seconds=1), parent
+    )
+    status_result = status_observation.tasks[0].result
+    await_result = await_observation.tasks[0].result
+    event_result = sink.events[0].payload["result"]
+
+    assert (stored_result, status_result, await_result, event_result) == (
+        public_result,
+    ) * 4
+    parent_messages = [
+        status_observation.to_llm_content[0].text,
+        await_observation.to_llm_content[0].text,
+        sink.events[0].to_inbox_message(),
+    ]
+    assert all(str(artifact) in message for message in parent_messages)
+    assert all(raw_report not in message for message in parent_messages)
+
+
 def test_search_task_form_is_resolved_in_registry_and_child_request(tmp_path):
     release = threading.Event()
     release.set()
