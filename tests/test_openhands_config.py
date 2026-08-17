@@ -300,7 +300,6 @@ def test_inbox_recovery_budget_is_explicit_and_configurable(tmp_path):
     env.update(
         {
             "SENPAI_INBOX_MAX_STALLED_ATTEMPTS": "4",
-            "SENPAI_INBOX_MAX_TURN_AGE_SECONDS": "7200",
             "SENPAI_INBOX_MAX_RECOVERY_GENERATIONS": "2",
         }
     )
@@ -308,10 +307,8 @@ def test_inbox_recovery_budget_is_explicit_and_configurable(tmp_path):
     configured = resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
     assert default.inbox_max_stalled_attempts == 3
-    assert default.inbox_max_turn_age_seconds == 10_800
     assert default.inbox_max_recovery_generations == 1
     assert configured.inbox_max_stalled_attempts == 4
-    assert configured.inbox_max_turn_age_seconds == 7200
     assert configured.inbox_max_recovery_generations == 2
 
 
@@ -319,8 +316,6 @@ def test_inbox_recovery_budget_is_explicit_and_configurable(tmp_path):
     ("key", "value"),
     [
         ("SENPAI_INBOX_MAX_STALLED_ATTEMPTS", "0"),
-        ("SENPAI_INBOX_MAX_TURN_AGE_SECONDS", "never"),
-        ("SENPAI_INBOX_MAX_TURN_AGE_SECONDS", "nan"),
         ("SENPAI_INBOX_MAX_RECOVERY_GENERATIONS", "-1"),
     ],
 )

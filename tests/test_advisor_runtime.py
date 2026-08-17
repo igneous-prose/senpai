@@ -3,6 +3,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from openhands.sdk.conversation import ConversationExecutionStatus
@@ -16,9 +17,10 @@ from senpai_agent.advisor import (
     advisor_conversation_id,
     advisor_main,
     deliver_pending_events,
+    fork_advisor_conversation,
 )
 from senpai_agent.delegation import AgentStatusAction, AgentStatusObservation
-from senpai_agent.inbox import PersistentInbox
+from senpai_agent.inbox import PersistentInbox, deliver_turn_messages
 from senpai_agent.mailbox import ControllerEvent
 
 
@@ -81,6 +83,15 @@ def test_advisor_conversation_id_is_persisted(tmp_path: Path):
 
     assert first == second
     assert (tmp_path / "advisor-conversation-id").read_text() == f"{first}\n"
+
+
+def test_forked_advisor_conversation_id_is_persisted(tmp_path: Path):
+    previous = advisor_conversation_id(tmp_path)
+
+    forked = fork_advisor_conversation(tmp_path)
+
+    assert forked != previous
+    assert advisor_conversation_id(tmp_path) == forked
 
 
 def test_event_store_deduplicates_and_survives_reopen(tmp_path: Path):
@@ -315,6 +326,104 @@ def test_event_pump_queues_into_the_controller_inbox_without_mid_turn_injection(
             event.to_inbox_message()
         ]
         assert next_turn.acknowledgement_keys == (event.dedupe_key,)
+
+
+def test_human_issue_steers_the_active_turn_after_the_tool_boundary(tmp_path: Path):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Change direction."},
+    )
+    conversation_id = "00000000-0000-0000-0000-000000000017"
+    action = pending_tool_action()
+
+    class Conversation:
+        def __init__(self):
+            self.state = ConversationStateStub(
+                execution_status=ConversationExecutionStatus.RUNNING
+            )
+            self.messages: list[str] = []
+            self.received = threading.Event()
+
+        def send_message(self, message: str, sender: str | None = None) -> None:
+            self.messages.append(message)
+            self.state.append(SimpleNamespace(message=message, sender=sender))
+            self.received.set()
+
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(conversation_id, "controller:event", "controller event")
+    active = inbox.next_turn(conversation_id, "controller prompt")
+    assert active is not None
+    conversation = Conversation()
+    deliver_turn_messages(conversation, inbox, active.turn_id)
+    conversation.received.clear()
+    conversation.state.append(action)
+    conversation.state.inspected.clear()
+
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        store.enqueue(event)
+        with AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=conversation_id,
+        ):
+            assert conversation.state.inspected.wait(1)
+            assert not conversation.received.wait(0.03)
+            conversation.state.append(completed_tool_action(action))
+            assert conversation.received.wait(1)
+            conversation.state.execution_status = ConversationExecutionStatus.FINISHED
+
+        assert store.pending() == []
+    steered = inbox.turn(active.turn_id)
+    assert steered.event_keys == ("controller:event", event.dedupe_key)
+    assert conversation.messages[-1] == event.to_inbox_message()
+
+
+def test_human_issue_joins_a_failed_turn_for_its_retry(tmp_path: Path):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Recover with this direction."},
+    )
+    conversation_id = "00000000-0000-0000-0000-000000000017"
+
+    class Conversation:
+        def __init__(self):
+            self.state = ConversationStateStub(
+                execution_status=ConversationExecutionStatus.ERROR
+            )
+            self.messages: list[str] = []
+
+        def send_message(self, message: str, sender: str | None = None) -> None:
+            self.messages.append(message)
+
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(conversation_id, "controller:event", "controller event")
+    active = inbox.next_turn(conversation_id, "controller prompt")
+    assert active is not None
+    conversation = Conversation()
+
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        store.enqueue(event)
+        with AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=conversation_id,
+        ):
+            deadline = time.monotonic() + 1
+            while store.pending() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        assert store.pending() == []
+
+    assert inbox.turn(active.turn_id).event_keys == (
+        "controller:event",
+        event.dedupe_key,
+    )
+    assert conversation.messages == []
 
 
 def test_non_finished_turn_leaves_delivered_child_result_pending(

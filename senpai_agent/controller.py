@@ -17,7 +17,11 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from senpai_agent.agent_markdown import strip_spdx_header
-from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
+from senpai_agent.advisor import (
+    AdvisorEvent,
+    AdvisorEventStore,
+    fork_advisor_conversation,
+)
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
     DeliveryState,
@@ -126,11 +130,13 @@ class OpenHandsTurnRunner:
         full_prompt: str,
         github_mailbox: GitHubMailbox | None = None,
         active_poll_interval_seconds: float = 30,
+        on_activity: Callable[[], None] | None = None,
     ):
         self.config = config
         self.full_prompt = full_prompt.strip()
         self.github_mailbox = github_mailbox
         self.active_poll_interval_seconds = active_poll_interval_seconds
+        self.on_activity = on_activity
 
     def run(
         self,
@@ -148,7 +154,6 @@ class OpenHandsTurnRunner:
             self.config,
             conversation_id=conversation_id,
         )
-        turn_deadline = time.monotonic() + config.timeout_seconds
         if (inbox is None) != (inbox_turn_id is None):
             raise ValueError("inbox and inbox turn ID must be provided together")
 
@@ -164,9 +169,15 @@ class OpenHandsTurnRunner:
                 ),
             }
 
+        def run_options() -> dict[str, object]:
+            options = inbox_options()
+            if self.on_activity is not None:
+                options["on_activity"] = self.on_activity
+            return options
+
         def run_turn() -> int:
             try:
-                return run_openhands(prompt, config, **inbox_options())
+                return run_openhands(prompt, config, **run_options())
             except Exception as error:
                 if not _is_context_history_failure(error):
                     raise
@@ -177,25 +188,12 @@ class OpenHandsTurnRunner:
                     file=sys.stderr,
                     flush=True,
                 )
-                remaining = turn_deadline - time.monotonic()
-                if remaining <= 0:
-                    timeout = TimeoutError(
-                        "no turn time remains for context recovery"
-                    )
-                    raise ConversationRecoveryExhausted(
-                        conversation_id,
-                        timeout,
-                    ) from error
-                recovery_config = replace(
-                    config,
-                    timeout_seconds=remaining,
-                )
                 try:
                     return run_openhands(
                         _context_recovery_prompt(self.full_prompt, prompt),
-                        recovery_config,
+                        config,
                         reset_context=True,
-                        **inbox_options(),
+                        **run_options(),
                     )
                 except Exception as recovery_error:
                     if _is_context_history_failure(recovery_error):
@@ -283,6 +281,7 @@ class Controller:
         conversation_for_events: (
             Callable[[Sequence[ControllerEvent]], Sequence[ConversationBatch]] | None
         ) = None,
+        fork_conversation: Callable[[], UUID] | None = None,
         reconcile: Callable[[Sequence[ControllerEvent]], None] | None = None,
         progress: ProgressLease | None = None,
         operation_timeout_seconds: float = 300,
@@ -309,6 +308,7 @@ class Controller:
         self.turns = turns
         self.conversation_id = conversation_id
         self.conversation_for_events = conversation_for_events
+        self.fork_conversation = fork_conversation
         self.reconcile = reconcile
         self.progress = progress
         self.operation_timeout_seconds = operation_timeout_seconds
@@ -495,6 +495,36 @@ class Controller:
         self._enqueue_events(events)
 
     def _enqueue_events(self, events: Sequence[ControllerEvent]) -> None:
+        quarantine = next(
+            (
+                turn
+                for turn in self.inbox.quarantined_turns()
+                if turn.conversation_id == str(self.conversation_id)
+            ),
+            None,
+        )
+        if (
+            quarantine is not None
+            and self.fork_conversation is not None
+            and any(
+                event.kind == "human_issue"
+                and event.dedupe_key not in quarantine.event_keys
+                for event in events
+            )
+        ):
+            previous = self.conversation_id
+            self.conversation_id = self.fork_conversation()
+            if self.conversation_id == previous:
+                raise RuntimeError(
+                    "advisor conversation fork reused its quarantined ID"
+                )
+            print(
+                "SENPAI_ADVISOR_CONVERSATION_FORK "
+                f"previous_id={previous} conversation_id={self.conversation_id} "
+                f"quarantined_turn_id={quarantine.turn_id}",
+                file=sys.stderr,
+                flush=True,
+            )
         for batch in self._event_batches(events):
             batch_events = batch.events
             conversation_id = batch.conversation_id
@@ -533,11 +563,18 @@ class Controller:
                     ):
                         self._clear_workspace_divergence(conversation_id)
             for event in batch_events:
-                self.inbox.enqueue(
-                    conversation_id,
-                    event.dedupe_key,
-                    event.to_prompt(),
-                )
+                if event.kind == "human_issue":
+                    self.inbox.steer(
+                        conversation_id,
+                        event.dedupe_key,
+                        event.to_prompt(),
+                    )
+                else:
+                    self.inbox.enqueue(
+                        conversation_id,
+                        event.dedupe_key,
+                        event.to_prompt(),
+                    )
 
     def _next_ready_turn(
         self,
@@ -851,12 +888,22 @@ def controller_main(
         runner_config.state_dir / "delivery-inbox.sqlite3",
         legacy_path=runner_config.state_dir / "pending-message-deliveries.json",
     )
+    turn_lease_seconds = runner_config.timeout_seconds + 60
     turns = OpenHandsTurnRunner(
         runner_config,
         full_prompt=full_prompt,
         github_mailbox=github_mailbox,
         active_poll_interval_seconds=float(
             env.get("SENPAI_ACTIVE_GITHUB_POLL_INTERVAL_S", "30")
+        ),
+        on_activity=(
+            partial(
+                progress.update,
+                "openhands-turn",
+                turn_lease_seconds,
+            )
+            if progress is not None
+            else None
         ),
     )
     controller = Controller(
@@ -876,12 +923,17 @@ def controller_main(
             else None
         ),
         conversation_for_events=conversation_selector,
+        fork_conversation=(
+            partial(fork_advisor_conversation, runner_config.state_dir)
+            if role == "advisor"
+            else None
+        ),
         reconcile=reconcile,
         progress=progress,
         operation_timeout_seconds=float(
             env.get("SENPAI_CONTROLLER_OPERATION_TIMEOUT_SECONDS", "300")
         ),
-        turn_timeout_seconds=runner_config.timeout_seconds + 60,
+        turn_timeout_seconds=turn_lease_seconds,
         max_consecutive_turn_failures=int(
             env.get("SENPAI_CONTROLLER_MAX_CONSECUTIVE_TURN_FAILURES", "2")
         ),

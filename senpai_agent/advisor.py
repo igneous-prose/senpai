@@ -12,7 +12,7 @@ from typing import Protocol, Self
 from openhands.sdk.conversation import ConversationExecutionStatus, ConversationState
 from pydantic import BaseModel, ConfigDict, Field
 
-from senpai_agent.inbox import PersistentInbox
+from senpai_agent.inbox import PersistentInbox, deliver_turn_messages
 from senpai_agent.PROMPTS import (
     ADVISOR_EVENT_PROMPT,
     EVENT_PROMPT,
@@ -20,6 +20,13 @@ from senpai_agent.PROMPTS import (
 )
 
 _EVENT_STORE_SETUP_LOCK = threading.Lock()
+_UNDELIVERABLE_STATUSES = frozenset(
+    {
+        ConversationExecutionStatus.ERROR,
+        ConversationExecutionStatus.STUCK,
+        ConversationExecutionStatus.DELETING,
+    }
+)
 
 
 class AdvisorEvent(BaseModel):
@@ -174,18 +181,18 @@ def advisor_conversation_id(
 ) -> uuid.UUID:
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "advisor-conversation-id"
-    if explicit_id is not None:
-        conversation_id = uuid.UUID(explicit_id)
-        path.write_text(f"{conversation_id}\n")
-        return conversation_id
-    if path.exists():
+    if explicit_id is None and path.exists():
         return uuid.UUID(path.read_text().strip())
 
-    conversation_id = uuid.uuid4()
+    conversation_id = uuid.UUID(explicit_id) if explicit_id else uuid.uuid4()
     temporary = path.with_suffix(".tmp")
     temporary.write_text(f"{conversation_id}\n")
     temporary.replace(path)
     return conversation_id
+
+
+def fork_advisor_conversation(state_dir: Path) -> uuid.UUID:
+    return advisor_conversation_id(state_dir, str(uuid.uuid4()))
 
 
 class MessageConversation(Protocol):
@@ -307,14 +314,47 @@ class AdvisorEventPump:
                 if event.payload.get("parent_conversation_id")
                 == self._parent_conversation_id
             ]
+        transferred = 0
         for event in pending:
+            if event.kind == "human_issue":
+                state = getattr(self._conversation, "state", None)
+                if state is not None:
+                    with state:
+                        if ConversationState.get_unmatched_actions(
+                            state.active_branch()
+                        ):
+                            continue
+                        if (
+                            state.execution_status
+                            != ConversationExecutionStatus.FINISHED
+                        ):
+                            turn = self._inbox.steer(
+                                self._conversation_id,
+                                event.dedupe_key,
+                                event.to_inbox_message(),
+                            )
+                            if (
+                                turn is not None
+                                and state.execution_status
+                                not in _UNDELIVERABLE_STATUSES
+                            ):
+                                deliver_turn_messages(
+                                    self._conversation,
+                                    self._inbox,
+                                    turn.turn_id,
+                                )
+                            self._store.acknowledge(event.dedupe_key)
+                            transferred += 1
+                            continue
             self._inbox.enqueue(
                 self._conversation_id,
                 event.dedupe_key,
                 event.to_inbox_message(),
+                priority=event.kind == "human_issue",
             )
             self._store.acknowledge(event.dedupe_key)
-        return len(pending)
+            transferred += 1
+        return transferred
 
     def __enter__(self) -> Self:
         self._thread.start()

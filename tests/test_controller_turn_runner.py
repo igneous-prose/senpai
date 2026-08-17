@@ -384,7 +384,7 @@ def test_context_exhaustion_retries_once_on_a_fresh_branch_with_the_same_id(
 
     assert result.exit_code == 0
     assert calls[0] == ("current actionable event", conversation_id, False, 100)
-    assert calls[1][1:] == (conversation_id, True, 75)
+    assert calls[1][1:] == (conversation_id, True, 100)
     assert "complete current controller context" in calls[1][0]
     assert "current actionable event" in calls[1][0]
     assert "raw trace and workspace are preserved" in calls[1][0]
@@ -490,40 +490,6 @@ def test_context_recovery_attempt_is_not_retried(
 
     assert [reset_context for _, _, reset_context in calls] == [False, True]
     assert raised.value.conversation_id == conversation_id
-    assert isinstance(raised.value.__cause__, ConversationRunError)
-
-
-def test_exhausted_turn_budget_defers_without_starting_a_doomed_recovery(
-    tmp_path: Path,
-    monkeypatch,
-):
-    conversation_id = UUID("00000000-0000-0000-0000-000000000094")
-    clock = [100.0]
-    calls = []
-
-    def run_openhands(prompt, config, *, reset_context=False):
-        calls.append((prompt, config.conversation_id, reset_context))
-        clock[0] += 100
-        raise ConversationRunError(
-            conversation_id,
-            LLMContextWindowExceedError("context length exceeded"),
-        )
-
-    monkeypatch.setattr("senpai_agent.openhands_runner.run_openhands", run_openhands)
-    monkeypatch.setattr("senpai_agent.controller.time.monotonic", lambda: clock[0])
-
-    with pytest.raises(ConversationRecoveryExhausted) as raised:
-        OpenHandsTurnRunner(
-            Config("advisor", tmp_path / "state", conversation_id, timeout_seconds=100),
-            full_prompt="complete current controller context",
-        ).run(
-            "current actionable event",
-            conversation_id=conversation_id,
-            event_keys=frozenset(),
-        )
-
-    assert len(calls) == 1
-    assert isinstance(raised.value.error, TimeoutError)
     assert isinstance(raised.value.__cause__, ConversationRunError)
 
 

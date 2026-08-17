@@ -1,6 +1,7 @@
 import json
 import signal
 import threading
+import time
 from io import StringIO
 from types import SimpleNamespace
 
@@ -477,7 +478,6 @@ def test_stalled_recovery_is_bounded_and_quarantined_with_the_full_brief(
     config = runtime_config(
         tmp_path,
         inbox_max_stalled_attempts=1,
-        inbox_max_turn_age_seconds=10_000,
         inbox_max_recovery_generations=1,
     )
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
@@ -572,7 +572,6 @@ def test_model_visible_progress_renews_the_stalled_attempt_budget(
     config = runtime_config(
         tmp_path,
         inbox_max_stalled_attempts=1,
-        inbox_max_turn_age_seconds=10_000,
         inbox_max_recovery_generations=1,
     )
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
@@ -653,7 +652,6 @@ def test_timeout_and_error_artifacts_do_not_renew_the_stalled_attempt_budget(
     config = runtime_config(
         tmp_path,
         inbox_max_stalled_attempts=2,
-        inbox_max_turn_age_seconds=10_000,
         inbox_max_recovery_generations=1,
     )
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
@@ -1164,6 +1162,27 @@ def test_turn_deadline_requests_conversation_interrupt(tmp_path, monkeypatch):
     )
     assert interrupted.is_set()
     assert cancelled.is_set()
+
+
+def test_turn_activity_renews_the_inactivity_deadline():
+    interrupted = False
+    activity = [time.monotonic()]
+
+    class Conversation:
+        async def arun(self):
+            for _ in range(3):
+                await runner.asyncio.sleep(0.02)
+                activity[0] = time.monotonic()
+
+        def interrupt(self):
+            nonlocal interrupted
+            interrupted = True
+
+    runner.asyncio.run(
+        runner.arun_conversation(Conversation(), 0.03, lambda: activity[0])
+    )
+
+    assert not interrupted
 
 
 def test_signal_interrupts_the_conversation_and_restores_handlers(monkeypatch):

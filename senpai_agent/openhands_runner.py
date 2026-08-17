@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import os
 import signal
 import stat
 import sys
 import time
 import uuid
-from collections.abc import Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,7 +126,6 @@ COMMAND_SECRET_ENV_NAMES = (
 )
 EVENT_TEXT_LIMIT = 20000
 DEFAULT_INBOX_MAX_STALLED_ATTEMPTS = 3
-DEFAULT_INBOX_MAX_TURN_AGE_SECONDS = 3 * 60 * 60
 DEFAULT_INBOX_MAX_RECOVERY_GENERATIONS = 1
 
 
@@ -217,7 +215,6 @@ class RunnerConfig:
     llm_timeout_seconds: int = 900
     llm_num_retries: int = 1
     inbox_max_stalled_attempts: int = DEFAULT_INBOX_MAX_STALLED_ATTEMPTS
-    inbox_max_turn_age_seconds: float = DEFAULT_INBOX_MAX_TURN_AGE_SECONDS
     inbox_max_recovery_generations: int = DEFAULT_INBOX_MAX_RECOVERY_GENERATIONS
     child: bool = False
     delegation_root_state_dir: Path | None = None
@@ -647,12 +644,6 @@ def resolve_config(
                 str(DEFAULT_INBOX_MAX_STALLED_ATTEMPTS),
             )
         )
-        inbox_max_turn_age_seconds = float(
-            env.get(
-                "SENPAI_INBOX_MAX_TURN_AGE_SECONDS",
-                str(DEFAULT_INBOX_MAX_TURN_AGE_SECONDS),
-            )
-        )
         inbox_max_recovery_generations = int(
             env.get(
                 "SENPAI_INBOX_MAX_RECOVERY_GENERATIONS",
@@ -661,14 +652,9 @@ def resolve_config(
         )
     except ValueError as error:
         raise RuntimeError("inbox recovery budget must be numeric") from error
-    if (
-        inbox_max_stalled_attempts <= 0
-        or not math.isfinite(inbox_max_turn_age_seconds)
-        or inbox_max_turn_age_seconds <= 0
-        or inbox_max_recovery_generations < 0
-    ):
+    if inbox_max_stalled_attempts <= 0 or inbox_max_recovery_generations < 0:
         raise RuntimeError(
-            "inbox recovery budget requires positive attempt/age limits and a "
+            "inbox recovery budget requires a positive attempt limit and a "
             "non-negative recovery-generation limit"
         )
     wandb_entity = env.get("WANDB_ENTITY", "").strip() or None
@@ -899,7 +885,6 @@ def resolve_config(
         llm_timeout_seconds=llm_timeout_seconds,
         llm_num_retries=llm_num_retries,
         inbox_max_stalled_attempts=inbox_max_stalled_attempts,
-        inbox_max_turn_age_seconds=inbox_max_turn_age_seconds,
         inbox_max_recovery_generations=inbox_max_recovery_generations,
         child=args.child,
         delegation_root_state_dir=delegation_root_state_dir,
@@ -1214,26 +1199,46 @@ def graceful_interrupts(conversation: object) -> Iterator[None]:
 async def arun_conversation(
     conversation: object,
     timeout_seconds: float,
+    activity: Callable[[], float] | None = None,
 ) -> None:
-    """Run the async OpenHands path so timeout cancellation reaches tools."""
+    """Run until completion or one full timeout passes without activity."""
 
     task = asyncio.create_task(conversation.arun())
-    try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=timeout_seconds)
-    except TimeoutError:
-        print(
-            f"OPENHANDS_TIMEOUT seconds={timeout_seconds:g}",
-            file=sys.stderr,
-            flush=True,
-        )
-        conversation.interrupt()
-        if not task.done():
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=max(0, deadline - time.monotonic()),
+            )
+            return
+        except TimeoutError:
+            if task.done():
+                await task
+                return
+            renewed = (
+                activity() + timeout_seconds if activity is not None else deadline
+            )
+            if renewed > time.monotonic():
+                deadline = renewed
+                continue
+            print(
+                f"OPENHANDS_TIMEOUT seconds={timeout_seconds:g}",
+                file=sys.stderr,
+                flush=True,
+            )
+            conversation.interrupt()
             task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+            with suppress(asyncio.CancelledError):
+                await task
+            return
 
 
-def run_conversation(conversation: object, timeout_seconds: float) -> None:
+def run_conversation(
+    conversation: object,
+    timeout_seconds: float,
+    activity: Callable[[], float] | None = None,
+) -> None:
     if timeout_seconds <= 0:
         print(
             f"OPENHANDS_TIMEOUT seconds={max(timeout_seconds, 0):g}",
@@ -1242,7 +1247,7 @@ def run_conversation(conversation: object, timeout_seconds: float) -> None:
         )
         conversation.interrupt()
         return
-    asyncio.run(arun_conversation(conversation, timeout_seconds))
+    asyncio.run(arun_conversation(conversation, timeout_seconds, activity))
 
 
 def event_summary(event: object) -> dict[str, object]:
@@ -1367,16 +1372,20 @@ def run_openhands(
     inbox: PersistentInbox | None = None,
     inbox_turn_id: str | None = None,
     recovery_prompt: str | None = None,
+    on_activity: Callable[[], None] | None = None,
 ) -> int:
     if (inbox is None) != (inbox_turn_id is None):
         raise ValueError("inbox and inbox_turn_id must be provided together")
     started_at = time.time()
-    run_deadline = min(
-        started_at + config.timeout_seconds,
-        config.delegation_deadline_epoch or float("inf"),
+    run_deadline = (
+        min(
+            started_at + config.timeout_seconds,
+            config.delegation_deadline_epoch or float("inf"),
+        )
+        if config.child
+        else None
     )
-    run_timeout = run_deadline - started_at
-    if run_timeout <= 0:
+    if run_deadline is not None and run_deadline <= started_at:
         raise TimeoutError("the inherited OpenHands deadline has expired")
     scrub_model_credentials(os.environ, config)
     register_default_tools(enable_browser=False)
@@ -1515,13 +1524,21 @@ def run_openhands(
                 condenser=condenser,
                 tool_concurrency_limit=MAX_PARALLEL_AGENTS,
             )
+        last_activity = [time.monotonic()]
+
+        def observe_event(event: object) -> None:
+            last_activity[0] = time.monotonic()
+            if on_activity is not None:
+                on_activity()
+            print_event(event)
+
         conversation = LocalConversation(
             agent=agent,
             workspace=config.workspace,
             plugins=[PluginSource(source=str(config.plugin_dir))],
             persistence_dir=config.state_dir,
             conversation_id=config.conversation_id,
-            callbacks=[] if config.child else [print_event],
+            callbacks=[] if config.child else [observe_event],
             max_iteration_per_run=config.max_turns,
             visualizer=None,
             secrets=dict(config.command_secrets),
@@ -1573,7 +1590,6 @@ def run_openhands(
                 if inbox.terminal_recovery_due(
                     active_inbox_turn_id,
                     max_attempts=config.inbox_max_stalled_attempts,
-                    max_age_seconds=config.inbox_max_turn_age_seconds,
                 ):
                     stalled_turn_id = active_inbox_turn_id
                     recovery = inbox.recover_turn(
@@ -1619,8 +1635,13 @@ def run_openhands(
                             conversation_id=config.conversation_id,
                         ),
                     ):
-                        run_conversation(conversation, run_deadline - time.time())
+                        run_conversation(
+                            conversation,
+                            config.timeout_seconds,
+                            lambda: last_activity[0],
+                        )
                 else:
+                    assert run_deadline is not None
                     run_conversation(conversation, run_deadline - time.time())
         status = conversation.state.execution_status
         if (

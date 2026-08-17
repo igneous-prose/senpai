@@ -64,6 +64,9 @@ deadline, and completed-turn counter. The supervisor resets bounded restart
 backoff only after a turn is successfully acknowledged; process uptime and
 idle sleep do not count as progress. The supervisor is independent of
 OpenHands and Kubernetes.
+OpenHands events renew the root turn's lease; its configured timeout measures
+inactivity rather than total elapsed time. Provider, tool, training, and child
+deadlines remain hard.
 Kubernetes liveness and Docker health checks inspect the same lease, while the
 supervisor provides the same recovery on a plain host.
 

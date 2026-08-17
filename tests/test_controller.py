@@ -96,6 +96,14 @@ def review_event(number=17):
     )
 
 
+def human_event(message_id=101):
+    return ControllerEvent(
+        kind="human_issue",
+        dedupe_key=f"human_issue:1:{message_id}",
+        payload={"number": 1, "human_message_id": message_id},
+    )
+
+
 class MultiGenerationRecoveryTurns:
     def run(
         self,
@@ -1162,6 +1170,56 @@ def test_controller_quarantines_an_exhausted_turn_without_restarting(capsys):
     assert mailbox.acknowledged == []
     assert runtime.inbox.ready_conversation_ids() == ()
     assert "SENPAI_TURN_QUARANTINED" in capsys.readouterr().err
+
+
+def test_new_human_instruction_forks_a_quarantined_advisor(capsys):
+    runtime = controller(
+        Mailbox(((review_event(),), ())),
+        QuarantiningTurns(),
+        max_consecutive_turn_failures=1,
+    )
+    runtime.run(max_cycles=1)
+    quarantined = runtime.inbox.quarantined_turns()[0]
+    fresh = UUID("00000000-0000-0000-0000-000000000099")
+    instruction = human_event()
+    mailbox = Mailbox(((instruction,), ()))
+    turns = Turns()
+
+    controller(
+        mailbox,
+        turns,
+        inbox=runtime.inbox,
+        fork_conversation=lambda: fresh,
+    ).run(max_cycles=1)
+
+    assert len(turns.calls) == 1
+    assert turns.calls[0][1] == fresh
+    assert turns.calls[0][2] == frozenset({instruction.dedupe_key})
+    assert "programme" in turns.calls[0][0]
+    assert runtime.inbox.turn(quarantined.turn_id).quarantine_reason
+    assert mailbox.acknowledged == [(instruction.dedupe_key,)]
+    assert "SENPAI_ADVISOR_CONVERSATION_FORK" in capsys.readouterr().err
+
+
+def test_human_instruction_joins_an_unresolved_turn_before_retry():
+    inbox = PersistentInbox()
+    existing = review_event()
+    inbox.enqueue(CONVERSATION_ID, existing.dedupe_key, existing.to_prompt())
+    active = inbox.next_turn(CONVERSATION_ID, "programme")
+    assert active is not None
+    instruction = human_event()
+    turns = Turns()
+
+    controller(
+        Mailbox(((instruction,), ())),
+        turns,
+        inbox=inbox,
+    ).run(max_cycles=1)
+
+    assert len(turns.calls) == 1
+    assert turns.calls[0][2] == frozenset(
+        {existing.dedupe_key, instruction.dedupe_key}
+    )
 
 
 def test_start_gate_wait_publishes_a_live_lease_before_polling(tmp_path: Path):
