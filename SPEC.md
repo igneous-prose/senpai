@@ -497,11 +497,11 @@ at depth two. Explore, Search, Bash Runner, and every depth-two agent are leaves
 This makes chains such as Explore -> Explore impossible without constraining a
 later research phase to the first batch's lifetime budget.
 
-The tree inherits one absolute root-turn deadline. Each task also has a tier
-runtime cap: 600 seconds for `fast`, 1,800 for `smart`, and 3,600 for `frontier`.
-The effective deadline is the earlier of that cap and the inherited root
-deadline. Reaching it interrupts the complete process group and records a
-terminal timeout; no descendant survives the tree deadline.
+Each task has an absolute tier runtime cap: 1,200 seconds for `fast`, 3,600 for
+`smart`, and 7,200 for `frontier`. A descendant's effective deadline is the
+earlier of that cap and its inherited ancestor deadline. Reaching it interrupts
+the complete process group and records a terminal timeout; no descendant
+outlives an ancestor deadline.
 
 Each tier selects one explicit model-and-effort profile. `model=fast` defaults
 to `openai/gpt-5.6-luna` at `high` for mechanical search, command execution,

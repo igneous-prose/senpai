@@ -283,10 +283,11 @@ concurrently across all trees. Root tasks count toward the tree total, so leave
 slots when a General Purpose child needs helpers. Recursion is limited to two
 child edges: the root may spawn any agent, and a depth-one General Purpose
 child may spawn leaf helpers; Explore, Search, Bash Runner, and all depth-two
-children cannot delegate. The tree shares one absolute root-turn deadline, and
-a nested child must await or cancel all of its helpers before returning.
-Individual tasks are capped at ten minutes for `fast`, thirty for `smart`, and
-one hour for `frontier`, shortened when the root deadline is nearer.
+children cannot delegate. Each delegated task has an absolute tier deadline,
+and descendants inherit the earlier ancestor deadline. A nested child must
+await or cancel all of its helpers before returning.
+Individual tasks are capped at twenty minutes for `fast`, one hour for `smart`,
+and two hours for `frontier`, shortened when an ancestor deadline is nearer.
 
 An await call is capped at five minutes and does not cancel unfinished work.
 `agent_status` provides a non-blocking snapshot; with no task IDs, it returns
@@ -376,7 +377,7 @@ The controller owns cadence, durable events, conversation selection, verified Gi
 - The advisor keeps one conversation UUID across restarts, recovery, and quarantine.
 - A student uses one UUID per assignment revision; feedback, monitor events, and child-task results resume that exact conversation.
 - Still-actionable GitHub state is re-delivered on the configured reminder cadence, which defaults to at least ten minutes even when GitHub is polled more frequently. Immediate post-turn polls deliver changed state but not timed reminders, so a successful research-only turn cannot enter a no-sleep reminder loop. `research_base_changed` is keyed by assignment, revision, PR head, and the exact required/current base pair; each identity or base movement requires a new decision. Merge repeats the live-base check immediately before its mutation, while external base writers still require strict up-to-date branch protection or a merge queue for an atomic guarantee.
-- Each model request gets one bounded 15-minute attempt. Foreground terminal calls return within ten minutes, delegated children retain hard deadlines, and root turns use a two-hour inactivity lease renewed by OpenHands events. Two consecutive failed turns exit to the supervisor for a clean worker restart. Restart backoff grows across failed workers to a five-minute ceiling; only a successfully acknowledged turn resets that streak, not process uptime or idle sleep.
+- Each model request has a hard 90-minute ceiling. Foreground terminal calls return within ten minutes, delegated children retain hard 20/60/120-minute tier limits, and root turns use a two-hour inactivity lease renewed by OpenHands events. Two consecutive failed turns exit to the supervisor for a clean worker restart. Restart backoff grows across failed workers to a five-minute ceiling; only a successfully acknowledged turn resets that streak, not process uptime or idle sleep.
 - Every input follows one durable `pending -> delivered -> processed` inbox. Authenticated human instructions are the interrupt tier: tools get up to 60 seconds to finish before the active run is interrupted and resumed, even when its inbox batch is full. Student assignments and trusted PR feedback share a FIFO queue tier; feedback waits for the next completed agent step without cancelling it. Ordinary events remain FIFO. Turn formation and non-human attachments are bounded to 16 events or 64 KiB; prioritized overflow leads the next turn.
 - A completed tool observation renews the three-attempt no-progress budget; timeout, error, interruption, state, and delivery events do not. Thirty-six inference starts on one branch are a separate restart backstop and do not limit one productive run. Either exhausted budget triggers bounded canonical fresh-branch recovery; exhausting recovery quarantines the turn and reports it on every controller start. Only an authenticated human instruction reopens quarantine and resets both budgets; trusted PR feedback stays pending. A persisted final response is reconciled even if cancellation left the SDK status paused. `SENPAI_INBOX_MAX_STALLED_ATTEMPTS` and `SENPAI_INBOX_MAX_RECOVERY_GENERATIONS` configure recovery.
 - A typed context-window or malformed-history failure uses the same bounded fresh-branch recovery. The reset and its canonical recovery copy are durable across crashes; transient failures remain unacknowledged and retry after at least ten minutes.

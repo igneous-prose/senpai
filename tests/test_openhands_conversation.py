@@ -86,7 +86,7 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
     assert captured["secrets"] == {"WANDB_API_KEY": "wandb-key"}
     assert captured["conversation_id_env"] == config.conversation_id.hex
     assert captured["delete_on_close"] is False
-    assert captured["llm_timeout"] == 900
+    assert captured["llm_timeout"] == 5400
     assert captured["llm_num_retries"] == 1
     assert captured["closed"] is True
 
