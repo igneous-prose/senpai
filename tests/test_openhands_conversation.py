@@ -1185,6 +1185,32 @@ def test_turn_activity_renews_the_inactivity_deadline():
     assert not interrupted
 
 
+def test_steering_resumes_the_same_conversation_object():
+    class Conversation:
+        def __init__(self):
+            self.id = "stable-advisor-id"
+            self.runs = 0
+
+        async def arun(self):
+            self.runs += 1
+
+        def interrupt(self):
+            raise AssertionError("a completed run does not need interruption")
+
+    resumes = iter((True, False))
+    pump = SimpleNamespace(
+        prepare_run=lambda: True,
+        run_started=lambda: None,
+        finish_run=lambda: next(resumes),
+    )
+    conversation = Conversation()
+
+    runner.run_steerable_conversation(conversation, pump, 1)
+
+    assert conversation.runs == 2
+    assert conversation.id == "stable-advisor-id"
+
+
 def test_signal_interrupts_the_conversation_and_restores_handlers(monkeypatch):
     calls = []
     installed = {}
@@ -1210,6 +1236,90 @@ def test_signal_interrupts_the_conversation_and_restores_handlers(monkeypatch):
         (signal.SIGTERM, previous[signal.SIGTERM]),
         (signal.SIGINT, previous[signal.SIGINT]),
     ]
+
+
+def test_signal_does_not_resume_a_steering_interruption(monkeypatch):
+    installed = {}
+    previous = {signal.SIGTERM: object(), signal.SIGINT: object()}
+
+    def fake_signal(signum, handler):
+        installed[signum] = handler
+        return previous[signum]
+
+    class Conversation:
+        def __init__(self):
+            self.runs = 0
+
+        async def arun(self):
+            self.runs += 1
+
+        def interrupt(self):
+            pass
+
+    class Pump:
+        prepare_run = staticmethod(lambda: True)
+        run_started = staticmethod(lambda: None)
+
+        @staticmethod
+        def finish_run():
+            installed[signal.SIGTERM](signal.SIGTERM, None)
+            return True
+
+    conversation = Conversation()
+    monkeypatch.setattr(runner.signal, "signal", fake_signal)
+
+    with pytest.raises(SystemExit):
+        with graceful_interrupts(conversation) as stop_requested:
+            runner.run_steerable_conversation(
+                conversation,
+                Pump(),
+                1,
+                stop_requested=stop_requested,
+            )
+
+    assert conversation.runs == 1
+
+
+def test_signal_at_run_start_cancels_before_the_run_continues(monkeypatch):
+    installed = {}
+    previous = {signal.SIGTERM: object(), signal.SIGINT: object()}
+
+    def fake_signal(signum, handler):
+        installed[signum] = handler
+        return previous[signum]
+
+    class Conversation:
+        def __init__(self):
+            self.continued = False
+
+        async def arun(self):
+            await runner.asyncio.sleep(0)
+            self.continued = True
+
+        def interrupt(self):
+            pass
+
+    class Pump:
+        prepare_run = staticmethod(lambda: True)
+        finish_run = staticmethod(lambda: False)
+
+        @staticmethod
+        def run_started():
+            installed[signal.SIGTERM](signal.SIGTERM, None)
+
+    conversation = Conversation()
+    monkeypatch.setattr(runner.signal, "signal", fake_signal)
+
+    with pytest.raises(SystemExit):
+        with graceful_interrupts(conversation) as stop_requested:
+            runner.run_steerable_conversation(
+                conversation,
+                Pump(),
+                1,
+                stop_requested=stop_requested,
+            )
+
+    assert not conversation.continued
 
 
 def test_recovered_actions_are_rejected_before_the_conversation_resumes(

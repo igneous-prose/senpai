@@ -1172,7 +1172,7 @@ def test_controller_quarantines_an_exhausted_turn_without_restarting(capsys):
     assert "SENPAI_TURN_QUARANTINED" in capsys.readouterr().err
 
 
-def test_new_human_instruction_forks_a_quarantined_advisor(capsys):
+def test_new_human_instruction_reopens_the_same_quarantined_advisor():
     runtime = controller(
         Mailbox(((review_event(),), ())),
         QuarantiningTurns(),
@@ -1180,7 +1180,6 @@ def test_new_human_instruction_forks_a_quarantined_advisor(capsys):
     )
     runtime.run(max_cycles=1)
     quarantined = runtime.inbox.quarantined_turns()[0]
-    fresh = UUID("00000000-0000-0000-0000-000000000099")
     instruction = human_event()
     mailbox = Mailbox(((instruction,), ()))
     turns = Turns()
@@ -1189,37 +1188,18 @@ def test_new_human_instruction_forks_a_quarantined_advisor(capsys):
         mailbox,
         turns,
         inbox=runtime.inbox,
-        fork_conversation=lambda: fresh,
     ).run(max_cycles=1)
 
     assert len(turns.calls) == 1
-    assert turns.calls[0][1] == fresh
-    assert turns.calls[0][2] == frozenset({instruction.dedupe_key})
-    assert "programme" in turns.calls[0][0]
-    assert runtime.inbox.turn(quarantined.turn_id).quarantine_reason
-    assert mailbox.acknowledged == [(instruction.dedupe_key,)]
-    assert "SENPAI_ADVISOR_CONVERSATION_FORK" in capsys.readouterr().err
-
-
-def test_human_instruction_joins_an_unresolved_turn_before_retry():
-    inbox = PersistentInbox()
-    existing = review_event()
-    inbox.enqueue(CONVERSATION_ID, existing.dedupe_key, existing.to_prompt())
-    active = inbox.next_turn(CONVERSATION_ID, "programme")
-    assert active is not None
-    instruction = human_event()
-    turns = Turns()
-
-    controller(
-        Mailbox(((instruction,), ())),
-        turns,
-        inbox=inbox,
-    ).run(max_cycles=1)
-
-    assert len(turns.calls) == 1
+    assert turns.calls[0][1] == CONVERSATION_ID
     assert turns.calls[0][2] == frozenset(
-        {existing.dedupe_key, instruction.dedupe_key}
+        {review_event().dedupe_key, instruction.dedupe_key}
     )
+    assert "programme" in turns.calls[0][0]
+    assert runtime.inbox.turn(quarantined.turn_id).quarantine_reason is None
+    assert mailbox.acknowledged == [
+        (review_event().dedupe_key, instruction.dedupe_key)
+    ]
 
 
 def test_start_gate_wait_publishes_a_live_lease_before_polling(tmp_path: Path):

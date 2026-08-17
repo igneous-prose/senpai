@@ -17,11 +17,7 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from senpai_agent.agent_markdown import strip_spdx_header
-from senpai_agent.advisor import (
-    AdvisorEvent,
-    AdvisorEventStore,
-    fork_advisor_conversation,
-)
+from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
     DeliveryState,
@@ -281,7 +277,6 @@ class Controller:
         conversation_for_events: (
             Callable[[Sequence[ControllerEvent]], Sequence[ConversationBatch]] | None
         ) = None,
-        fork_conversation: Callable[[], UUID] | None = None,
         reconcile: Callable[[Sequence[ControllerEvent]], None] | None = None,
         progress: ProgressLease | None = None,
         operation_timeout_seconds: float = 300,
@@ -308,7 +303,6 @@ class Controller:
         self.turns = turns
         self.conversation_id = conversation_id
         self.conversation_for_events = conversation_for_events
-        self.fork_conversation = fork_conversation
         self.reconcile = reconcile
         self.progress = progress
         self.operation_timeout_seconds = operation_timeout_seconds
@@ -495,36 +489,6 @@ class Controller:
         self._enqueue_events(events)
 
     def _enqueue_events(self, events: Sequence[ControllerEvent]) -> None:
-        quarantine = next(
-            (
-                turn
-                for turn in self.inbox.quarantined_turns()
-                if turn.conversation_id == str(self.conversation_id)
-            ),
-            None,
-        )
-        if (
-            quarantine is not None
-            and self.fork_conversation is not None
-            and any(
-                event.kind == "human_issue"
-                and event.dedupe_key not in quarantine.event_keys
-                for event in events
-            )
-        ):
-            previous = self.conversation_id
-            self.conversation_id = self.fork_conversation()
-            if self.conversation_id == previous:
-                raise RuntimeError(
-                    "advisor conversation fork reused its quarantined ID"
-                )
-            print(
-                "SENPAI_ADVISOR_CONVERSATION_FORK "
-                f"previous_id={previous} conversation_id={self.conversation_id} "
-                f"quarantined_turn_id={quarantine.turn_id}",
-                file=sys.stderr,
-                flush=True,
-            )
         for batch in self._event_batches(events):
             batch_events = batch.events
             conversation_id = batch.conversation_id
@@ -923,11 +887,6 @@ def controller_main(
             else None
         ),
         conversation_for_events=conversation_selector,
-        fork_conversation=(
-            partial(fork_advisor_conversation, runner_config.state_dir)
-            if role == "advisor"
-            else None
-        ),
         reconcile=reconcile,
         progress=progress,
         operation_timeout_seconds=float(

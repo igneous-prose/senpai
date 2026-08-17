@@ -269,6 +269,35 @@ def test_steering_joins_the_active_turn_once(tmp_path: Path):
     assert len(conversation.sent) == 3
 
 
+def test_only_a_new_steer_reopens_the_same_quarantined_turn(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(CONVERSATION_ID, "event:first", "first")
+    active = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert active is not None
+    deliver_turn_messages(Conversation(), inbox, active.turn_id)
+    inbox.record_inference_attempt(active.turn_id)
+    inbox.quarantine(active.turn_id, "recovery budget exhausted")
+
+    duplicate = inbox.steer(CONVERSATION_ID, "event:first", "first")
+
+    assert duplicate is not None
+    assert duplicate.turn_id == active.turn_id
+    assert duplicate.quarantine_reason == "recovery budget exhausted"
+    assert inbox.ready_conversation_ids() == ()
+
+    reopened = inbox.steer(CONVERSATION_ID, "human:1", "change direction")
+
+    assert reopened is not None
+    assert reopened.turn_id == active.turn_id
+    assert reopened.quarantine_reason is None
+    assert [event.event_key for event in reopened.events] == [
+        "event:first",
+        "human:1",
+    ]
+    assert not inbox.terminal_recovery_due(active.turn_id, max_attempts=1)
+    assert inbox.ready_conversation_ids() == (str(CONVERSATION_ID),)
+
+
 def test_context_reset_preserves_old_turn_and_requeues_one_canonical_copy(
     tmp_path: Path,
 ):

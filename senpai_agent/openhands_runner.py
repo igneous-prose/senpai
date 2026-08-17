@@ -1174,7 +1174,7 @@ def delegation_config(
 
 
 @contextmanager
-def graceful_interrupts(conversation: object) -> Iterator[None]:
+def graceful_interrupts(conversation: object) -> Iterator[Callable[[], bool]]:
     interrupted_by: list[int] = []
 
     def interrupt(signum: int, _frame: object) -> None:
@@ -1188,7 +1188,7 @@ def graceful_interrupts(conversation: object) -> Iterator[None]:
         for signum in (signal.SIGTERM, signal.SIGINT)
     }
     try:
-        yield
+        yield lambda: bool(interrupted_by)
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
@@ -1200,10 +1200,26 @@ async def arun_conversation(
     conversation: object,
     timeout_seconds: float,
     activity: Callable[[], float] | None = None,
+    *,
+    started: Callable[[], None] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
 ) -> None:
     """Run until completion or one full timeout passes without activity."""
 
     task = asyncio.create_task(conversation.arun())
+
+    async def cancel_run() -> None:
+        conversation.interrupt()
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    await asyncio.sleep(0)
+    if started is not None:
+        started()
+    if stop_requested is not None and stop_requested():
+        await cancel_run()
+        return
     deadline = time.monotonic() + timeout_seconds
     while True:
         try:
@@ -1227,17 +1243,13 @@ async def arun_conversation(
                 file=sys.stderr,
                 flush=True,
             )
-            conversation.interrupt()
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            await cancel_run()
             return
 
 
 def run_conversation(
     conversation: object,
     timeout_seconds: float,
-    activity: Callable[[], float] | None = None,
 ) -> None:
     if timeout_seconds <= 0:
         print(
@@ -1247,7 +1259,48 @@ def run_conversation(
         )
         conversation.interrupt()
         return
-    asyncio.run(arun_conversation(conversation, timeout_seconds, activity))
+    asyncio.run(arun_conversation(conversation, timeout_seconds))
+
+
+async def arun_steerable_conversation(
+    conversation: object,
+    pump: AdvisorEventPump,
+    timeout_seconds: float,
+    activity: Callable[[], float] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+) -> None:
+    while stop_requested is None or not stop_requested():
+        if not pump.prepare_run():
+            continue
+        if stop_requested is not None and stop_requested():
+            return
+        await arun_conversation(
+            conversation,
+            timeout_seconds,
+            activity,
+            started=pump.run_started,
+            stop_requested=stop_requested,
+        )
+        if not pump.finish_run():
+            return
+
+
+def run_steerable_conversation(
+    conversation: object,
+    pump: AdvisorEventPump,
+    timeout_seconds: float,
+    activity: Callable[[], float] | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+) -> None:
+    asyncio.run(
+        arun_steerable_conversation(
+            conversation,
+            pump,
+            timeout_seconds,
+            activity,
+            stop_requested,
+        )
+    )
 
 
 def event_summary(event: object) -> dict[str, object]:
@@ -1524,10 +1577,11 @@ def run_openhands(
                 condenser=condenser,
                 tool_concurrency_limit=MAX_PARALLEL_AGENTS,
             )
-        last_activity = [time.monotonic()]
+        last_activity = time.monotonic()
 
         def observe_event(event: object) -> None:
-            last_activity[0] = time.monotonic()
+            nonlocal last_activity
+            last_activity = time.monotonic()
             if on_activity is not None:
                 on_activity()
             print_event(event)
@@ -1619,11 +1673,12 @@ def run_openhands(
                         ),
                     )
                 inbox.record_inference_attempt(active_inbox_turn_id)
-            with graceful_interrupts(conversation):
+            with graceful_interrupts(conversation) as stop_requested:
                 if not config.child:
-                    with (
-                        AdvisorEventStore(local_event_db_path(config)) as event_store,
-                        AdvisorEventPump(
+                    with AdvisorEventStore(
+                        local_event_db_path(config)
+                    ) as event_store:
+                        event_pump = AdvisorEventPump(
                             event_store,
                             conversation,
                             parent_conversation_id=(
@@ -1633,13 +1688,15 @@ def run_openhands(
                             ),
                             inbox=inbox,
                             conversation_id=config.conversation_id,
-                        ),
-                    ):
-                        run_conversation(
-                            conversation,
-                            config.timeout_seconds,
-                            lambda: last_activity[0],
                         )
+                        with event_pump:
+                            run_steerable_conversation(
+                                conversation,
+                                event_pump,
+                                config.timeout_seconds,
+                                lambda: last_activity,
+                                stop_requested,
+                            )
                 else:
                     assert run_deadline is not None
                     run_conversation(conversation, run_deadline - time.time())

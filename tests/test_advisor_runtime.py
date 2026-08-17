@@ -17,7 +17,6 @@ from senpai_agent.advisor import (
     advisor_conversation_id,
     advisor_main,
     deliver_pending_events,
-    fork_advisor_conversation,
 )
 from senpai_agent.delegation import AgentStatusAction, AgentStatusObservation
 from senpai_agent.inbox import PersistentInbox, deliver_turn_messages
@@ -42,6 +41,12 @@ class ConversationStateStub:
     def append(self, event) -> None:
         with self:
             self.events.append(event)
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self) -> None:
+        self._lock.release()
 
     def __enter__(self):
         self._lock.acquire()
@@ -77,21 +82,45 @@ def completed_tool_action(action: ActionEvent) -> ObservationEvent:
     )
 
 
-def test_advisor_conversation_id_is_persisted(tmp_path: Path):
+STEERING_CONVERSATION_ID = "00000000-0000-0000-0000-000000000017"
+
+
+class SteeringConversation:
+    def __init__(
+        self,
+        status: ConversationExecutionStatus = ConversationExecutionStatus.RUNNING,
+    ):
+        self.state = ConversationStateStub(execution_status=status)
+        self.messages: list[str] = []
+        self.interrupted = threading.Event()
+        self.interrupts = 0
+
+    def send_message(self, message: str, sender: str | None = None) -> None:
+        self.messages.append(message)
+        self.state.append(SimpleNamespace(message=message, sender=sender))
+
+    def interrupt(self) -> None:
+        self.interrupts += 1
+        self.interrupted.set()
+        self.state.execution_status = ConversationExecutionStatus.PAUSED
+
+
+def active_steering_turn(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    inbox.enqueue(STEERING_CONVERSATION_ID, "controller:event", "controller event")
+    turn = inbox.next_turn(STEERING_CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    conversation = SteeringConversation()
+    deliver_turn_messages(conversation, inbox, turn.turn_id)
+    return inbox, turn, conversation
+
+
+def test_advisor_conversation_id_is_stable_and_persisted(tmp_path: Path):
     first = advisor_conversation_id(tmp_path)
     second = advisor_conversation_id(tmp_path)
 
     assert first == second
     assert (tmp_path / "advisor-conversation-id").read_text() == f"{first}\n"
-
-
-def test_forked_advisor_conversation_id_is_persisted(tmp_path: Path):
-    previous = advisor_conversation_id(tmp_path)
-
-    forked = fork_advisor_conversation(tmp_path)
-
-    assert forked != previous
-    assert advisor_conversation_id(tmp_path) == forked
 
 
 def test_event_store_deduplicates_and_survives_reopen(tmp_path: Path):
@@ -334,50 +363,140 @@ def test_human_issue_steers_the_active_turn_after_the_tool_boundary(tmp_path: Pa
         dedupe_key="human_issue:1",
         payload={"message": "Change direction."},
     )
-    conversation_id = "00000000-0000-0000-0000-000000000017"
-    action = pending_tool_action()
-
-    class Conversation:
-        def __init__(self):
-            self.state = ConversationStateStub(
-                execution_status=ConversationExecutionStatus.RUNNING
-            )
-            self.messages: list[str] = []
-            self.received = threading.Event()
-
-        def send_message(self, message: str, sender: str | None = None) -> None:
-            self.messages.append(message)
-            self.state.append(SimpleNamespace(message=message, sender=sender))
-            self.received.set()
-
-    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
-    inbox.enqueue(conversation_id, "controller:event", "controller event")
-    active = inbox.next_turn(conversation_id, "controller prompt")
-    assert active is not None
-    conversation = Conversation()
-    deliver_turn_messages(conversation, inbox, active.turn_id)
-    conversation.received.clear()
-    conversation.state.append(action)
-    conversation.state.inspected.clear()
+    inbox, active, conversation = active_steering_turn(tmp_path)
+    conversation.state.acquire()
 
     with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
-        store.enqueue(event)
-        with AdvisorEventPump(
+        pump = AdvisorEventPump(
             store,
             conversation,
             poll_interval=0.01,
             inbox=inbox,
-            conversation_id=conversation_id,
-        ):
-            assert conversation.state.inspected.wait(1)
-            assert not conversation.received.wait(0.03)
-            conversation.state.append(completed_tool_action(action))
-            assert conversation.received.wait(1)
-            conversation.state.execution_status = ConversationExecutionStatus.FINISHED
+            conversation_id=STEERING_CONVERSATION_ID,
+            steering_grace_seconds=0.2,
+        )
+        assert pump.prepare_run()
+        pump.run_started()
+        with pump:
+            store.enqueue(event)
+            assert not conversation.interrupted.wait(0.03)
+            conversation.state.release()
+            assert conversation.interrupted.wait(1)
+            assert pump.finish_run()
 
         assert store.pending() == []
     steered = inbox.turn(active.turn_id)
     assert steered.event_keys == ("controller:event", event.dedupe_key)
+    assert conversation.messages[-1] == event.to_inbox_message()
+
+
+def test_human_issue_interrupts_a_tool_after_the_steering_grace(tmp_path: Path):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Change direction now."},
+    )
+    paired = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:paired",
+        payload={"message": "Keep this paired instruction too."},
+    )
+    followup = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:2",
+        payload={"message": "And preserve the current workspace."},
+    )
+    inbox, _active, conversation = active_steering_turn(tmp_path)
+    conversation.state.acquire()
+
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+            steering_grace_seconds=0.03,
+        )
+        assert pump.prepare_run()
+        pump.run_started()
+        store.enqueue(event)
+        store.enqueue(paired)
+        with pump:
+            assert not conversation.interrupted.wait(0.01)
+            assert conversation.interrupted.wait(1)
+            store.enqueue(followup)
+            deadline = time.monotonic() + 1
+            while store.pending() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            conversation.state.release()
+            assert pump.finish_run()
+
+    assert conversation.interrupts == 1
+    assert conversation.messages[-3:] == [
+        event.to_inbox_message(),
+        paired.to_inbox_message(),
+        followup.to_inbox_message(),
+    ]
+    assert "Trusted human steering" in conversation.messages[-4]
+
+
+def test_human_issue_before_run_is_delivered_without_starting_then_cancelling(
+    tmp_path: Path,
+):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Use this direction first."},
+    )
+    inbox, _active, conversation = active_steering_turn(tmp_path)
+
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+        )
+        with pump:
+            store.enqueue(event)
+            deadline = time.monotonic() + 1
+            while store.pending() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert not pump.prepare_run()
+
+    assert conversation.interrupts == 0
+    assert conversation.messages[-1] == event.to_inbox_message()
+
+
+def test_human_issue_does_not_resume_an_unrelated_pause(tmp_path: Path):
+    event = AdvisorEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Use this after restart."},
+    )
+    inbox, _active, conversation = active_steering_turn(tmp_path)
+
+    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            poll_interval=0.01,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+        )
+        assert pump.prepare_run()
+        pump.run_started()
+        conversation.state.execution_status = ConversationExecutionStatus.PAUSED
+        store.enqueue(event)
+        with pump:
+            deadline = time.monotonic() + 1
+            while store.pending() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert not pump.finish_run()
+
+    assert conversation.interrupts == 0
     assert conversation.messages[-1] == event.to_inbox_message()
 
 

@@ -110,8 +110,9 @@ batches; immediate post-turn polls drain later batches without dropping them.
 While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
 state. It enqueues all newly visible advisor events, and only PR feedback bound
 to the currently running student UUID, in the role's local event store.
-OpenHands 1.40 supports concurrent `send_message`; `AdvisorEventPump` injects at
-its state lock boundary without cancelling unrelated work. Successfully
+Authenticated human Issues take priority. Active tools get up to 60 seconds to
+finish; Senpai then interrupts the run, awaits cleanup, injects the instruction,
+and resumes the same conversation. Other events remain FIFO. Successfully
 injected student feedback is acknowledged in `github-feedback.json` only when
 the enclosing student turn succeeds.
 

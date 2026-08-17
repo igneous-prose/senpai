@@ -12,7 +12,7 @@ from typing import Protocol, Self
 from openhands.sdk.conversation import ConversationExecutionStatus, ConversationState
 from pydantic import BaseModel, ConfigDict, Field
 
-from senpai_agent.inbox import PersistentInbox, deliver_turn_messages
+from senpai_agent.inbox import DeliveryState, PersistentInbox, deliver_turn_messages
 from senpai_agent.PROMPTS import (
     ADVISOR_EVENT_PROMPT,
     EVENT_PROMPT,
@@ -20,12 +20,11 @@ from senpai_agent.PROMPTS import (
 )
 
 _EVENT_STORE_SETUP_LOCK = threading.Lock()
-_UNDELIVERABLE_STATUSES = frozenset(
-    {
-        ConversationExecutionStatus.ERROR,
-        ConversationExecutionStatus.STUCK,
-        ConversationExecutionStatus.DELETING,
-    }
+_STEERING_GRACE_SECONDS = 60.0
+_STEERING_INTERRUPTION_NOTICE = (
+    "Trusted human steering interrupted the active advisor run. Active tools "
+    "were given up to 60 seconds to finish; apply the next instruction before "
+    "resuming displaced work."
 )
 
 
@@ -181,18 +180,16 @@ def advisor_conversation_id(
 ) -> uuid.UUID:
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / "advisor-conversation-id"
-    if explicit_id is None and path.exists():
+    if explicit_id is not None:
+        conversation_id = uuid.UUID(explicit_id)
+        path.write_text(f"{conversation_id}\n")
+        return conversation_id
+    if path.exists():
         return uuid.UUID(path.read_text().strip())
 
-    conversation_id = uuid.UUID(explicit_id) if explicit_id else uuid.uuid4()
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(f"{conversation_id}\n")
-    temporary.replace(path)
+    conversation_id = uuid.uuid4()
+    path.write_text(f"{conversation_id}\n")
     return conversation_id
-
-
-def fork_advisor_conversation(state_dir: Path) -> uuid.UUID:
-    return advisor_conversation_id(state_dir, str(uuid.uuid4()))
 
 
 class MessageConversation(Protocol):
@@ -249,12 +246,14 @@ class AdvisorEventPump:
         parent_conversation_id: str | None = None,
         inbox: PersistentInbox | None = None,
         conversation_id: str | uuid.UUID | None = None,
+        steering_grace_seconds: float = _STEERING_GRACE_SECONDS,
     ):
         self._store = store
         self._conversation = conversation
         self._poll_interval = poll_interval
         self._parent_conversation_id = parent_conversation_id
         self._inbox = inbox
+        self._steering_grace_seconds = steering_grace_seconds
         if inbox is not None:
             if conversation_id is None:
                 raise ValueError("inbox event pump requires a conversation ID")
@@ -265,6 +264,13 @@ class AdvisorEventPump:
             )
         self._delivered_event_keys: set[str] = set()
         self._stop = threading.Event()
+        self._steer_lock = threading.Lock()
+        self._steer_turn_id: str | None = None
+        self._steer_ready = threading.Event()
+        self._steer_interrupted = False
+        self._run_armed = False
+        self._run_started = threading.Event()
+        self._accept_steering = True
         self._error: BaseException | None = None
         self._thread = threading.Thread(
             target=self._run,
@@ -315,46 +321,112 @@ class AdvisorEventPump:
                 == self._parent_conversation_id
             ]
         transferred = 0
+        start_steer = False
+        steer_active_run = False
         for event in pending:
             if event.kind == "human_issue":
-                state = getattr(self._conversation, "state", None)
-                if state is not None:
-                    with state:
-                        if ConversationState.get_unmatched_actions(
-                            state.active_branch()
-                        ):
-                            continue
-                        if (
-                            state.execution_status
-                            != ConversationExecutionStatus.FINISHED
-                        ):
-                            turn = self._inbox.steer(
-                                self._conversation_id,
-                                event.dedupe_key,
-                                event.to_inbox_message(),
-                            )
-                            if (
-                                turn is not None
-                                and state.execution_status
-                                not in _UNDELIVERABLE_STATUSES
-                            ):
-                                deliver_turn_messages(
-                                    self._conversation,
-                                    self._inbox,
-                                    turn.turn_id,
-                                )
-                            self._store.acknowledge(event.dedupe_key)
-                            transferred += 1
-                            continue
-            self._inbox.enqueue(
-                self._conversation_id,
-                event.dedupe_key,
-                event.to_inbox_message(),
-                priority=event.kind == "human_issue",
-            )
+                with self._steer_lock:
+                    if not self._accept_steering:
+                        continue
+                    turn = self._inbox.steer(
+                        self._conversation_id,
+                        event.dedupe_key,
+                        event.to_inbox_message(),
+                    )
+                    if turn is not None:
+                        message = next(
+                            item
+                            for item in turn.events
+                            if item.event_key == event.dedupe_key
+                        )
+                        if message.state is DeliveryState.PENDING:
+                            if self._steer_turn_id is None:
+                                start_steer = True
+                                self._steer_ready.clear()
+                                self._steer_interrupted = False
+                                steer_active_run = self._run_armed
+                            self._steer_turn_id = turn.turn_id
+            else:
+                self._inbox.enqueue(
+                    self._conversation_id,
+                    event.dedupe_key,
+                    event.to_inbox_message(),
+                )
             self._store.acknowledge(event.dedupe_key)
             transferred += 1
+        if start_steer:
+            self._interrupt_for_steer(steer_active_run)
         return transferred
+
+    def _interrupt_for_steer(self, active_run: bool) -> None:
+        if not active_run:
+            self._steer_ready.set()
+            return
+        self._run_started.wait()
+        if self._stop.is_set():
+            self._steer_ready.set()
+            return
+        state = getattr(self._conversation, "state", None)
+        acquired = state is not None and state.acquire(
+            timeout=self._steering_grace_seconds
+        )
+        running = True
+        if acquired:
+            running = state.execution_status == ConversationExecutionStatus.RUNNING
+            state.release()
+        if self._stop.is_set():
+            self._steer_ready.set()
+            return
+        if not running:
+            self._steer_ready.set()
+            return
+        with self._steer_lock:
+            self._steer_interrupted = True
+        self._conversation.interrupt()
+        self._steer_ready.set()
+
+    def run_started(self) -> None:
+        self._run_started.set()
+
+    def prepare_run(self) -> bool:
+        """Arm one run, or deliver steering that arrived before it started."""
+
+        with self._steer_lock:
+            if self._steer_turn_id is None:
+                self._run_armed = True
+                self._run_started.clear()
+                return True
+        self._deliver_steer()
+        return False
+
+    def finish_run(self) -> bool:
+        """Close one run and deliver any steer after OpenHands cleanup."""
+
+        with self._steer_lock:
+            self._run_armed = False
+            if self._steer_turn_id is None:
+                self._accept_steering = False
+                return False
+        return self._deliver_steer()
+
+    def _deliver_steer(self) -> bool:
+        if not self._steer_ready.wait(self._steering_grace_seconds + 1):
+            raise TimeoutError("trusted steering did not reach an interrupt boundary")
+        with self._steer_lock:
+            turn_id = self._steer_turn_id
+            interrupted = self._steer_interrupted
+            self._steer_turn_id = None
+            self._steer_ready.clear()
+            self._steer_interrupted = False
+        assert turn_id is not None and self._inbox is not None
+        if interrupted:
+            self._conversation.send_message(_STEERING_INTERRUPTION_NOTICE)
+        deliver_turn_messages(self._conversation, self._inbox, turn_id)
+        state = getattr(self._conversation, "state", None)
+        return interrupted or (
+            state is None
+            or state.execution_status != ConversationExecutionStatus.PAUSED
+        )
 
     def __enter__(self) -> Self:
         self._thread.start()
@@ -367,6 +439,7 @@ class AdvisorEventPump:
         _traceback: TracebackType | None,
     ) -> None:
         self._stop.set()
+        self._run_started.set()
         self._thread.join()
         # Failed turns may abandon their active branch; replay those events instead.
         if self._inbox is None and exc_type is None and self._error is None:

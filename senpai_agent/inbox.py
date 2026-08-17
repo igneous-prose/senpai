@@ -351,7 +351,23 @@ class PersistentInbox:
         with self._transaction() as database:
             turn_id = self._active_turn_id(database, conversation)
             if turn_id is None:
-                return None
+                quarantined = database.execute(
+                    """
+                    SELECT turn_id
+                    FROM inbox_turns
+                    WHERE conversation_id = ?
+                      AND acknowledged = 0
+                      AND superseded_by IS NULL
+                      AND state != 'processed'
+                      AND quarantine_reason IS NOT NULL
+                    ORDER BY rowid
+                    LIMIT 1
+                    """,
+                    (conversation,),
+                ).fetchone()
+                if quarantined is None:
+                    return None
+                turn_id = str(quarantined["turn_id"])
             message = database.execute(
                 """
                 SELECT message.sequence, message.turn_id
@@ -394,7 +410,7 @@ class PersistentInbox:
                 database.execute(
                     """
                     UPDATE inbox_turns
-                    SET stalled_attempts = 0
+                    SET stalled_attempts = 0, quarantine_reason = NULL
                     WHERE turn_id = ?
                     """,
                     (turn_id,),
