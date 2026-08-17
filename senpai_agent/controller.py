@@ -305,7 +305,7 @@ class Controller:
         reconcile: Callable[[Sequence[ControllerEvent]], None] | None = None,
         progress: ProgressLease | None = None,
         operation_timeout_seconds: float = 300,
-        turn_timeout_seconds: float = 3660,
+        turn_timeout_seconds: float = 7260,
         max_consecutive_turn_failures: int = 2,
         event_reminder_seconds: float | None = None,
         start_gate_path: Path | None = None,

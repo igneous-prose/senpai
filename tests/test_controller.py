@@ -735,7 +735,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         workspace=tmp_path,
         training_max_timeout_seconds=1800,
         conversation_id=CONVERSATION_ID,
-        timeout_seconds=3600,
+        timeout_seconds=7200,
         harness_file=tmp_path / "harness.md",
         role_file=tmp_path / "role.md",
         instructions=SenpaiSystemInstructions(
@@ -787,6 +787,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     assert created[0].event_reminder_seconds == 600
     assert created[0].full_prompt == "programme"
     assert created[0].turns.full_prompt == "programme"
+    assert created[0].turn_timeout_seconds == 7260
 
 
 def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():
