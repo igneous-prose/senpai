@@ -256,25 +256,11 @@ class PersistentInbox:
         conversation = str(conversation_id)
         with self._transaction() as database:
             _require_event_payload(database, conversation, event_key, body)
-            existing = database.execute(
-                """
-                SELECT message.sequence, message.requires_ack, message.priority
-                FROM inbox_messages AS message
-                LEFT JOIN inbox_turns AS turn ON turn.turn_id = message.turn_id
-                WHERE message.conversation_id = ?
-                  AND message.event_key = ?
-                  AND (
-                      message.turn_id IS NULL
-                      OR (
-                          turn.acknowledged = 0
-                          AND turn.superseded_by IS NULL
-                      )
-                  )
-                ORDER BY message.sequence DESC
-                LIMIT 1
-                """,
-                (conversation, event_key),
-            ).fetchone()
+            existing = self._live_event_message(
+                database,
+                conversation,
+                event_key,
+            )
             if existing is not None:
                 if requires_ack and not existing["requires_ack"]:
                     database.execute(
@@ -368,25 +354,11 @@ class PersistentInbox:
                 if quarantined is None:
                     return None
                 turn_id = str(quarantined["turn_id"])
-            message = database.execute(
-                """
-                SELECT message.sequence, message.turn_id
-                FROM inbox_messages AS message
-                LEFT JOIN inbox_turns AS turn ON turn.turn_id = message.turn_id
-                WHERE message.conversation_id = ?
-                  AND message.event_key = ?
-                  AND (
-                      message.turn_id IS NULL
-                      OR (
-                          turn.acknowledged = 0
-                          AND turn.superseded_by IS NULL
-                      )
-                  )
-                ORDER BY message.sequence DESC
-                LIMIT 1
-                """,
-                (conversation, event_key),
-            ).fetchone()
+            message = self._live_event_message(
+                database,
+                conversation,
+                event_key,
+            )
             assert message is not None
             if message["turn_id"] not in (None, turn_id):
                 return None
@@ -1213,6 +1185,32 @@ class PersistentInbox:
             (conversation_id,),
         ).fetchone()
         return None if row is None else str(row["turn_id"])
+
+    @staticmethod
+    def _live_event_message(
+        database: sqlite3.Connection,
+        conversation_id: str,
+        event_key: str,
+    ) -> sqlite3.Row | None:
+        return database.execute(
+            """
+            SELECT message.*
+            FROM inbox_messages AS message
+            LEFT JOIN inbox_turns AS turn ON turn.turn_id = message.turn_id
+            WHERE message.conversation_id = ?
+              AND message.event_key = ?
+              AND (
+                  message.turn_id IS NULL
+                  OR (
+                      turn.acknowledged = 0
+                      AND turn.superseded_by IS NULL
+                  )
+              )
+            ORDER BY message.sequence DESC
+            LIMIT 1
+            """,
+            (conversation_id, event_key),
+        ).fetchone()
 
     def _latest_turn(
         self,

@@ -153,20 +153,17 @@ class OpenHandsTurnRunner:
         if (inbox is None) != (inbox_turn_id is None):
             raise ValueError("inbox and inbox turn ID must be provided together")
 
-        def inbox_options() -> dict[str, object]:
-            if inbox is None or inbox_turn_id is None:
-                return {}
-            return {
-                "inbox": inbox,
-                "inbox_turn_id": inbox_turn_id,
-                "recovery_prompt": _context_recovery_prompt(
-                    self.full_prompt,
-                    prompt,
-                ),
-            }
-
         def run_options() -> dict[str, object]:
-            options = inbox_options()
+            options: dict[str, object] = {}
+            if inbox is not None and inbox_turn_id is not None:
+                options.update(
+                    inbox=inbox,
+                    inbox_turn_id=inbox_turn_id,
+                    recovery_prompt=_context_recovery_prompt(
+                        self.full_prompt,
+                        prompt,
+                    ),
+                )
             if self.on_activity is not None:
                 options["on_activity"] = self.on_activity
             return options
