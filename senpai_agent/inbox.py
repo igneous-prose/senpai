@@ -19,6 +19,8 @@ from uuid import UUID
 
 MAX_EVENTS_PER_TURN = 16
 MAX_EVENT_BYTES_PER_TURN = 64 * 1024
+QUEUE_PRIORITY = 1
+STEER_PRIORITY = 2
 _SENDER_PREFIX = "senpai-delivery:"
 
 
@@ -36,6 +38,7 @@ class InboxMessage:
     state: DeliveryState
     event_key: str | None
     requires_ack: bool
+    priority: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +250,7 @@ class PersistentInbox:
         body: str,
         *,
         requires_ack: bool = True,
-        priority: bool = False,
+        priority: int = 0,
     ) -> bool:
         if not event_key:
             raise ValueError("event key must not be empty")
@@ -267,10 +270,10 @@ class PersistentInbox:
                         "UPDATE inbox_messages SET requires_ack = 1 WHERE sequence = ?",
                         (existing["sequence"],),
                     )
-                if priority and not existing["priority"]:
+                if priority > existing["priority"]:
                     database.execute(
-                        "UPDATE inbox_messages SET priority = 1 WHERE sequence = ?",
-                        (existing["sequence"],),
+                        "UPDATE inbox_messages SET priority = ? WHERE sequence = ?",
+                        (priority, existing["sequence"]),
                     )
                 return False
             legacy = database.execute(
@@ -309,7 +312,7 @@ class PersistentInbox:
                     delivery_id,
                     _sender(delivery_id),
                     int(requires_ack),
-                    int(priority),
+                    priority,
                     int(legacy is not None),
                 ),
             )
@@ -329,10 +332,12 @@ class PersistentInbox:
         conversation_id: UUID | str,
         event_key: str,
         body: str,
+        *,
+        priority: int = QUEUE_PRIORITY,
     ) -> InboxTurn | None:
         """Prioritize one event and attach it to the active turn when possible."""
 
-        self.enqueue(conversation_id, event_key, body, priority=True)
+        self.enqueue(conversation_id, event_key, body, priority=priority)
         conversation = str(conversation_id)
         with self._transaction() as database:
             turn_id = self._active_turn_id(database, conversation)
@@ -1024,10 +1029,11 @@ class PersistentInbox:
                         sender,
                         state,
                         requires_ack,
+                        priority,
                         legacy,
                         turn_id,
                         position
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
                     """,
                     (
                         original.conversation_id,
@@ -1037,6 +1043,7 @@ class PersistentInbox:
                         delivery_id,
                         _sender(delivery_id),
                         int(message.requires_ack),
+                        message.priority,
                         int(self._is_legacy_message(database, message.delivery_id)),
                         recovery_id,
                         position,
@@ -1612,6 +1619,7 @@ def _message(row: sqlite3.Row) -> InboxMessage:
         state=DeliveryState(row["state"]),
         event_key=row["event_key"],
         requires_ack=bool(row["requires_ack"]),
+        priority=int(row["priority"]),
     )
 
 

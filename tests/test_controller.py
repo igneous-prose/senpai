@@ -1139,6 +1139,36 @@ def test_feedback_polled_after_a_turn_is_processed_in_the_next_turn():
     ]
 
 
+def test_initial_assignment_precedes_feedback_when_the_batch_splits():
+    base_assignment = student_assignment_event()
+    assignment = ControllerEvent(
+        kind=base_assignment.kind,
+        dedupe_key=base_assignment.dedupe_key,
+        payload={**base_assignment.payload, "brief": "x" * (70 * 1024)},
+    )
+    feedback = ControllerEvent(
+        kind="student_pr_feedback",
+        dedupe_key="student_pr_feedback:issue_comment:17:101",
+        payload={
+            "assignment_id": "assignment-17",
+            "revision_id": "revision-2",
+            "message": "Apply this after reading the assignment.",
+        },
+    )
+    turns = Turns()
+
+    controller(
+        Mailbox(((assignment, feedback), ())),
+        turns,
+        role="student",
+    ).run(max_cycles=1)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({assignment.dedupe_key}),
+        frozenset({feedback.dedupe_key}),
+    ]
+
+
 def test_controller_follows_the_complete_recovery_chain_before_acknowledging():
     """
     Requirement: any bounded number of recovery generations completes one logical turn.
@@ -1199,6 +1229,46 @@ def test_new_human_instruction_reopens_the_same_quarantined_advisor():
     assert runtime.inbox.turn(quarantined.turn_id).quarantine_reason is None
     assert mailbox.acknowledged == [
         (review_event().dedupe_key, instruction.dedupe_key)
+    ]
+
+
+def test_new_feedback_reopens_the_same_quarantined_student():
+    assignment = student_assignment_event()
+    runtime = controller(
+        Mailbox(((assignment,), ())),
+        QuarantiningTurns(),
+        role="student",
+        max_consecutive_turn_failures=1,
+    )
+    runtime.run(max_cycles=1)
+    quarantined = runtime.inbox.quarantined_turns()[0]
+    feedback = ControllerEvent(
+        kind="student_pr_feedback",
+        dedupe_key="student_pr_feedback:issue_comment:17:101",
+        payload={
+            "assignment_id": "assignment-17",
+            "revision_id": "revision-2",
+            "message": "Try the narrower experiment next.",
+        },
+    )
+    mailbox = Mailbox(((feedback,), ()))
+    turns = Turns()
+
+    controller(
+        mailbox,
+        turns,
+        role="student",
+        inbox=runtime.inbox,
+    ).run(max_cycles=1)
+
+    assert len(turns.calls) == 1
+    assert turns.calls[0][1] == CONVERSATION_ID
+    assert turns.calls[0][2] == frozenset(
+        {assignment.dedupe_key, feedback.dedupe_key}
+    )
+    assert runtime.inbox.turn(quarantined.turn_id).quarantine_reason is None
+    assert mailbox.acknowledged == [
+        (assignment.dedupe_key, feedback.dedupe_key)
     ]
 
 

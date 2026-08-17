@@ -112,9 +112,10 @@ state. It enqueues all newly visible advisor events, and only PR feedback bound
 to the currently running student UUID, in the role's local event store.
 Authenticated human Issues take priority. Active tools get up to 60 seconds to
 finish; Senpai then interrupts the run, awaits cleanup, injects the instruction,
-and resumes the same conversation. Other events remain FIFO. Successfully
-injected student feedback is acknowledged in `github-feedback.json` only when
-the enclosing student turn succeeds.
+and resumes the same conversation. Trusted student PR feedback queues at the
+next completed agent step without cancelling it. Other events remain FIFO.
+Successfully injected student feedback is acknowledged in
+`github-feedback.json` only when the enclosing student turn succeeds.
 
 Generic child results use a local SQLite WAL event store because parent and
 child run on the same advisor or student instance. That is not an inter-node

@@ -13,6 +13,9 @@ from pathlib import Path
 from senpai_agent.training import training_result_paths
 
 
+QUEUED_FEEDBACK_ENV = "SENPAI_QUEUED_FEEDBACK_PENDING"
+
+
 @dataclass(frozen=True, slots=True)
 class PolicyDecision:
     allowed: bool
@@ -642,6 +645,11 @@ def hook_main(
             tool_input = event.get("tool_input") or {}
             return _emit(terminal_policy(str(tool_input["command"]), role, working_dir))
         if command == "stop":
+            if (
+                role == "student"
+                and env.get(QUEUED_FEEDBACK_ENV) == "1"
+            ):
+                return _emit(PolicyDecision(True))
             state_dir_value = env.get("SENPAI_OPENHANDS_STATE_DIR")
             state_dir = Path(state_dir_value).resolve() if state_dir_value else None
             return _emit(_stop_policy(role, working_dir, state_dir))

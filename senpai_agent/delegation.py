@@ -33,6 +33,7 @@ from openhands.sdk.tool import (
 from pydantic import BaseModel, Field, model_validator
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
+from senpai_agent.hooks import QUEUED_FEEDBACK_ENV
 from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV
 from senpai_agent.processes import terminate_process_group
 from senpai_agent.program_context import PROGRAM_PATH_ENV
@@ -342,6 +343,7 @@ class OpenHandsChildProcess:
             if name.endswith("_API_KEY"):
                 environment.pop(name)
         for name in (
+            QUEUED_FEEDBACK_ENV,
             "SENPAI_OPENHANDS_AGENT",
             "SENPAI_OPENHANDS_CONVERSATION_ID",
         ):

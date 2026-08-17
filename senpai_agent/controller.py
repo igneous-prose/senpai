@@ -20,6 +20,8 @@ from senpai_agent.agent_markdown import strip_spdx_header
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
+    QUEUE_PRIORITY,
+    STEER_PRIORITY,
     DeliveryState,
     InboxTurn,
     InboxTurnQuarantined,
@@ -524,17 +526,27 @@ class Controller:
                     ):
                         self._clear_workspace_divergence(conversation_id)
             for event in batch_events:
-                if event.kind == "human_issue":
+                if event.kind in {"human_issue", "student_pr_feedback"}:
                     self.inbox.steer(
                         conversation_id,
                         event.dedupe_key,
                         event.to_prompt(),
+                        priority=(
+                            STEER_PRIORITY
+                            if event.kind == "human_issue"
+                            else QUEUE_PRIORITY
+                        ),
                     )
                 else:
                     self.inbox.enqueue(
                         conversation_id,
                         event.dedupe_key,
                         event.to_prompt(),
+                        priority=(
+                            QUEUE_PRIORITY
+                            if event.kind == "student_assignment"
+                            else 0
+                        ),
                     )
 
     def _next_ready_turn(

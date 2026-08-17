@@ -10,6 +10,8 @@ import pytest
 from openhands.sdk.event import ActionEvent, ObservationEvent
 
 from senpai_agent.inbox import (
+    QUEUE_PRIORITY,
+    STEER_PRIORITY,
     DeliveryState,
     PersistentInbox,
     deliver_turn_messages,
@@ -193,22 +195,39 @@ def test_fifo_drain_is_bounded_by_event_count_and_bytes(tmp_path: Path):
 def test_priority_precedes_fifo_without_reordering_its_own_class(tmp_path: Path):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     inbox.enqueue(CONVERSATION_ID, "event:ordinary-1", "ordinary 1")
-    inbox.enqueue(CONVERSATION_ID, "event:steer-1", "steer 1", priority=True)
-    inbox.enqueue(CONVERSATION_ID, "event:steer-2", "steer 2", priority=True)
+    inbox.enqueue(
+        CONVERSATION_ID,
+        "event:queue-1",
+        "queue 1",
+        priority=QUEUE_PRIORITY,
+    )
+    inbox.enqueue(
+        CONVERSATION_ID,
+        "event:queue-2",
+        "queue 2",
+        priority=QUEUE_PRIORITY,
+    )
+    inbox.enqueue(
+        CONVERSATION_ID,
+        "event:steer",
+        "steer",
+        priority=STEER_PRIORITY,
+    )
     inbox.enqueue(CONVERSATION_ID, "event:ordinary-2", "ordinary 2")
 
     turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
 
     assert turn is not None
     assert [event.event_key for event in turn.events] == [
-        "event:steer-1",
-        "event:steer-2",
+        "event:steer",
+        "event:queue-1",
+        "event:queue-2",
         "event:ordinary-1",
         "event:ordinary-2",
     ]
 
 
-def test_priority_migrates_and_orders_ready_conversations(tmp_path: Path):
+def test_priority_migrates_and_steer_leads_ready_conversations(tmp_path: Path):
     path = tmp_path / "inbox.sqlite3"
     PersistentInbox(path).close()
     with sqlite3.connect(path) as database:
@@ -216,8 +235,18 @@ def test_priority_migrates_and_orders_ready_conversations(tmp_path: Path):
 
     inbox = PersistentInbox(path)
     other = UUID("00000000-0000-0000-0000-000000000018")
-    inbox.enqueue(CONVERSATION_ID, "event:ordinary", "ordinary")
-    inbox.enqueue(other, "event:steer", "steer", priority=True)
+    inbox.enqueue(
+        CONVERSATION_ID,
+        "event:assignment",
+        "assignment",
+        priority=QUEUE_PRIORITY,
+    )
+    inbox.enqueue(
+        other,
+        "event:steer",
+        "steer",
+        priority=STEER_PRIORITY,
+    )
 
     assert inbox.ready_conversation_ids() == (str(other), str(CONVERSATION_ID))
 
@@ -306,7 +335,12 @@ def test_context_reset_preserves_old_turn_and_requeues_one_canonical_copy(
     Interface: reset_turn plus the active and historical persistent turns.
     """
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
-    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    inbox.enqueue(
+        CONVERSATION_ID,
+        "event:1",
+        "canonical event",
+        priority=STEER_PRIORITY,
+    )
     old = inbox.next_turn(CONVERSATION_ID, "old branch prompt")
     assert old is not None
     deliver_turn_messages(Conversation(), inbox, old.turn_id)
@@ -321,9 +355,14 @@ def test_context_reset_preserves_old_turn_and_requeues_one_canonical_copy(
     assert recovery.turn_id != old.turn_id
     assert recovery.prompt.body == "fresh branch prompt"
     assert [event.body for event in recovery.events] == ["canonical event"]
+    assert recovery.events[0].priority == STEER_PRIORITY
     assert recovery.events[0].delivery_id != old.events[0].delivery_id
     assert inbox.turn(old.turn_id).superseded_by == recovery.turn_id
     assert inbox.turn(old.turn_id).state is DeliveryState.DELIVERED
+
+    queued = UUID("00000000-0000-0000-0000-000000000018")
+    inbox.enqueue(queued, "event:queued", "queued", priority=QUEUE_PRIORITY)
+    assert inbox.ready_conversation_ids()[:2] == (str(CONVERSATION_ID), str(queued))
 
     next_generation = inbox.reset_turn(
         recovery.turn_id,
