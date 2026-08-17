@@ -297,7 +297,7 @@ def test_edited_student_comment_fails_closed(monkeypatch, capsys):
     assert "edited assignment comment rejected" in capsys.readouterr().err
 
 
-def test_review_label_wakes_the_advisor_and_releases_the_student_slot(monkeypatch):
+def test_review_label_wakes_the_advisor_and_reserves_the_student_slot(monkeypatch):
     advisor = mailbox(
         monkeypatch,
         [
@@ -313,22 +313,25 @@ def test_review_label_wakes_the_advisor_and_releases_the_student_slot(monkeypatc
     assert [event.kind for event in events] == [
         "review_ready",
         "student_slot_available",
-        "student_slot_available",
     ]
     assert events[0].payload["number"] == 17
-    assert events[1].dedupe_key == "student_slot_available:student-1"
-    assert events[2].dedupe_key == "student_slot_available:student-2"
-    assert events[1].payload == {"student": "student-1"}
-    assert events[2].payload == {"student": "student-2"}
+    assert events[1].dedupe_key == "student_slot_available:student-2"
+    assert events[1].payload == {"student": "student-2"}
     assert events[1].to_prompt().startswith(
-        "## Student slot available: `student-1`"
-    )
-    assert events[2].to_prompt().startswith(
         "## Student slot available: `student-2`"
     )
 
 
-def test_held_wip_assignment_still_reserves_the_student_slot(monkeypatch):
+@pytest.mark.parametrize("status", ["status:wip", "status:review"])
+@pytest.mark.parametrize(
+    "blocker",
+    ["status:hold", "status:blocked", "status:needs-rebase"],
+)
+def test_blocked_assignment_still_reserves_the_student_slot(
+    monkeypatch,
+    status,
+    blocker,
+):
     advisor = mailbox(
         monkeypatch,
         [
@@ -336,8 +339,8 @@ def test_held_wip_assignment_still_reserves_the_student_slot(monkeypatch):
                 labels=(
                     "research",
                     "student:student-1",
-                    "status:wip",
-                    "status:hold",
+                    status,
+                    blocker,
                 )
             )
         ],
@@ -507,7 +510,7 @@ def test_duplicate_assignments_report_every_pr_for_the_student(monkeypatch):
         monkeypatch,
         [
             pull(labels=("student:student-1", "status:wip"), number=17),
-            pull(labels=("student:student-1", "status:wip"), number=18),
+            pull(labels=("student:student-1", "status:review"), number=18),
         ],
         students=("student-1",),
     )
@@ -1035,4 +1038,8 @@ def test_research_base_ref_failure_does_not_suppress_other_advisor_events(
         "review_ready",
         "student_slot_available",
     }
+    available = next(
+        event for event in events if event.kind == "student_slot_available"
+    )
+    assert available.payload == {"student": "student-2"}
     assert "SENPAI_RESEARCH_BASE_WATCH_ERROR" in capsys.readouterr().err

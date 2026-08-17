@@ -85,7 +85,7 @@ EVENT_PROMPT = """## {{KIND}}
 
 STUDENT_SLOT_AVAILABLE_PROMPT = """## Student slot available: `{{STUDENT}}`
 
-No open `status:wip` assignment currently reserves this slot."""
+No open assignment with `status:wip` or `status:review` reserves this slot."""
 
 WORKSPACE_DIVERGENCE_PROMPT = """The workspace cannot be reconciled automatically because local assignment history diverged or dirty work belongs to another checkout. Senpai preserved every local commit and dirty file without changing the checkout. Inspect and reconcile it explicitly; do not reset or discard local work."""
 

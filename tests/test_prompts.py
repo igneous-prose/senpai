@@ -43,7 +43,7 @@ def test_student_slot_available_event_names_the_student_and_defines_the_slot():
         {"student": "qwen-edward"},
     ) == (
         "## Student slot available: `qwen-edward`\n\n"
-        "No open `status:wip` assignment currently reserves this slot."
+        "No open assignment with `status:wip` or `status:review` reserves this slot."
     )
 
 
