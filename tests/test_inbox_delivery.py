@@ -131,54 +131,62 @@ def test_event_identity_cannot_hide_a_changed_payload(tmp_path: Path):
 
 def test_retract_pending_removes_only_unclaimed_native_events(tmp_path: Path):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
-    slot_key = "student_slot_available:Fern"
+    availability_key = "student_available_for_assignment:Fern"
     other_key = "review_ready:17:abc"
-    inbox.enqueue(CONVERSATION_ID, slot_key, "slot available")
+    inbox.enqueue(CONVERSATION_ID, availability_key, "student available")
     inbox.enqueue(CONVERSATION_ID, other_key, "review ready")
 
     assert inbox.retract_pending_prefix(
         CONVERSATION_ID,
-        "student_slot_available:",
-    ) == frozenset({slot_key})
+        "student_available_for_assignment:",
+    ) == frozenset({availability_key})
     assert inbox.retract_pending_prefix(
         CONVERSATION_ID,
-        "student_slot_available:",
+        "student_available_for_assignment:",
     ) == frozenset()
     assert inbox.pending_count(CONVERSATION_ID) == 1
-    assert inbox.enqueue(CONVERSATION_ID, slot_key, "slot available") is True
+    assert inbox.enqueue(
+        CONVERSATION_ID,
+        availability_key,
+        "student available",
+    ) is True
 
     turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
     assert turn is not None
-    assert turn.event_keys == (other_key, slot_key)
+    assert turn.event_keys == (other_key, availability_key)
 
 
 def test_retract_pending_preserves_a_claimed_turn(tmp_path: Path):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
-    slot_key = "student_slot_available:Fern"
-    inbox.enqueue(CONVERSATION_ID, slot_key, "slot available")
+    availability_key = "student_available_for_assignment:Fern"
+    inbox.enqueue(CONVERSATION_ID, availability_key, "student available")
     turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
     assert turn is not None
 
     assert inbox.retract_pending_prefix(
         CONVERSATION_ID,
-        "student_slot_available:",
+        "student_available_for_assignment:",
     ) == frozenset()
-    assert PersistentInbox(inbox.path).turn(turn.turn_id).event_keys == (slot_key,)
+    assert PersistentInbox(inbox.path).turn(turn.turn_id).event_keys == (
+        availability_key,
+    )
 
 
 def test_retract_pending_preserves_unclaimed_legacy_events(tmp_path: Path):
-    slot_key = "student_slot_available:Fern"
+    availability_key = "student_available_for_assignment:Fern"
     legacy_path = tmp_path / "pending-message-deliveries.json"
     legacy_path.write_text(
-        json.dumps({str(CONVERSATION_ID): {slot_key: str(UUID(int=122))}}),
+        json.dumps(
+            {str(CONVERSATION_ID): {availability_key: str(UUID(int=122))}}
+        ),
         encoding="utf-8",
     )
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3", legacy_path=legacy_path)
-    inbox.enqueue(CONVERSATION_ID, slot_key, "legacy slot available")
+    inbox.enqueue(CONVERSATION_ID, availability_key, "legacy availability")
 
     assert inbox.retract_pending_prefix(
         CONVERSATION_ID,
-        "student_slot_available:",
+        "student_available_for_assignment:",
     ) == frozenset()
     assert inbox.pending_count(CONVERSATION_ID) == 1
 
@@ -679,7 +687,7 @@ def test_restart_after_preparing_visible_persisted_prompt_keeps_one_copy(
 def test_reset_preserves_legacy_provenance_for_a_later_compact_reminder(
     tmp_path: Path,
 ):
-    event_key = "student_slot_available:Fern"
+    event_key = "student_available_for_assignment:Fern"
     compact_body = "compact event"
     legacy_id = str(UUID(int=119))
     legacy_path = tmp_path / "pending-message-deliveries.json"

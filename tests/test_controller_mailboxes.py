@@ -8,7 +8,7 @@ from senpai_agent.inbox import PersistentInbox
 from senpai_agent.mailbox import (
     CompositeMailbox,
     ControllerEvent,
-    SlotAvailabilityMailbox,
+    StudentAssignmentAvailabilityMailbox,
 )
 from senpai_agent.monitor import (
     MonitorEvaluation,
@@ -31,10 +31,10 @@ class StaticMailbox:
         return
 
 
-def slot_event(student: str = "Fern") -> ControllerEvent:
+def availability_event(student: str = "Fern") -> ControllerEvent:
     return ControllerEvent(
-        kind="student_slot_available",
-        dedupe_key=f"student_slot_available:{student}",
+        kind="student_available_for_assignment",
+        dedupe_key=f"student_available_for_assignment:{student}",
         payload={"student": student},
     )
 
@@ -59,11 +59,11 @@ def test_composite_mailbox_preserves_healthy_events_when_a_peer_fails(capsys):
     assert "SENPAI_MAILBOX_ERROR RuntimeError" in capsys.readouterr().err
 
 
-def test_reserved_slot_retracts_unseen_inbox_and_staging_events(tmp_path: Path):
+def test_reserved_assignment_retracts_unseen_availability_events(tmp_path: Path):
     conversation_id = UUID(int=123)
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     store_path = tmp_path / "advisor-events.sqlite3"
-    event = slot_event()
+    event = availability_event()
     inbox.enqueue(conversation_id, event.dedupe_key, event.to_prompt())
     with AdvisorEventStore(store_path) as store:
         store.enqueue(
@@ -75,7 +75,7 @@ def test_reserved_slot_retracts_unseen_inbox_and_staging_events(tmp_path: Path):
         )
         store.acknowledge(event.dedupe_key)
 
-    mailbox = SlotAvailabilityMailbox(
+    mailbox = StudentAssignmentAvailabilityMailbox(
         StaticMailbox(()),
         inbox=inbox,
         conversation_id=conversation_id,
@@ -94,12 +94,12 @@ def test_reserved_slot_retracts_unseen_inbox_and_staging_events(tmp_path: Path):
         ) is True
 
 
-def test_available_slot_preserves_its_queued_event(tmp_path: Path):
+def test_available_student_preserves_its_queued_event(tmp_path: Path):
     conversation_id = UUID(int=124)
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
-    event = slot_event()
+    event = availability_event()
     inbox.enqueue(conversation_id, event.dedupe_key, event.to_prompt())
-    mailbox = SlotAvailabilityMailbox(
+    mailbox = StudentAssignmentAvailabilityMailbox(
         StaticMailbox((event,)),
         inbox=inbox,
         conversation_id=conversation_id,
@@ -110,17 +110,17 @@ def test_available_slot_preserves_its_queued_event(tmp_path: Path):
     assert inbox.pending_count(conversation_id) == 1
 
 
-def test_snapshot_retracts_a_removed_student_slot(tmp_path: Path):
+def test_snapshot_retracts_removed_student_availability(tmp_path: Path):
     conversation_id = UUID(int=125)
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     store_path = tmp_path / "advisor-events.sqlite3"
-    stale = slot_event("Old-name")
+    stale = availability_event("Old-name")
     retired = ControllerEvent(
         kind="idle_student",
         dedupe_key="idle_student:Older-name",
         payload={"student": "Older-name"},
     )
-    current = slot_event("New-name")
+    current = availability_event("New-name")
     inbox.enqueue(conversation_id, stale.dedupe_key, stale.to_prompt())
     inbox.enqueue(conversation_id, retired.dedupe_key, retired.to_prompt())
     with AdvisorEventStore(store_path) as store:
@@ -134,7 +134,7 @@ def test_snapshot_retracts_a_removed_student_slot(tmp_path: Path):
             )
             store.acknowledge(event.dedupe_key)
 
-    mailbox = SlotAvailabilityMailbox(
+    mailbox = StudentAssignmentAvailabilityMailbox(
         StaticMailbox((current,)),
         inbox=inbox,
         conversation_id=conversation_id,
@@ -154,7 +154,7 @@ def test_snapshot_retracts_a_removed_student_slot(tmp_path: Path):
             ) is True
 
 
-def test_failed_slot_poll_does_not_retract_queued_availability(tmp_path: Path):
+def test_failed_github_poll_does_not_retract_queued_availability(tmp_path: Path):
     class BrokenMailbox:
         def poll(self):
             raise RuntimeError("GitHub unavailable")
@@ -164,9 +164,9 @@ def test_failed_slot_poll_does_not_retract_queued_availability(tmp_path: Path):
 
     conversation_id = UUID(int=125)
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
-    event = slot_event()
+    event = availability_event()
     inbox.enqueue(conversation_id, event.dedupe_key, event.to_prompt())
-    mailbox = SlotAvailabilityMailbox(
+    mailbox = StudentAssignmentAvailabilityMailbox(
         BrokenMailbox(),
         inbox=inbox,
         conversation_id=conversation_id,

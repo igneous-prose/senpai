@@ -31,7 +31,7 @@ from senpai_agent.mailbox import (
     LocalAdvisorMailbox,
     LocalStudentMailbox,
     Mailbox,
-    SlotAvailabilityMailbox,
+    StudentAssignmentAvailabilityMailbox,
 )
 from senpai_agent.monitor import (
     MonitorMailbox,
@@ -822,7 +822,7 @@ def controller_main(
 
     if role == "advisor":
         advisor_event_store = runner_config.state_dir / "advisor-events.sqlite3"
-        active_github_mailbox = SlotAvailabilityMailbox(
+        active_github_mailbox = StudentAssignmentAvailabilityMailbox(
             github_mailbox,
             inbox=inbox,
             conversation_id=runner_config.conversation_id,

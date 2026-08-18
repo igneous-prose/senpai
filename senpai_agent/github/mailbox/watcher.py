@@ -55,7 +55,9 @@ class ActiveGitHubWatcher:
                         continue
                     current = {event.dedupe_key for event in events}
                     for event in events:
-                        if event.kind == "student_slot_available":
+                        # The foreground poll reconciles availability before the
+                        # next turn; staging it here would preserve stale state.
+                        if event.kind == "student_available_for_assignment":
                             continue
                         if event.dedupe_key in self.known_keys:
                             continue

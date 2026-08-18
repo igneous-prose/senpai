@@ -83,9 +83,9 @@ EVENT_PROMPT = """## {{KIND}}
 
 {{PAYLOAD}}"""
 
-STUDENT_SLOT_AVAILABLE_PROMPT = """## Student slot available: `{{STUDENT}}`
+STUDENT_AVAILABLE_FOR_ASSIGNMENT_PROMPT = """## Student available for assignment: `{{STUDENT}}`
 
-No open assignment with `status:wip` or `status:review` reserves this slot."""
+`{{STUDENT}}` has no open `status:wip` or `status:review` assignment."""
 
 WORKSPACE_DIVERGENCE_PROMPT = """The workspace cannot be reconciled automatically because local assignment history diverged or dirty work belongs to another checkout. Senpai preserved every local commit and dirty file without changing the checkout. Inspect and reconcile it explicitly; do not reset or discard local work."""
 
@@ -128,9 +128,9 @@ def render_prompt(template: str, /, **values: str) -> str:
 def render_event_prompt(kind: str, payload: Mapping[str, object]) -> str:
     """Render a controller event for the model."""
 
-    if kind == "student_slot_available":
+    if kind == "student_available_for_assignment":
         return render_prompt(
-            STUDENT_SLOT_AVAILABLE_PROMPT,
+            STUDENT_AVAILABLE_FOR_ASSIGNMENT_PROMPT,
             STUDENT=str(payload["student"]),
         )
     return render_prompt(

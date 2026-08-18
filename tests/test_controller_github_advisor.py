@@ -297,7 +297,7 @@ def test_edited_student_comment_fails_closed(monkeypatch, capsys):
     assert "edited assignment comment rejected" in capsys.readouterr().err
 
 
-def test_review_label_wakes_the_advisor_and_reserves_the_student_slot(monkeypatch):
+def test_review_label_wakes_the_advisor_and_keeps_the_student_assigned(monkeypatch):
     advisor = mailbox(
         monkeypatch,
         [
@@ -312,13 +312,16 @@ def test_review_label_wakes_the_advisor_and_reserves_the_student_slot(monkeypatc
 
     assert [event.kind for event in events] == [
         "review_ready",
-        "student_slot_available",
+        "student_available_for_assignment",
     ]
     assert events[0].payload["number"] == 17
-    assert events[1].dedupe_key == "student_slot_available:student-2"
+    assert (
+        events[1].dedupe_key
+        == "student_available_for_assignment:student-2"
+    )
     assert events[1].payload == {"student": "student-2"}
     assert events[1].to_prompt().startswith(
-        "## Student slot available: `student-2`"
+        "## Student available for assignment: `student-2`"
     )
 
 
@@ -327,7 +330,7 @@ def test_review_label_wakes_the_advisor_and_reserves_the_student_slot(monkeypatc
     "blocker",
     ["status:hold", "status:blocked", "status:needs-rebase"],
 )
-def test_blocked_assignment_still_reserves_the_student_slot(
+def test_assignment_action_labels_do_not_make_the_student_available(
     monkeypatch,
     status,
     blocker,
@@ -347,7 +350,7 @@ def test_blocked_assignment_still_reserves_the_student_slot(
         students=("student-1",),
     )
 
-    assert "student_slot_available" not in {
+    assert "student_available_for_assignment" not in {
         event.kind for event in advisor.poll()
     }
 
@@ -1036,10 +1039,12 @@ def test_research_base_ref_failure_does_not_suppress_other_advisor_events(
 
     assert {event.kind for event in events} == {
         "review_ready",
-        "student_slot_available",
+        "student_available_for_assignment",
     }
     available = next(
-        event for event in events if event.kind == "student_slot_available"
+        event
+        for event in events
+        if event.kind == "student_available_for_assignment"
     )
     assert available.payload == {"student": "student-2"}
     assert "SENPAI_RESEARCH_BASE_WATCH_ERROR" in capsys.readouterr().err

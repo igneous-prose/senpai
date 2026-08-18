@@ -37,13 +37,13 @@ def test_render_prompt_preserves_placeholder_boundary_whitespace():
     )
 
 
-def test_student_slot_available_event_names_the_student_and_defines_the_slot():
+def test_student_available_event_names_the_student_and_defines_availability():
     assert prompts.render_event_prompt(
-        "student_slot_available",
+        "student_available_for_assignment",
         {"student": "qwen-edward"},
     ) == (
-        "## Student slot available: `qwen-edward`\n\n"
-        "No open assignment with `status:wip` or `status:review` reserves this slot."
+        "## Student available for assignment: `qwen-edward`\n\n"
+        "`qwen-edward` has no open `status:wip` or `status:review` assignment."
     )
 
 

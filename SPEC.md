@@ -77,10 +77,10 @@ GitHub state is level-triggered:
   `status:review` PR wake its exact student assignment conversation;
 - `status:review` is a durable advisor wake;
 - a configured student with no open assignment labeled `status:wip` or
-  `status:review` emits `student_slot_available`. This event describes
+  `status:review` emits `student_available_for_assignment`. This event describes
   assignment routing, not the student process or GPU state. A later successful
   GitHub poll retracts the event while it is still queued and unclaimed if the
-  slot has become reserved;
+  student now has an open assignment labeled `status:wip` or `status:review`;
 - when the configured research base changes from an active assignment's
   recorded base SHA, `research_base_changed` gives the advisor
   `required_base_sha`, `current_base_sha`, and a compare URL without cancelling
@@ -110,8 +110,9 @@ ledger. Oldest unacknowledged events are delivered in bounded count/byte
 batches; immediate post-turn polls drain later batches without dropping them.
 
 While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
-state. It enqueues all newly visible advisor events, and only PR feedback bound
-to the currently running student UUID, in the role's local event store.
+state. It enqueues newly visible advisor events except student-assignment
+availability, which the foreground poll reconciles before the next turn. For a
+student, it enqueues only PR feedback bound to the currently running UUID.
 OpenHands 1.40 supports concurrent `send_message`; `AdvisorEventPump` injects at
 its state lock boundary without cancelling unrelated work. Successfully
 injected student feedback is acknowledged in `github-feedback.json` only when

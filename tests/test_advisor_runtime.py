@@ -109,13 +109,13 @@ def test_event_store_deduplicates_and_survives_reopen(tmp_path: Path):
 def test_event_store_discards_absent_level_triggers(tmp_path: Path):
     database = tmp_path / "advisor-events.sqlite3"
     stale = AdvisorEvent(
-        kind="student_slot_available",
-        dedupe_key="student_slot_available:Fern",
+        kind="student_available_for_assignment",
+        dedupe_key="student_available_for_assignment:Fern",
         payload={"student": "Fern"},
     )
     retained = stale.model_copy(
         update={
-            "dedupe_key": "student_slot_available:Frieren",
+            "dedupe_key": "student_available_for_assignment:Frieren",
             "payload": {"student": "Frieren"},
         }
     )
@@ -125,7 +125,7 @@ def test_event_store_discards_absent_level_triggers(tmp_path: Path):
         assert store.enqueue(retained) is True
         store.acknowledge(stale.dedupe_key)
         assert store.discard_prefix(
-            "student_slot_available:",
+            "student_available_for_assignment:",
             retained_keys=(retained.dedupe_key,),
         ) == 1
         assert store.enqueue(stale) is True
@@ -489,10 +489,10 @@ def test_inbox_rendering_excludes_transport_only_parent_conversation_id():
     assert watcher_event.to_inbox_message() == controller_event.to_prompt()
 
 
-def test_student_slot_rendering_matches_controller_and_watcher_paths():
+def test_student_availability_rendering_matches_controller_and_watcher_paths():
     controller_event = ControllerEvent(
-        kind="student_slot_available",
-        dedupe_key="student_slot_available:qwen-edward",
+        kind="student_available_for_assignment",
+        dedupe_key="student_available_for_assignment:qwen-edward",
         payload={"student": "qwen-edward"},
     )
     watcher_event = AdvisorEvent(

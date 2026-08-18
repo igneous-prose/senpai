@@ -345,10 +345,10 @@ def test_active_watcher_retries_after_a_transient_github_read_error(
     assert "SENPAI_GITHUB_WATCHER_POLL_ERROR" in capsys.readouterr().err
 
 
-def test_active_watcher_does_not_queue_slot_availability(tmp_path: Path):
+def test_active_watcher_does_not_queue_student_availability(tmp_path: Path):
     event = ControllerEvent(
-        kind="student_slot_available",
-        dedupe_key="student_slot_available:Fern",
+        kind="student_available_for_assignment",
+        dedupe_key="student_available_for_assignment:Fern",
         payload={"student": "Fern"},
     )
 
