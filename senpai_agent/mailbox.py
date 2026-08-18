@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
-from senpai_agent.advisor import AdvisorEventStore
 from senpai_agent.inbox import PersistentInbox
+from senpai_agent.local_events import LocalEventStore
 from senpai_agent.PROMPTS import render_event_prompt
 
 
@@ -88,7 +88,7 @@ class StudentAssignmentAvailabilityMailbox:
             for event in events
             if event.kind == "student_available_for_assignment"
         }
-        with AdvisorEventStore(self.event_store_path) as store:
+        with LocalEventStore(self.event_store_path) as store:
             store.discard_prefix(
                 _AVAILABILITY_EVENT_PREFIX,
                 retained_keys=tuple(current),
@@ -111,7 +111,7 @@ class LocalAdvisorMailbox:
         self.store_path = store_path
 
     def poll(self) -> tuple[ControllerEvent, ...]:
-        with AdvisorEventStore(self.store_path) as store:
+        with LocalEventStore(self.store_path) as store:
             pending = store.pending()
         return tuple(
             ControllerEvent(
@@ -123,7 +123,7 @@ class LocalAdvisorMailbox:
         )
 
     def acknowledge(self, dedupe_keys: Sequence[str]) -> None:
-        with AdvisorEventStore(self.store_path) as store:
+        with LocalEventStore(self.store_path) as store:
             for key in dedupe_keys:
                 store.acknowledge(key)
 
@@ -135,7 +135,7 @@ class LocalStudentMailbox:
         self.store_path = store_path
 
     def poll(self) -> tuple[ControllerEvent, ...]:
-        with AdvisorEventStore(self.store_path) as store:
+        with LocalEventStore(self.store_path) as store:
             pending = store.pending()
         for event in pending:
             if not isinstance(event.payload.get("parent_conversation_id"), str):
@@ -150,6 +150,6 @@ class LocalStudentMailbox:
         )
 
     def acknowledge(self, dedupe_keys: Sequence[str]) -> None:
-        with AdvisorEventStore(self.store_path) as store:
+        with LocalEventStore(self.store_path) as store:
             for key in dedupe_keys:
                 store.acknowledge(key)

@@ -3,8 +3,8 @@ from uuid import UUID
 
 import pytest
 
-from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.inbox import PersistentInbox
+from senpai_agent.local_events import LocalEvent, LocalEventStore
 from senpai_agent.mailbox import (
     CompositeMailbox,
     ControllerEvent,
@@ -65,9 +65,9 @@ def test_reserved_assignment_retracts_unseen_availability_events(tmp_path: Path)
     store_path = tmp_path / "advisor-events.sqlite3"
     event = availability_event()
     inbox.enqueue(conversation_id, event.dedupe_key, event.to_prompt())
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         store.enqueue(
-            AdvisorEvent(
+            LocalEvent(
                 kind=event.kind,
                 dedupe_key=event.dedupe_key,
                 payload=event.payload,
@@ -84,9 +84,9 @@ def test_reserved_assignment_retracts_unseen_availability_events(tmp_path: Path)
 
     assert mailbox.poll() == ()
     assert inbox.pending_count(conversation_id) == 0
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         assert store.enqueue(
-            AdvisorEvent(
+            LocalEvent(
                 kind=event.kind,
                 dedupe_key=event.dedupe_key,
                 payload=event.payload,
@@ -117,9 +117,9 @@ def test_snapshot_retracts_removed_student_availability(tmp_path: Path):
     stale = availability_event("Old-name")
     current = availability_event("New-name")
     inbox.enqueue(conversation_id, stale.dedupe_key, stale.to_prompt())
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         store.enqueue(
-            AdvisorEvent(
+            LocalEvent(
                 kind=stale.kind,
                 dedupe_key=stale.dedupe_key,
                 payload=stale.payload,
@@ -136,9 +136,9 @@ def test_snapshot_retracts_removed_student_availability(tmp_path: Path):
 
     assert mailbox.poll() == (current,)
     assert inbox.pending_count(conversation_id) == 0
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         assert store.enqueue(
-            AdvisorEvent(
+            LocalEvent(
                 kind=stale.kind,
                 dedupe_key=stale.dedupe_key,
                 payload=stale.payload,

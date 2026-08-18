@@ -17,7 +17,6 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from senpai_agent.agent_markdown import strip_spdx_header
-from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
     DeliveryState,
@@ -25,6 +24,7 @@ from senpai_agent.inbox import (
     InboxTurnQuarantined,
     PersistentInbox,
 )
+from senpai_agent.local_events import LocalEvent, LocalEventStore
 from senpai_agent.mailbox import (
     CompositeMailbox,
     ControllerEvent,
@@ -224,7 +224,7 @@ class OpenHandsTurnRunner:
         # A late watcher event may still be pending locally when the next
         # controller prompt carries that same GitHub event. The prompt is the
         # delivery path for this turn, so keep the event pump from repeating it.
-        with AdvisorEventStore(store_path) as store:
+        with LocalEventStore(store_path) as store:
             for event_key in event_keys:
                 store.acknowledge(event_key)
         with ActiveGitHubWatcher(
@@ -235,7 +235,7 @@ class OpenHandsTurnRunner:
             map_event=map_event,
         ) as watcher:
             exit_code = run_turn()
-        with AdvisorEventStore(store_path) as store:
+        with LocalEventStore(store_path) as store:
             delivered = store.acknowledged(tuple(watcher.enqueued_keys))
         return TurnResult(
             exit_code=exit_code,
@@ -248,7 +248,7 @@ def _student_feedback_event(
     *,
     conversation_id: UUID,
     registry: AssignmentConversationRegistry,
-) -> AdvisorEvent | None:
+) -> LocalEvent | None:
     if event.kind != "student_pr_feedback":
         return None
     target = registry.for_assignment(
@@ -257,7 +257,7 @@ def _student_feedback_event(
     )
     if target != conversation_id:
         return None
-    return AdvisorEvent(
+    return LocalEvent(
         kind=event.kind,
         dedupe_key=event.dedupe_key,
         payload={

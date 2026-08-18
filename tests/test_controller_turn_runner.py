@@ -11,7 +11,7 @@ from openhands.sdk.llm.exceptions import (
     LLMMalformedConversationHistoryError,
 )
 
-from senpai_agent.advisor import AdvisorEvent, AdvisorEventPump, AdvisorEventStore
+from senpai_agent.advisor import AdvisorEventPump
 from senpai_agent.controller import (
     ConversationRecoveryExhausted,
     OpenHandsTurnRunner,
@@ -20,6 +20,7 @@ from senpai_agent.controller import (
 from senpai_agent.github.http import GitHubReadError
 from senpai_agent.github.mailbox import ActiveGitHubWatcher
 from senpai_agent.inbox import DeliveryState, PersistentInbox, deliver_turn_messages
+from senpai_agent.local_events import LocalEvent, LocalEventStore
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.state import AssignmentConversationRegistry
 
@@ -87,7 +88,7 @@ def test_running_student_receives_only_feedback_bound_to_its_conversation(
             def send_message(self, message):
                 messages.append(message)
 
-        with AdvisorEventStore(
+        with LocalEventStore(
             state_dir / "student-events.sqlite3"
         ) as store, AdvisorEventPump(
             store,
@@ -118,7 +119,7 @@ def test_running_student_receives_only_feedback_bound_to_its_conversation(
     assert "Feedback for revision-3." not in messages[0]
     assert str(conversation_id) in messages[0]
     assert result.delivered_event_keys == frozenset({current.dedupe_key})
-    with AdvisorEventStore(state_dir / "student-events.sqlite3") as store:
+    with LocalEventStore(state_dir / "student-events.sqlite3") as store:
         assert store.pending() == []
 
 
@@ -137,7 +138,7 @@ def test_observed_feedback_is_not_reported_delivered_until_the_event_pump_sends_
     def run_openhands(_prompt, _config):
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
-            with AdvisorEventStore(store_path) as store:
+            with LocalEventStore(store_path) as store:
                 if store.pending_count():
                     break
             time.sleep(0.001)
@@ -157,7 +158,7 @@ def test_observed_feedback_is_not_reported_delivered_until_the_event_pump_sends_
     )
 
     assert result.delivered_event_keys == frozenset()
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         assert [event.dedupe_key for event in store.pending()] == [
             feedback.dedupe_key
         ]
@@ -174,9 +175,9 @@ def test_prompt_delivery_suppresses_a_late_duplicate_watcher_event(
     conversation_id = registry.for_assignment("assignment-17", "revision-2")
     feedback = feedback_event()
     store_path = state_dir / "student-events.sqlite3"
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         store.enqueue(
-            AdvisorEvent(
+            LocalEvent(
                 kind=feedback.kind,
                 dedupe_key=feedback.dedupe_key,
                 payload={
@@ -192,7 +193,7 @@ def test_prompt_delivery_suppresses_a_late_duplicate_watcher_event(
             def send_message(self, message):
                 messages.append(message)
 
-        with AdvisorEventStore(store_path) as store, AdvisorEventPump(
+        with LocalEventStore(store_path) as store, AdvisorEventPump(
             store,
             Conversation(),
             poll_interval=0.001,
@@ -216,7 +217,7 @@ def test_prompt_delivery_suppresses_a_late_duplicate_watcher_event(
 
     assert messages == []
     assert result.delivered_event_keys == frozenset()
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         assert store.pending() == []
 
 
@@ -236,7 +237,7 @@ def test_full_visible_set_suppresses_events_handled_in_an_earlier_turn(
             def send_message(self, message):
                 messages.append(message)
 
-        with AdvisorEventStore(store_path) as store, AdvisorEventPump(
+        with LocalEventStore(store_path) as store, AdvisorEventPump(
             store,
             Conversation(),
             poll_interval=0.001,
@@ -262,7 +263,7 @@ def test_full_visible_set_suppresses_events_handled_in_an_earlier_turn(
 
     assert messages == []
     assert result.delivered_event_keys == frozenset()
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         assert store.pending() == []
 
 
@@ -274,9 +275,9 @@ def test_acknowledged_store_rows_are_not_reported_as_this_turn_deliveries(
     conversation_id = UUID("00000000-0000-0000-0000-000000000018")
     handled = advisor_event()
     store_path = state_dir / "advisor-events.sqlite3"
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         store.enqueue(
-            AdvisorEvent(
+            LocalEvent(
                 kind=handled.kind,
                 dedupe_key=handled.dedupe_key,
                 payload=handled.payload,
@@ -330,7 +331,7 @@ def test_active_watcher_retries_after_a_transient_github_read_error(
     ) as watcher:
         deadline = time.monotonic() + 1
         while time.monotonic() < deadline:
-            with AdvisorEventStore(store_path) as store:
+            with LocalEventStore(store_path) as store:
                 if store.pending_count():
                     break
             time.sleep(0.001)
@@ -338,7 +339,7 @@ def test_active_watcher_retries_after_a_transient_github_read_error(
 
     assert watcher.error is None
     assert mailbox.calls >= 2
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         assert [pending.dedupe_key for pending in store.pending()] == [
             event.dedupe_key
         ]
@@ -374,7 +375,7 @@ def test_active_watcher_does_not_queue_student_availability(tmp_path: Path):
 
     assert mailbox.calls >= 2
     assert watcher.enqueued_keys == set()
-    with AdvisorEventStore(store_path) as store:
+    with LocalEventStore(store_path) as store:
         assert store.pending() == []
 
 

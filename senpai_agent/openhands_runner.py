@@ -23,7 +23,6 @@ os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
 
 from senpai_agent.advisor import (
     AdvisorEventPump,
-    AdvisorEventStore,
     advisor_conversation_id,
 )
 from senpai_agent.delegation import (
@@ -88,6 +87,7 @@ from senpai_agent.github.tools import (
     configure_github_credentials,
 )
 from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV, decode_launch_context
+from senpai_agent.local_events import LocalEventStore
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
     load_program_system_prompt,
@@ -1606,7 +1606,7 @@ def run_openhands(
             with graceful_interrupts(conversation):
                 if not config.child:
                     with (
-                        AdvisorEventStore(local_event_db_path(config)) as event_store,
+                        LocalEventStore(local_event_db_path(config)) as event_store,
                         AdvisorEventPump(
                             event_store,
                             conversation,

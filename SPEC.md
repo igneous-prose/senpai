@@ -110,7 +110,7 @@ ledger. Oldest unacknowledged events are delivered in bounded count/byte
 batches; immediate post-turn polls drain later batches without dropping them.
 
 While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
-state. It enqueues newly visible advisor events except student-assignment
+state. It enqueues newly visible GitHub events except student-assignment
 availability, which the foreground poll reconciles before the next turn. For a
 student, it enqueues only PR feedback bound to the currently running UUID.
 OpenHands 1.40 supports concurrent `send_message`; `AdvisorEventPump` injects at

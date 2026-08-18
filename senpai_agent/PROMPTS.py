@@ -71,7 +71,7 @@ The JSON below is the complete model-visible parent context at delegation time. 
 
 RECOVERED_ACTION_PROMPT = """Senpai restarted before this action completed. Inspect the preserved workspace and rerun it explicitly only if it is still needed."""
 
-ADVISOR_EVENT_PROMPT = """# Senpai event: {{KIND}}
+LOCAL_EVENT_PROMPT = """# Senpai event: {{KIND}}
 
 Observed at (UTC): {{OBSERVED_AT}}
 
