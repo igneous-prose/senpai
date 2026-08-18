@@ -252,6 +252,7 @@ def config(tmp_path: Path, **updates) -> DelegationConfig:
         "frontier_reasoning_effort": "max",
         "frontier_api_key_env": "OPENAI_API_KEY",
         "frontier_api_key": "secret",
+        "compaction_trigger_tokens": 200_000,
         "github_repo": "acme/widgets",
         "github_trusted_actor": None,
         "role_file": tmp_path / "role.md",
