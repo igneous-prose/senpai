@@ -81,6 +81,36 @@ def test_context_recovery_prompt_does_not_repeat_an_embedded_research_brief():
     assert prompt.count("complete initial controller context") == 1
 
 
+def test_turn_runner_passes_the_inference_state_out_of_band(
+    tmp_path: Path,
+    monkeypatch,
+):
+    conversation_id = UUID("00000000-0000-0000-0000-000000000094")
+    observed = []
+
+    def run_openhands(_prompt, _config, *, on_inference_state):
+        on_inference_state(1_755_000_000.0, 1_755_000_001.0)
+        return 0
+
+    def publish_state(started_at, heartbeat_at):
+        observed.append((started_at, heartbeat_at))
+
+    monkeypatch.setattr("senpai_agent.openhands_runner.run_openhands", run_openhands)
+
+    result = OpenHandsTurnRunner(
+        Config("advisor", tmp_path / "state", conversation_id),
+        full_prompt="complete current controller context",
+        on_inference_state=publish_state,
+    ).run(
+        "current actionable event",
+        conversation_id=conversation_id,
+        event_keys=frozenset(),
+    )
+
+    assert result.exit_code == 0
+    assert observed == [(1_755_000_000.0, 1_755_000_001.0)]
+
+
 def test_running_student_receives_only_feedback_bound_to_its_conversation(
     tmp_path: Path,
     monkeypatch,

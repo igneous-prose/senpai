@@ -52,6 +52,7 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
             captured["delete_on_close"] = kwargs["delete_on_close"]
             captured["llm_timeout"] = agent.llm.timeout
             captured["llm_num_retries"] = agent.llm.num_retries
+            captured["llm_type"] = type(agent.llm)
             self.state = SimpleNamespace(
                 execution_status=ConversationExecutionStatus.FINISHED
             )
@@ -88,6 +89,7 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
     assert captured["delete_on_close"] is False
     assert captured["llm_timeout"] == 5400
     assert captured["llm_num_retries"] == 1
+    assert captured["llm_type"] is runner.LLM
     assert captured["closed"] is True
 
 

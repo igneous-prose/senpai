@@ -145,6 +145,22 @@ def _activity_lease(
     return renew
 
 
+def _inference_state_lease(
+    progress: ProgressLease,
+) -> Callable[[float | None, float | None], None]:
+    def publish(started_at: float | None, heartbeat_at: float | None) -> None:
+        try:
+            progress.update_llm_request(started_at, heartbeat_at)
+        except OSError as error:
+            print(
+                f"SENPAI_LEASE_UPDATE_ERROR {type(error).__name__}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    return publish
+
+
 class OpenHandsTurnRunner:
     def __init__(
         self,
@@ -154,12 +170,16 @@ class OpenHandsTurnRunner:
         github_mailbox: GitHubMailbox | None = None,
         active_poll_interval_seconds: float = 30,
         on_activity: Callable[[], None] | None = None,
+        on_inference_state: (
+            Callable[[float | None, float | None], None] | None
+        ) = None,
     ):
         self.config = config
         self.full_prompt = full_prompt.strip()
         self.github_mailbox = github_mailbox
         self.active_poll_interval_seconds = active_poll_interval_seconds
         self.on_activity = on_activity
+        self.on_inference_state = on_inference_state
 
     def run(
         self,
@@ -193,6 +213,8 @@ class OpenHandsTurnRunner:
                 )
             if self.on_activity is not None:
                 options["on_activity"] = self.on_activity
+            if self.on_inference_state is not None:
+                options["on_inference_state"] = self.on_inference_state
             return options
 
         def run_turn() -> int:
@@ -896,6 +918,9 @@ def controller_main(
             _activity_lease(progress, turn_lease_seconds)
             if progress is not None
             else None
+        ),
+        on_inference_state=(
+            _inference_state_lease(progress) if progress is not None else None
         ),
     )
     controller = Controller(

@@ -60,7 +60,10 @@ Python controller worker
 ```
 
 The worker publishes an atomic lease containing its PID, current phase, hard
-deadline, and completed-turn counter. The supervisor resets bounded restart
+deadline, completed-turn counter, and active LLM request timestamps. A
+non-model-visible heartbeat updates `llm_request_heartbeat_at` while preserving
+the request's original `llm_request_started_at`. It does not add conversation
+events or renew the hard deadline. The supervisor resets bounded restart
 backoff only after a turn is successfully acknowledged; process uptime and
 idle sleep do not count as progress. The supervisor is independent of
 OpenHands and Kubernetes.
@@ -273,6 +276,7 @@ supported models can reuse server-side private reasoning and return the most
 detailed available summary. The default main effort is `xhigh`; GPT-5.6 also
 accepts `max`, which uses API `max` effort with Responses
 `reasoning.mode: pro`. Automatic OpenAI compaction starts at
+the `compaction_trigger_tokens` value from `senpai.yaml`, which defaults to
 200,000 rendered tokens. The OpenHands condenser is disabled for that provider
 chain, but its complete local event log remains durable and is used to recover
 the latest response ID after restart.
@@ -282,10 +286,15 @@ provider-native `output_config.effort: max` with adaptive thinking. Senpai
 never adds the OpenAI-only `reasoning.mode: pro` request body to Anthropic
 calls.
 
-Direct Anthropic models use native server-side compaction with a 200,000-input-
-token trigger. OpenHands persists the returned typed compaction block in the
-normal event log and replays it first in each later request, including after a
-process restart. The local condenser is disabled for these conversations.
+Direct Anthropic models use native server-side compaction with the same
+`compaction_trigger_tokens` input-token trigger. OpenHands persists the returned
+typed compaction block in the normal event log and replays it first in each
+later request, including after a process restart. Anthropic performs the token
+count after provider rendering; Senpai does not load a local tokenizer. This
+trigger is not a context-size cap. LiteLLM's normalized `prompt_tokens` can
+exceed it because that field sums the compaction and post-compaction sampling
+iterations; diagnose compaction from the raw iteration usage and returned
+compaction block. The local condenser is disabled for these conversations.
 Other providers retain the high-quality OpenHands condenser.
 
 The complete durable transcript remains available as plain event JSON under

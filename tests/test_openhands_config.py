@@ -210,6 +210,7 @@ def test_resolved_config_separates_runtime_credentials_from_command_secrets(
     assert config.timeout_seconds == 7200
     assert config.llm_timeout_seconds == 5400
     assert config.llm_num_retries == 1
+    assert config.compaction_trigger_tokens == 200_000
 
     delegated = runner.delegation_config(config)
     assert delegated.smart_api_key == "openai-key"
@@ -310,6 +311,38 @@ def test_inbox_recovery_budget_is_explicit_and_configurable(tmp_path):
     assert default.inbox_max_recovery_generations == 1
     assert configured.inbox_max_stalled_attempts == 4
     assert configured.inbox_max_recovery_generations == 2
+
+
+def test_compaction_trigger_tokens_are_explicit_and_configurable(tmp_path):
+    default = resolve_config(
+        parse_runner_args(["--max-turns", "1"]),
+        runtime_env(tmp_path),
+    )
+    configured = resolve_config(
+        parse_runner_args(
+            ["--max-turns", "1", "--compaction-trigger-tokens", "180000"]
+        ),
+        runtime_env(tmp_path),
+    )
+
+    assert default.compaction_trigger_tokens == 200_000
+    assert configured.compaction_trigger_tokens == 180_000
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [("not-a-number", "must be an integer"), ("49999", "at least 50000")],
+)
+def test_compaction_trigger_tokens_reject_invalid_environment_values(
+    tmp_path,
+    value,
+    message,
+):
+    env = runtime_env(tmp_path)
+    env["SENPAI_COMPACTION_TRIGGER_TOKENS"] = value
+
+    with pytest.raises(RuntimeError, match=message):
+        resolve_config(parse_runner_args(["--max-turns", "1"]), env)
 
 
 @pytest.mark.parametrize(

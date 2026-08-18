@@ -87,6 +87,7 @@ from senpai_agent.github.tools import (
     clear_github_credentials,
     configure_github_credentials,
 )
+from senpai_agent.inference_heartbeat import InferenceHeartbeat
 from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV, decode_launch_context
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
@@ -106,6 +107,7 @@ DEFAULT_FRONTIER_MODEL = "openai/gpt-5.6-sol"
 DEFAULT_REASONING_EFFORT = "xhigh"
 DEFAULT_FAST_REASONING_EFFORT = "high"
 DEFAULT_FRONTIER_REASONING_EFFORT = "max"
+DEFAULT_COMPACTION_TRIGGER_TOKENS = 200_000
 WANDB_INFERENCE_BASE_URL = "https://api.inference.wandb.ai/v1"
 REASONING_EFFORTS = (
     "low",
@@ -163,6 +165,10 @@ class RunnerArgs:
         alias="--frontier-reasoning-effort",
         choices=REASONING_EFFORTS,
     )
+    compaction_trigger_tokens: int | None = field(
+        default=None,
+        alias="--compaction-trigger-tokens",
+    )
     workspace: str | None = field(default=None, alias="--workspace")
     state_dir: str | None = field(default=None, alias="--state-dir")
     conversation_id: str | None = field(default=None, alias="--conversation-id")
@@ -201,6 +207,7 @@ class RunnerConfig:
     frontier_api_key_env: str
     frontier_api_key: SecretStr
     frontier_reasoning_effort: str
+    compaction_trigger_tokens: int
     workspace: Path
     state_dir: Path
     conversation_id: uuid.UUID
@@ -644,6 +651,23 @@ def resolve_config(
     if llm_timeout_seconds <= 0 or llm_num_retries <= 0:
         raise RuntimeError("Senpai LLM timeout and attempts must be positive")
     try:
+        compaction_trigger_tokens = int(
+            args.compaction_trigger_tokens
+            if args.compaction_trigger_tokens is not None
+            else env.get(
+                "SENPAI_COMPACTION_TRIGGER_TOKENS",
+                str(DEFAULT_COMPACTION_TRIGGER_TOKENS),
+            )
+        )
+    except ValueError as error:
+        raise RuntimeError(
+            "SENPAI_COMPACTION_TRIGGER_TOKENS must be an integer"
+        ) from error
+    if compaction_trigger_tokens < 50_000:
+        raise RuntimeError(
+            "SENPAI_COMPACTION_TRIGGER_TOKENS must be at least 50000"
+        )
+    try:
         inbox_max_stalled_attempts = int(
             env.get(
                 "SENPAI_INBOX_MAX_STALLED_ATTEMPTS",
@@ -844,6 +868,7 @@ def resolve_config(
         frontier_api_key_env=frontier_api_key_env,
         frontier_api_key=frontier_api_key,
         frontier_reasoning_effort=frontier_reasoning_effort,
+        compaction_trigger_tokens=compaction_trigger_tokens,
         workspace=workspace,
         state_dir=state_dir,
         conversation_id=(
@@ -1001,7 +1026,6 @@ def openai_responses_configuration(
         "reasoning_context": "all_turns",
         "responses_store": True,
         "responses_use_previous_response_id": True,
-        "responses_compact_threshold": 200_000,
     }
     if reasoning := _openai_pro_reasoning(model, reasoning_effort):
         configuration["litellm_extra_body"] = {
@@ -1010,10 +1034,24 @@ def openai_responses_configuration(
     return configuration
 
 
+def compaction_configuration(
+    model: str,
+    trigger_tokens: int,
+) -> dict[str, int]:
+    """Translate the universal token trigger to the provider SDK field."""
+    provider = model_provider(model)
+    if provider == "openai":
+        return {"responses_compact_threshold": trigger_tokens}
+    if provider == "anthropic":
+        return {"anthropic_compact_threshold": trigger_tokens}
+    return {}
+
+
 def model_runtime_configuration(
     model: str,
     reasoning_effort: str,
     *,
+    compaction_trigger_tokens: int,
     wandb_entity: str | None = None,
     wandb_project: str | None = None,
 ) -> dict[str, object]:
@@ -1050,7 +1088,7 @@ def model_runtime_configuration(
     for options in (
         prompt_cache_configuration(model),
         openai_responses_configuration(model, reasoning_effort),
-        anthropic_compaction_configuration(model),
+        compaction_configuration(model, compaction_trigger_tokens),
     ):
         for key, value in options.items():
             if key == "litellm_extra_body":
@@ -1060,12 +1098,6 @@ def model_runtime_configuration(
     if extra_body:
         configuration["litellm_extra_body"] = extra_body
     return configuration
-
-
-def anthropic_compaction_configuration(model: str) -> dict[str, int]:
-    if model.split("/", 1)[0].lower() != "anthropic":
-        return {}
-    return {"anthropic_compact_threshold": 100_000}
 
 
 def local_event_db_path(config: RunnerConfig) -> Path:
@@ -1160,6 +1192,7 @@ def delegation_config(
         frontier_reasoning_effort=config.frontier_reasoning_effort,
         frontier_api_key_env=config.frontier_api_key_env,
         frontier_api_key=config.frontier_api_key.get_secret_value(),
+        compaction_trigger_tokens=config.compaction_trigger_tokens,
         github_repo=config.github_repo,
         github_trusted_actor=config.github_trusted_actor,
         role_file=config.role_file,
@@ -1518,6 +1551,9 @@ def run_openhands(
     inbox_turn_id: str | None = None,
     recovery_prompt: str | None = None,
     on_activity: Callable[[], None] | None = None,
+    on_inference_state: (
+        Callable[[float | None, float | None], None] | None
+    ) = None,
 ) -> int:
     if (inbox is None) != (inbox_turn_id is None):
         raise ValueError("inbox and inbox_turn_id must be provided together")
@@ -1555,6 +1591,7 @@ def run_openhands(
                 "fast_reasoning_effort": config.fast_reasoning_effort,
                 "frontier_model": config.frontier_model,
                 "frontier_reasoning_effort": config.frontier_reasoning_effort,
+                "compaction_trigger_tokens": config.compaction_trigger_tokens,
                 "prompt_cache": (
                     prompt_cache_configuration(config.model)
                     or {"provider_default": True}
@@ -1599,9 +1636,15 @@ def run_openhands(
     configure_delegation(delegation_config(config, deadline_epoch=run_deadline))
     scrub_github_credentials(os.environ)
     conversation = None
+    inference_heartbeat = None
     cleanup_error: BaseException | None = None
     active_inbox_turn_id = inbox_turn_id
     try:
+        inference_heartbeat = (
+            InferenceHeartbeat(on_inference_state)
+            if on_inference_state is not None
+            else None
+        )
         llm = LLM(
             model=config.model,
             api_key=config.api_key,
@@ -1614,10 +1657,13 @@ def run_openhands(
             **model_runtime_configuration(
                 config.model,
                 config.reasoning_effort,
+                compaction_trigger_tokens=config.compaction_trigger_tokens,
                 wandb_entity=config.wandb_entity,
                 wandb_project=config.wandb_project,
             ),
         )
+        if inference_heartbeat is not None:
+            llm.set_request_scope(inference_heartbeat.request)
         if config.agent_name:
             definition = depth_aware_child_definition(
                 find_named_agent(config.agent_name, file_agents),
@@ -1847,6 +1893,8 @@ def run_openhands(
                         cleanup_error = error
         clear_github_credentials()
         configure_delegation(None)
+        if inference_heartbeat is not None:
+            inference_heartbeat.close()
         if conversation is not None:
             conversation.close()
         if cleanup_error is not None and not primary_error:

@@ -119,6 +119,7 @@ fast_model: openai/gpt-5.6-luna
 fast_reasoning_effort: high
 frontier_model: openai/gpt-5.6-sol
 frontier_reasoning_effort: max
+compaction_trigger_tokens: 200000
 
 pvc_claim_name: your-existing-pvc
 pvc_mount_path: /mnt/data
@@ -137,6 +138,9 @@ example, configure Claude Fable 5 as `anthropic/claude-fable-5`. Anthropic
 `reasoning_effort: max` on Claude Fable 5, Opus 5, and Sonnet 5 stays
 provider-native and is sent as `output_config.effort: max`; it does not enable
 OpenAI Pro mode.
+
+`compaction_trigger_tokens` sets the compaction limit. OpenAI and Anthropic
+apply it for their models; OpenHands handles compaction for other providers.
 
 If using W&B Inference use `wandb/` provider as the provider. For example `wandb/zai-org/GLM-5.2`, SENPAI
 uses `WANDB_API_KEY` for auth.
