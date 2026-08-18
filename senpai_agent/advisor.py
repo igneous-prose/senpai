@@ -14,8 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from senpai_agent.hooks import queued_feedback_marker
 from senpai_agent.inbox import (
+    ADVISOR_ACTIVE_STEERING_PRIORITIES,
     QUEUE_PRIORITY,
-    STEERING_PRIORITIES,
     STEER_PRIORITY,
     DeliveryState,
     PersistentInbox,
@@ -355,7 +355,7 @@ class AdvisorEventPump:
         steer_generation = 0
         steer_active_run = False
         for event in pending:
-            mode = STEERING_PRIORITIES.get(event.kind)
+            mode = ADVISOR_ACTIVE_STEERING_PRIORITIES.get(event.kind)
             if mode is not None:
                 with self._steer_lock:
                     if not self._accept_steering:
