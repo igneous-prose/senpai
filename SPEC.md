@@ -486,7 +486,7 @@ turn while tasks remain active. A terminal child result or error is persisted
 and resumes the exact root conversation. A nested child must await or cancel
 all of its descendants before returning; it cannot detach background work.
 
-Children are instructed to return at most 1,500 tokens with conclusions and
+Children are told they can use approximately 1,500 tokens for conclusions and
 evidence pointers. If a report exceeds 15,000 tokens, Senpai stores the complete
 report under the role state, asks the same child conversation for one concise
 summary, and persists only that summary and the local artifact path. A failed

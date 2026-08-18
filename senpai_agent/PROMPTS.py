@@ -53,13 +53,13 @@ DELEGATED_SEARCH_MODE_PROMPT = """Search mode: {{SEARCH_MODE}}
 
 DELEGATED_TASK_PROMPT = """# Delegated task
 
-You are a fresh Senpai subagent. Perform only the assigned task. Return at most 1,500 tokens with the conclusion, next actions, and precise evidence pointers. Do not return raw dumps.
+You are a fresh Senpai subagent. Perform only the assigned task. You can use approx 1,500 tokens in your response with the conclusion, next actions, and precise evidence pointers. Do not return raw dumps.
 
 {{ASSIGNMENT}}"""
 
 DELEGATED_TASK_WITH_CONTEXT_PROMPT = """# Delegated task with parent context
 
-The JSON below is the complete model-visible parent context at delegation time. Use it as evidence and perform only the assigned task. Return at most 1,500 tokens with the conclusion, next actions, and precise evidence pointers. Do not return raw dumps.
+The JSON below is the complete model-visible parent context at delegation time. Use it as evidence and perform only the assigned task. You can use approx 1,500 tokens in your response with the conclusion, next actions, and precise evidence pointers. Do not return raw dumps.
 
 <parent_context_json>
 {{PARENT_CONTEXT_JSON}}

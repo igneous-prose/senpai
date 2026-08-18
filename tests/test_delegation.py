@@ -105,7 +105,7 @@ def test_child_prompt_contains_complete_snapshot_and_task():
     assert "Inspect PR #17." in prompt
     assert "Progressively disclosed skill body." in prompt
     assert "I will compare the evidence." in prompt
-    assert "at most 1,500 tokens" in prompt
+    assert "approx 1,500 tokens" in prompt
     payload = prompt.split("<parent_context_json>\n", 1)[1].split(
         "\n</parent_context_json>", 1
     )[0]
@@ -127,7 +127,7 @@ def test_context_free_search_prompt_contains_mode_and_task():
 
     assert "Search mode: research-publications" in prompt
     assert "Find neural operator papers." in prompt
-    assert "at most 1,500 tokens" in prompt
+    assert "approx 1,500 tokens" in prompt
     assert "parent_context_json" not in prompt
 
 
