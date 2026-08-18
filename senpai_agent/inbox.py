@@ -28,6 +28,10 @@ STEERING_PRIORITIES = {
     "human_issue": STEER_PRIORITY,
     "student_pr_feedback": QUEUE_PRIORITY,
 }
+ADVISOR_ACTIVE_STEERING_PRIORITIES = {
+    **STEERING_PRIORITIES,
+    "review_ready": QUEUE_PRIORITY,
+}
 _SENDER_PREFIX = "senpai-delivery:"
 
 

@@ -560,10 +560,12 @@ and deadline. Children receive neither GitHub credentials nor GitHub
 read/write tools; the parent prepares any large PR Markdown artifact and owns
 every typed GitHub operation. They do not receive training tools.
 
-When `review_ready` arrives during other advisor work, the advisor can spawn a
-smart, full-context General Purpose review and continue unrelated work. Every
-terminal record includes its root conversation identity, allowing the
-controller to resume the exact advisor or student conversation after its turn.
+When `review_ready` arrives during other advisor work, the harness pauses the
+advisor at the next safe agent-step boundary and delivers the event into the
+same durable conversation without interrupting an active tool. The advisor can
+delegate or defer the review, then resume the displaced work. Every terminal
+record includes its root conversation identity, allowing the controller to
+resume the exact advisor or student conversation after its turn.
 
 ### Training and monitoring
 
