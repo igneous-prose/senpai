@@ -15,6 +15,7 @@ from senpai_agent.PROMPTS import render_event_prompt
 
 
 _SLOT_EVENT_PREFIX = "student_slot_available:"
+_RETIRED_SLOT_EVENT_PREFIX = "idle_student:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,10 +95,15 @@ class SlotAvailabilityMailbox:
                 _SLOT_EVENT_PREFIX,
                 retained_keys=tuple(current),
             )
+            store.discard_prefix(_RETIRED_SLOT_EVENT_PREFIX)
         self.inbox.retract_pending_prefix(
             self.conversation_id,
             _SLOT_EVENT_PREFIX,
             retained_keys=tuple(current),
+        )
+        self.inbox.retract_pending_prefix(
+            self.conversation_id,
+            _RETIRED_SLOT_EVENT_PREFIX,
         )
         return events
 

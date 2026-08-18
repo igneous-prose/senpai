@@ -115,17 +115,24 @@ def test_snapshot_retracts_a_removed_student_slot(tmp_path: Path):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     store_path = tmp_path / "advisor-events.sqlite3"
     stale = slot_event("Old-name")
+    retired = ControllerEvent(
+        kind="idle_student",
+        dedupe_key="idle_student:Older-name",
+        payload={"student": "Older-name"},
+    )
     current = slot_event("New-name")
     inbox.enqueue(conversation_id, stale.dedupe_key, stale.to_prompt())
+    inbox.enqueue(conversation_id, retired.dedupe_key, retired.to_prompt())
     with AdvisorEventStore(store_path) as store:
-        store.enqueue(
-            AdvisorEvent(
-                kind=stale.kind,
-                dedupe_key=stale.dedupe_key,
-                payload=stale.payload,
+        for event in (stale, retired):
+            store.enqueue(
+                AdvisorEvent(
+                    kind=event.kind,
+                    dedupe_key=event.dedupe_key,
+                    payload=event.payload,
+                )
             )
-        )
-        store.acknowledge(stale.dedupe_key)
+            store.acknowledge(event.dedupe_key)
 
     mailbox = SlotAvailabilityMailbox(
         StaticMailbox((current,)),
@@ -137,13 +144,14 @@ def test_snapshot_retracts_a_removed_student_slot(tmp_path: Path):
     assert mailbox.poll() == (current,)
     assert inbox.pending_count(conversation_id) == 0
     with AdvisorEventStore(store_path) as store:
-        assert store.enqueue(
-            AdvisorEvent(
-                kind=stale.kind,
-                dedupe_key=stale.dedupe_key,
-                payload=stale.payload,
-            )
-        ) is True
+        for event in (stale, retired):
+            assert store.enqueue(
+                AdvisorEvent(
+                    kind=event.kind,
+                    dedupe_key=event.dedupe_key,
+                    payload=event.payload,
+                )
+            ) is True
 
 
 def test_failed_slot_poll_does_not_retract_queued_availability(tmp_path: Path):
