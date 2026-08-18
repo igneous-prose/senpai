@@ -977,16 +977,15 @@ def test_oversized_child_result_is_spilled_then_replaced_by_one_summary(
     )
     isolate_agent_discovery(monkeypatch, runner)
 
-    assert run_openhands(
-        "child task",
-        runtime_config(
-            tmp_path,
-            child=True,
-            workspace=target_checkout,
-            delegation_root_state_dir=role_state,
-            delegation_task_id=task_id,
-        ),
-    ) == 0
+    config = runtime_config(
+        tmp_path,
+        child=True,
+        workspace=target_checkout,
+        delegation_root_state_dir=role_state,
+        delegation_task_id=task_id,
+    )
+
+    assert run_openhands("child task", config) == 0
 
     artifact = role_state / "delegation" / "results" / f"{task_id}.md"
     output = capsys.readouterr().out
@@ -999,6 +998,24 @@ def test_oversized_child_result_is_spilled_then_replaced_by_one_summary(
     assert not artifact.is_relative_to(target_checkout)
     assert artifact.parent.stat().st_mode & 0o777 == 0o700
     assert artifact.stat().st_mode & 0o777 == 0o600
+    parent_state = SimpleNamespace(
+        workspace=SimpleNamespace(working_dir=str(target_checkout)),
+        agent=SimpleNamespace(
+            llm=SimpleNamespace(vision_is_active=lambda: False),
+        ),
+    )
+    parent_config = runtime_config(tmp_path, workspace=target_checkout)
+    file_editor_spec = next(
+        tool
+        for tool in runner.build_main_tools(parent_config)
+        if tool.name == "file_editor"
+    )
+    file_editor = resolve_tool(file_editor_spec, parent_state)[0]
+    parent_read = file_editor(
+        file_editor.action_type(command="view", path=str(artifact))
+    )
+    assert parent_read.is_error is False
+    assert raw_report in parent_read.text
     assert result["result"] == f"{summary}\n\nFull report: {artifact}"
     assert raw_report not in result["result"]
     assert raw_report not in output

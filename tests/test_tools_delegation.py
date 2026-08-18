@@ -26,6 +26,7 @@ from senpai_agent.delegation import (
     LeafAgentTask,
     LeafSpawnAgentsAction,
     MODEL_TIER_TIMEOUT_SECONDS,
+    OpenHandsChildProcess,
     SpawnAgentsAction,
     SpawnAgentsTool,
     cancel_pending_descendants,
@@ -337,9 +338,15 @@ def test_compacted_result_is_the_only_parent_visible_task_value(tmp_path):
     release = threading.Event()
     release.set()
     sink = EventSink()
+    requests = []
+
+    def factory(request):
+        requests.append(request)
+        return FakeChild(release, result=public_result)
+
     spawn, await_tool, status, _cancel = tools(
         tmp_path,
-        lambda _request: FakeChild(release, result=public_result),
+        factory,
         sink=sink,
     )
     parent = parent_conversation()
@@ -352,7 +359,20 @@ def test_compacted_result_is_the_only_parent_visible_task_value(tmp_path):
     ).tasks[0]
     assert sink.received.wait(1)
 
-    registry = DelegationRegistry(tmp_path / "state" / "delegation" / "tasks.sqlite3")
+    registry_path = tmp_path / "state" / "delegation" / "tasks.sqlite3"
+    child_environment = OpenHandsChildProcess(
+        config(tmp_path),
+        requests[0],
+    ).environment
+    assert child_environment["SENPAI_DELEGATION_REGISTRY_PATH"] == str(
+        registry_path
+    )
+    assert child_environment["SENPAI_DELEGATION_ROOT_STATE_DIR"] == str(
+        tmp_path / "state"
+    )
+    assert child_environment["SENPAI_DELEGATION_TASK_ID"] == task.task_id
+
+    registry = DelegationRegistry(registry_path)
     stored_result = registry.rows([task.task_id])[0]["result"]
     status_observation = status(AgentStatusAction(task_ids=[task.task_id]), parent)
     await_observation = await_tool(
