@@ -734,7 +734,6 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
         github_trusted_actor=None,
         state_dir=tmp_path,
         workspace=tmp_path,
-        training_max_timeout_seconds=1800,
         conversation_id=CONVERSATION_ID,
         timeout_seconds=7200,
         harness_file=tmp_path / "harness.md",

@@ -70,6 +70,20 @@ WANDB_API_KEY=
 | `EXA_API_KEY` | General-web and research-publication search. |
 | `WANDB_API_KEY` | Read/write access to the configured W&B entity and project. |
 
+To add a credential, put its value in `.env` and list its name in the launch
+configuration:
+
+```dotenv
+HF_TOKEN=abc123
+```
+
+```yaml
+custom_secret_env_names: [HF_TOKEN]
+```
+
+The credential is available to every advisor, student, and delegated child;
+its value is redacted from tool output and traces.
+
 `k8s/launch.py` reads shell environment variables first and then the repository-root `.env`; only the GitHub token also falls back to `gh auth token`. Direct Docker or host execution must export or pass credentials explicitly.
 
 The launcher places credentials in a per-launch Kubernetes Secret. During bootstrap, the GitHub write token is removed from the process environment and handed to the controller through a one-use channel; it is not exposed to the model or subagents.
@@ -107,6 +121,8 @@ program_path: ""  # auto-discover, or set e.g. senpai/program.md
 
 wandb_entity: your-team
 wandb_project: your-project
+
+custom_secret_env_names: [HF_TOKEN]  # values come from .env
 
 advisor_model: openai/gpt-5.6-sol
 advisor_reasoning_effort: xhigh
@@ -400,7 +416,7 @@ Useful launch controls:
 
 - `--names frieren,fern` selects stable students; otherwise use `--n_students` and `--student_prefix`.
 - `--gpus_per_student`, `--cpu_per_gpu`, and `--memory_gi_per_gpu` size each student.
-- `--timeout_minutes` and `--max_epochs` are hard per-training limits.
+- `--timeout_minutes` and `--max_epochs` set agent-facing launch-context limits; target training receives neither as a dedicated `SENPAI_*` variable.
 - `--poll_interval_s` and `--poll_jitter_s` control idle GitHub cadence without teaching the model to poll.
 - `--gh_history_scope branch` keeps normal advisor-branch memory, `fresh` creates a shallow ablation checkout, and `repo` exposes full repository history.
 - `--extra_instructions` accepts optional human operator guidance as a Markdown file or literal user context.

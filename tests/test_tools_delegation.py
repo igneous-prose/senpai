@@ -260,7 +260,7 @@ def config(tmp_path: Path, **updates) -> DelegationConfig:
         "harness_file": tmp_path / "harness.md",
         "plugin_dir": tmp_path / "plugin",
         "enable_browser": False,
-        "command_secrets": {},
+        "conversation_secrets": {},
         "role": "advisor",
         "program_path": "program.md",
         "launch_context": "# Authoritative launch context\n\nSystem policy.",

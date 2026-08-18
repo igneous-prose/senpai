@@ -28,7 +28,7 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "github_repo": "acme/widgets",
         "github_token": SecretStr("github-key"),
         "github_trusted_actor": None,
-        "command_secrets": {"WANDB_API_KEY": "wandb-key"},
+        "conversation_secrets": {"WANDB_API_KEY": "wandb-key"},
         "reasoning_effort": "xhigh",
         "smart_model": "anthropic/claude-opus-4-8",
         "smart_api_key_env": "ANTHROPIC_API_KEY",

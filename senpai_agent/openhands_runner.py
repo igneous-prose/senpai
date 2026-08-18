@@ -43,9 +43,11 @@ from senpai_agent.inbox import (
     turn_has_finished_response,
 )
 from senpai_agent.secrets import (
+    BUILTIN_CONVERSATION_SECRET_ENV_NAMES,
     GITHUB_TOKEN_ENV_NAMES,
     GITHUB_TOKEN_FD_ENV,
     GITHUB_TOKEN_FILE_ENV,
+    configured_custom_secret_env_names,
     scrub_github_credentials,
 )
 from senpai_agent.weave_monitoring import (
@@ -127,10 +129,6 @@ PROVIDER_API_KEY_ENVS = {
     "openai": "OPENAI_API_KEY",
     "wandb": "WANDB_API_KEY",
 }
-COMMAND_SECRET_ENV_NAMES = (
-    "WANDB_API_KEY",
-    "EXA_API_KEY",
-)
 EVENT_TEXT_LIMIT = 20000
 MAX_INLINE_CHILD_RESULT_TOKENS = 15_000
 DEFAULT_INBOX_MAX_STALLED_ATTEMPTS = 3
@@ -193,7 +191,7 @@ class RunnerConfig:
     github_repo: str
     github_token: SecretStr | None
     github_trusted_actor: str | None
-    command_secrets: Mapping[str, str]
+    conversation_secrets: Mapping[str, str]
     reasoning_effort: str
     smart_model: str
     smart_api_key_env: str
@@ -223,7 +221,6 @@ class RunnerConfig:
     student_name: str | None = None
     wandb_entity: str | None = None
     wandb_project: str | None = None
-    training_max_timeout_seconds: int = 1800
     timeout_seconds: float = 7200
     llm_timeout_seconds: int = 5400
     llm_num_retries: int = 1
@@ -369,10 +366,34 @@ def resolve_api_key(env: Mapping[str, str], key_env: str) -> SecretStr:
     return SecretStr(value)
 
 
-def command_secrets(env: Mapping[str, str]) -> dict[str, str]:
+def conversation_secrets(
+    env: Mapping[str, str],
+    *,
+    model_api_key_env_names: Sequence[str],
+) -> dict[str, str]:
+    custom_secret_env_names = configured_custom_secret_env_names(env)
+    model_credentials = set(model_api_key_env_names)
+    overlap = tuple(
+        name for name in custom_secret_env_names if name in model_credentials
+    )
+    if overlap:
+        raise RuntimeError(
+            "model credential environment variables cannot also be custom "
+            f"secrets: {', '.join(overlap)}"
+        )
+
+    custom_secrets = {}
+    for name in custom_secret_env_names:
+        value = env.get(name)
+        if value is None or not value.strip():
+            raise RuntimeError(f"configured custom secret {name} is required")
+        custom_secrets[name] = value
+
     return {
-        name: value for name in COMMAND_SECRET_ENV_NAMES if (value := env.get(name))
-    }
+        name: value
+        for name in BUILTIN_CONVERSATION_SECRET_ENV_NAMES
+        if (value := env.get(name))
+    } | custom_secrets
 
 
 def github_token(
@@ -628,14 +649,6 @@ def resolve_config(
         launch=decode_launch_context(env.get(LAUNCH_CONTEXT_ENV, "")),
     )
     try:
-        training_max_timeout_seconds = round(
-            float(env.get("SENPAI_TIMEOUT_MINUTES", "30")) * 60
-        )
-    except ValueError as error:
-        raise RuntimeError("SENPAI_TIMEOUT_MINUTES must be numeric") from error
-    if training_max_timeout_seconds <= 0:
-        raise RuntimeError("SENPAI_TIMEOUT_MINUTES must be positive")
-    try:
         timeout_seconds = float(env.get("SENPAI_OPENHANDS_TIMEOUT_SECONDS", "7200"))
     except ValueError as error:
         raise RuntimeError(
@@ -838,6 +851,15 @@ def resolve_config(
     smart_api_key = resolve_api_key(env, smart_api_key_env)
     fast_api_key = resolve_api_key(env, fast_api_key_env)
     frontier_api_key = resolve_api_key(env, frontier_api_key_env)
+    resolved_conversation_secrets = conversation_secrets(
+        env,
+        model_api_key_env_names=(
+            api_key_env,
+            smart_api_key_env,
+            fast_api_key_env,
+            frontier_api_key_env,
+        ),
+    )
     models = (model, smart_model, fast_model, frontier_model)
     if any(model_provider(profile) == "wandb" for profile in models) and not (
         wandb_entity and wandb_project
@@ -854,7 +876,7 @@ def resolve_config(
         github_repo=github_repo(env),
         github_token=github_token(env, required=not args.child),
         github_trusted_actor=env.get("SENPAI_GITHUB_ACTOR"),
-        command_secrets=command_secrets(env),
+        conversation_secrets=resolved_conversation_secrets,
         reasoning_effort=reasoning_effort,
         smart_model=smart_model,
         smart_api_key_env=smart_api_key_env,
@@ -911,7 +933,6 @@ def resolve_config(
         student_name=env.get("STUDENT_NAME") or None,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,
-        training_max_timeout_seconds=training_max_timeout_seconds,
         timeout_seconds=timeout_seconds,
         llm_timeout_seconds=llm_timeout_seconds,
         llm_num_retries=llm_num_retries,
@@ -1163,10 +1184,7 @@ def build_main_tools(config: RunnerConfig) -> list[Tool]:
         )
     )
     if config.role == "student" and not config.child:
-        training_params: dict[str, str | int] = {
-            "state_dir": str(config.state_dir / "training"),
-            "max_timeout_seconds": config.training_max_timeout_seconds,
-        }
+        training_params = {"state_dir": str(config.state_dir / "training")}
         tools.append(Tool(name="senpai_training", params=training_params))
     return tools
 
@@ -1199,7 +1217,7 @@ def delegation_config(
         harness_file=config.harness_file,
         plugin_dir=config.plugin_dir,
         enable_browser=config.enable_browser,
-        command_secrets=config.command_secrets,
+        conversation_secrets=config.conversation_secrets,
         role=config.role,
         program_path=config.instructions.program.program_path,
         launch_context=config.instructions.launch,
@@ -1627,6 +1645,7 @@ def run_openhands(
     )
 
     if config.github_token is not None:
+        # The one-shot handoff is read after trace initialization.
         register_trace_secret(config.github_token.get_secret_value())
         configure_github_credentials(
             config.github_repo,
@@ -1733,7 +1752,7 @@ def run_openhands(
             callbacks=[] if config.child else [observe_event],
             max_iteration_per_run=config.max_turns,
             visualizer=None,
-            secrets=dict(config.command_secrets),
+            secrets=dict(config.conversation_secrets),
             tags={"runtime": "senpai-openhands"},
             delete_on_close=config.child,
             prompt_cache_key=conversation_prompt_cache_key(config),

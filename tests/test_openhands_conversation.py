@@ -42,6 +42,7 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
     monkeypatch,
 ):
     captured = {}
+    registered_secrets = []
 
     class FakeConversation:
         def __init__(self, agent, **kwargs):
@@ -72,8 +73,15 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
             captured["closed"] = True
 
     monkeypatch.setattr(runner, "LocalConversation", FakeConversation)
+    monkeypatch.setattr(runner, "register_trace_secret", registered_secrets.append)
     isolate_agent_discovery(monkeypatch, runner)
-    config = runtime_config(tmp_path)
+    config = runtime_config(
+        tmp_path,
+        conversation_secrets={
+            "WANDB_API_KEY": "wandb-key",
+            "PRIVATE_AUTH": "private-key",
+        },
+    )
 
     assert run_openhands("first task", config) == 0
     assert captured["prompt"] == "first task"
@@ -84,7 +92,11 @@ def test_run_initializes_role_plugin_and_secrets_before_the_first_message(
         "# Authoritative launch context\n\nTest launch policy.\n"
     )
     assert captured["plugin"] == str(PLUGIN_DIR)
-    assert captured["secrets"] == {"WANDB_API_KEY": "wandb-key"}
+    assert captured["secrets"] == {
+        "WANDB_API_KEY": "wandb-key",
+        "PRIVATE_AUTH": "private-key",
+    }
+    assert registered_secrets == ["github-key"]
     assert captured["conversation_id_env"] == config.conversation_id.hex
     assert captured["delete_on_close"] is False
     assert captured["llm_timeout"] == 5400
