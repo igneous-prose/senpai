@@ -15,7 +15,6 @@ from senpai_agent.PROMPTS import render_event_prompt
 
 
 _AVAILABILITY_EVENT_PREFIX = "student_available_for_assignment:"
-_RETIRED_AVAILABILITY_EVENT_PREFIX = "idle_student:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,22 +87,16 @@ class StudentAssignmentAvailabilityMailbox:
             event.dedupe_key
             for event in events
             if event.kind == "student_available_for_assignment"
-            and event.dedupe_key.startswith(_AVAILABILITY_EVENT_PREFIX)
         }
         with AdvisorEventStore(self.event_store_path) as store:
             store.discard_prefix(
                 _AVAILABILITY_EVENT_PREFIX,
                 retained_keys=tuple(current),
             )
-            store.discard_prefix(_RETIRED_AVAILABILITY_EVENT_PREFIX)
         self.inbox.retract_pending_prefix(
             self.conversation_id,
             _AVAILABILITY_EVENT_PREFIX,
             retained_keys=tuple(current),
-        )
-        self.inbox.retract_pending_prefix(
-            self.conversation_id,
-            _RETIRED_AVAILABILITY_EVENT_PREFIX,
         )
         return events
 

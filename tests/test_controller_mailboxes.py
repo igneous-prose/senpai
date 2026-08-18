@@ -115,24 +115,17 @@ def test_snapshot_retracts_removed_student_availability(tmp_path: Path):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     store_path = tmp_path / "advisor-events.sqlite3"
     stale = availability_event("Old-name")
-    retired = ControllerEvent(
-        kind="idle_student",
-        dedupe_key="idle_student:Older-name",
-        payload={"student": "Older-name"},
-    )
     current = availability_event("New-name")
     inbox.enqueue(conversation_id, stale.dedupe_key, stale.to_prompt())
-    inbox.enqueue(conversation_id, retired.dedupe_key, retired.to_prompt())
     with AdvisorEventStore(store_path) as store:
-        for event in (stale, retired):
-            store.enqueue(
-                AdvisorEvent(
-                    kind=event.kind,
-                    dedupe_key=event.dedupe_key,
-                    payload=event.payload,
-                )
+        store.enqueue(
+            AdvisorEvent(
+                kind=stale.kind,
+                dedupe_key=stale.dedupe_key,
+                payload=stale.payload,
             )
-            store.acknowledge(event.dedupe_key)
+        )
+        store.acknowledge(stale.dedupe_key)
 
     mailbox = StudentAssignmentAvailabilityMailbox(
         StaticMailbox((current,)),
@@ -144,14 +137,13 @@ def test_snapshot_retracts_removed_student_availability(tmp_path: Path):
     assert mailbox.poll() == (current,)
     assert inbox.pending_count(conversation_id) == 0
     with AdvisorEventStore(store_path) as store:
-        for event in (stale, retired):
-            assert store.enqueue(
-                AdvisorEvent(
-                    kind=event.kind,
-                    dedupe_key=event.dedupe_key,
-                    payload=event.payload,
-                )
-            ) is True
+        assert store.enqueue(
+            AdvisorEvent(
+                kind=stale.kind,
+                dedupe_key=stale.dedupe_key,
+                payload=stale.payload,
+            )
+        ) is True
 
 
 def test_failed_github_poll_does_not_retract_queued_availability(tmp_path: Path):
