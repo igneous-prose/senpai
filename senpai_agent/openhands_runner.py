@@ -86,7 +86,7 @@ from senpai_agent.github.tools import (
     clear_github_credentials,
     configure_github_credentials,
 )
-from senpai_agent.inference_heartbeat import InferenceTrackedLLM
+from senpai_agent.inference_heartbeat import InferenceHeartbeat
 from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV, decode_launch_context
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
@@ -1551,7 +1551,12 @@ def run_openhands(
     cleanup_error: BaseException | None = None
     active_inbox_turn_id = inbox_turn_id
     try:
-        llm = InferenceTrackedLLM(
+        inference_heartbeat = (
+            InferenceHeartbeat(on_inference_heartbeat)
+            if on_inference_heartbeat is not None
+            else None
+        )
+        llm = LLM(
             model=config.model,
             api_key=config.api_key,
             timeout=config.llm_timeout_seconds,
@@ -1568,8 +1573,8 @@ def run_openhands(
                 wandb_project=config.wandb_project,
             ),
         )
-        if on_inference_heartbeat is not None:
-            llm.configure_inference_heartbeat(on_inference_heartbeat)
+        if inference_heartbeat is not None:
+            llm.set_request_scope(inference_heartbeat.request)
         if config.agent_name:
             definition = depth_aware_child_definition(
                 find_named_agent(config.agent_name, file_agents),
