@@ -42,6 +42,7 @@ def runtime_config(tmp_path: Path, **updates) -> RunnerConfig:
         "frontier_api_key_env": "OPENAI_API_KEY",
         "frontier_api_key": SecretStr("frontier-key"),
         "frontier_reasoning_effort": "max",
+        "compaction_trigger_tokens": 200_000,
         "workspace": tmp_path,
         "state_dir": tmp_path / "state",
         "conversation_id": uuid.uuid4(),

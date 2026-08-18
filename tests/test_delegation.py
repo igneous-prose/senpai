@@ -81,6 +81,7 @@ def delegation_config(tmp_path: Path, **updates) -> DelegationConfig:
         "frontier_reasoning_effort": "max",
         "frontier_api_key_env": "OPENAI_API_KEY",
         "frontier_api_key": "openai-secret",
+        "compaction_trigger_tokens": 200_000,
         "github_repo": "acme/widgets",
         "github_trusted_actor": None,
         "role_file": tmp_path / "ADVISOR.md",
@@ -223,6 +224,7 @@ def test_child_command_selects_agent_model_effort_and_credential(tmp_path: Path)
     assert fast.environment["SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT"] == (
         config.frontier_reasoning_effort
     )
+    assert fast.environment["SENPAI_COMPACTION_TRIGGER_TOKENS"] == "200000"
 
 
 def test_child_environment_carries_the_resolved_program_path(tmp_path: Path):

@@ -35,6 +35,7 @@ def test_default_config_exposes_every_model_profile_and_effort():
         "fast_reasoning_effort": "high",
         "frontier_model": "openai/gpt-5.6-sol",
         "frontier_reasoning_effort": "max",
+        "compaction_trigger_tokens": 200_000,
     }.items() <= config.items()
     assert config["program_path"] == ""
     assert config["senpai_repo_url"] == "https://github.com/wandb/senpai.git"
@@ -261,6 +262,7 @@ def test_role_model_configuration_preserves_the_configured_efforts():
         fast_reasoning_effort="none",
         frontier_model="openai/gpt-5.6-sol",
         frontier_reasoning_effort="max",
+        compaction_trigger_tokens=180_000,
     )
 
     advisor_config, _deployment, _secret = render_role("advisor", args)
@@ -279,6 +281,14 @@ def test_role_model_configuration_preserves_the_configured_efforts():
         assert config["SENPAI_OPENHANDS_FAST_REASONING_EFFORT"] == "none"
         assert config["SENPAI_OPENHANDS_FRONTIER_MODEL"] == args.frontier_model
         assert config["SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT"] == "max"
+        assert config["SENPAI_COMPACTION_TRIGGER_TOKENS"] == "180000"
+
+
+def test_launch_rejects_a_compaction_trigger_below_provider_minimum():
+    args = launch_args(compaction_trigger_tokens=49_999)
+
+    with pytest.raises(SystemExit, match="must be at least 50000"):
+        launch.validate_model_config(args)
 
 
 def test_openai_ultra_launch_value_is_rejected():

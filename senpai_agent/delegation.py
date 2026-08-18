@@ -75,9 +75,9 @@ MAX_TREE_AGENTS = 8
 MAX_SPAWN_BATCH = 8
 MAX_AWAIT_SECONDS = 300
 MODEL_TIER_TIMEOUT_SECONDS: Mapping[ModelTier, float] = {
-    "fast": 600,
-    "smart": 1800,
-    "frontier": 3600,
+    "fast": 1200,
+    "smart": 3600,
+    "frontier": 7200,
 }
 TaskStatus = Literal[
     "queued",
@@ -150,6 +150,7 @@ class DelegationConfig:
     frontier_reasoning_effort: str
     frontier_api_key_env: str
     frontier_api_key: str
+    compaction_trigger_tokens: int
     github_repo: str
     github_trusted_actor: str | None
     role_file: Path
@@ -375,6 +376,9 @@ class OpenHandsChildProcess:
                 ),
                 "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": (
                     self._config.frontier_reasoning_effort
+                ),
+                "SENPAI_COMPACTION_TRIGGER_TOKENS": str(
+                    self._config.compaction_trigger_tokens
                 ),
                 "SENPAI_PARENT_CONVERSATION_HISTORY_DIR": str(
                     self._config.state_dir

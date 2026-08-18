@@ -60,10 +60,16 @@ Python controller worker
 ```
 
 The worker publishes an atomic lease containing its PID, current phase, hard
-deadline, and completed-turn counter. The supervisor resets bounded restart
+deadline, completed-turn counter, and active LLM request timestamps. A
+non-model-visible heartbeat updates `llm_request_heartbeat_at` while preserving
+the request's original `llm_request_started_at`. It does not add conversation
+events or renew the hard deadline. The supervisor resets bounded restart
 backoff only after a turn is successfully acknowledged; process uptime and
 idle sleep do not count as progress. The supervisor is independent of
 OpenHands and Kubernetes.
+OpenHands events renew the root turn's lease; its configured timeout measures
+inactivity rather than total elapsed time. Provider, tool, training, and child
+deadlines remain hard.
 Kubernetes liveness and Docker health checks inspect the same lease, while the
 supervisor provides the same recovery on a plain host.
 
@@ -111,12 +117,18 @@ batches; immediate post-turn polls drain later batches without dropping them.
 
 While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
 state. It enqueues newly visible GitHub events except student-assignment
-availability, which the foreground poll reconciles before the next turn. For a
-student, it enqueues only PR feedback bound to the currently running UUID.
-OpenHands 1.40 supports concurrent `send_message`; `AdvisorEventPump` injects at
-its state lock boundary without cancelling unrelated work. Successfully
-injected student feedback is acknowledged in `github-feedback.json` only when
-the enclosing student turn succeeds.
+availability, which the foreground poll reconciles before the next turn. For
+students, it maps authenticated human Issues and assignment-bound PR feedback
+into the active UUID. Authenticated humans are the interrupt tier: tools get up
+to 60 seconds to finish before Senpai interrupts and resumes the run, even when
+its inbox batch is full. Student assignments and trusted PR feedback share a
+FIFO queue tier; feedback waits for the next completed agent step without
+cancelling it.
+Ordinary events remain FIFO. Turn formation and non-human attachments are
+bounded to 16 events or 64 KiB; prioritized overflow remains pending to lead
+the next turn.
+Successfully injected student feedback is acknowledged in
+`github-feedback.json` only when the enclosing student turn succeeds.
 
 Generic child results use a local SQLite WAL event store because parent and
 child run on the same advisor or student instance. That is not an inter-node
@@ -127,6 +139,12 @@ advisor watcher/child events; `student-events.sqlite3`, for unacknowledged
 student feedback/child events; and `training/monitors.sqlite3`, for student
 monitor policy, samples, and deduplicated actionable signals. OpenHands
 conversation history is a separate file-backed per-UUID event log.
+
+A completed tool observation resets the three-attempt no-progress budget. A
+separate 36-inference-start backstop applies to each turn branch across worker
+restarts without limiting one productive run. Either exhausted budget enters
+bounded fresh-branch recovery and then quarantine. Only authenticated human
+steering can reopen quarantine; trusted PR feedback remains pending.
 
 ## State and conversations
 
@@ -265,6 +283,7 @@ supported models can reuse server-side private reasoning and return the most
 detailed available summary. The default main effort is `xhigh`; GPT-5.6 also
 accepts `max`, which uses API `max` effort with Responses
 `reasoning.mode: pro`. Automatic OpenAI compaction starts at
+the `compaction_trigger_tokens` value from `senpai.yaml`, which defaults to
 200,000 rendered tokens. The OpenHands condenser is disabled for that provider
 chain, but its complete local event log remains durable and is used to recover
 the latest response ID after restart.
@@ -274,10 +293,15 @@ provider-native `output_config.effort: max` with adaptive thinking. Senpai
 never adds the OpenAI-only `reasoning.mode: pro` request body to Anthropic
 calls.
 
-Direct Anthropic models use native server-side compaction with a 200,000-input-
-token trigger. OpenHands persists the returned typed compaction block in the
-normal event log and replays it first in each later request, including after a
-process restart. The local condenser is disabled for these conversations.
+Direct Anthropic models use native server-side compaction with the same
+`compaction_trigger_tokens` input-token trigger. OpenHands persists the returned
+typed compaction block in the normal event log and replays it first in each
+later request, including after a process restart. Anthropic performs the token
+count after provider rendering; Senpai does not load a local tokenizer. This
+trigger is not a context-size cap. LiteLLM's normalized `prompt_tokens` can
+exceed it because that field sums the compaction and post-compaction sampling
+iterations; diagnose compaction from the raw iteration usage and returned
+compaction block. The local condenser is disabled for these conversations.
 Other providers retain the high-quality OpenHands condenser.
 
 The complete durable transcript remains available as plain event JSON under
@@ -478,6 +502,13 @@ turn while tasks remain active. A terminal child result or error is persisted
 and resumes the exact root conversation. A nested child must await or cancel
 all of its descendants before returning; it cannot detach background work.
 
+Children are told they can use approximately 1,500 tokens for conclusions and
+evidence pointers. If a report exceeds 15,000 tokens, Senpai stores the complete
+report under the role state, asks the same child conversation for one concise
+summary, and persists only that summary and the local artifact path. A failed
+summary returns an error with the artifact path; it never sends the oversized
+report to the parent conversation.
+
 One root spawn batch and all descendants form a delegation tree. The tree may
 admit at most eight tasks over its lifetime, a single spawn batch is limited to
 eight, and the role registry allows at most eight active tasks concurrently
@@ -489,11 +520,11 @@ at depth two. Explore, Search, Bash Runner, and every depth-two agent are leaves
 This makes chains such as Explore -> Explore impossible without constraining a
 later research phase to the first batch's lifetime budget.
 
-The tree inherits one absolute root-turn deadline. Each task also has a tier
-runtime cap: 600 seconds for `fast`, 1,800 for `smart`, and 3,600 for `frontier`.
-The effective deadline is the earlier of that cap and the inherited root
-deadline. Reaching it interrupts the complete process group and records a
-terminal timeout; no descendant survives the tree deadline.
+Each task has an absolute tier runtime cap: 1,200 seconds for `fast`, 3,600 for
+`smart`, and 7,200 for `frontier`. A descendant's effective deadline is the
+earlier of that cap and its inherited ancestor deadline. Reaching it interrupts
+the complete process group and records a terminal timeout; no descendant
+outlives an ancestor deadline.
 
 Each tier selects one explicit model-and-effort profile. `model=fast` defaults
 to `openai/gpt-5.6-luna` at `high` for mechanical search, command execution,
@@ -601,8 +632,10 @@ turn. Each partition is acknowledged only after its own successful turn, so a
 child result for one assignment cannot consume or permanently block a training
 event for another.
 
-The Stop hook verifies the automatic monitor marker and a clean worktree,
-allowing the student turn to end while the controller supervises the process.
+The Stop hook always verifies the automatic monitor marker and normally
+requires a clean worktree. While queued PR feedback waits for a safe boundary,
+a role-local marker waives only the clean-worktree check; the pump clears it
+before delivery and on entry and exit.
 The advisor and advisor children never receive training tools.
 
 ## Hooks, deadlines, and shutdown

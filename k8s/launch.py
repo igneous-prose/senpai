@@ -99,6 +99,7 @@ class Args:
     fast_reasoning_effort: str = "high"
     frontier_model: str = "openai/gpt-5.6-sol"
     frontier_reasoning_effort: str = "max"
+    compaction_trigger_tokens: int = 200_000
     human_issues: bool = (
         True  # allow human GitHub issue triage; disable for isolated launches
     )
@@ -188,6 +189,8 @@ def _supports_openai_pro(model: str) -> bool:
 
 
 def validate_model_config(args: Args) -> None:
+    if args.compaction_trigger_tokens < 50_000:
+        sys.exit("ERROR: --compaction_trigger_tokens must be at least 50000")
     profiles = {
         "student": (args.student_model, args.student_reasoning_effort),
         "smart": (args.smart_model, args.smart_reasoning_effort),
@@ -238,6 +241,7 @@ def role_model_config(args: Args, role: str) -> dict[str, str]:
         "SENPAI_OPENHANDS_FAST_REASONING_EFFORT": args.fast_reasoning_effort,
         "SENPAI_OPENHANDS_FRONTIER_MODEL": args.frontier_model,
         "SENPAI_OPENHANDS_FRONTIER_REASONING_EFFORT": args.frontier_reasoning_effort,
+        "SENPAI_COMPACTION_TRIGGER_TOKENS": str(args.compaction_trigger_tokens),
     }
 
 
