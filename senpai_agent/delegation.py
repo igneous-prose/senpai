@@ -47,7 +47,12 @@ from senpai_agent.PROMPTS import (
     DELEGATED_TASK_WITH_CONTEXT_PROMPT,
     render_prompt,
 )
-from senpai_agent.secrets import scrub_github_credentials
+from senpai_agent.secrets import (
+    BUILTIN_CONVERSATION_SECRET_ENV_NAMES,
+    CUSTOM_SECRET_ENV_NAMES_ENV,
+    configured_custom_secret_env_names,
+    scrub_github_credentials,
+)
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
@@ -156,7 +161,7 @@ class DelegationConfig:
     harness_file: Path
     plugin_dir: Path
     enable_browser: bool
-    command_secrets: Mapping[str, str]
+    conversation_secrets: Mapping[str, str]
     role: str
     program_path: str
     launch_context: str
@@ -337,6 +342,8 @@ class OpenHandsChildProcess:
     @property
     def environment(self) -> dict[str, str]:
         environment = dict(os.environ)
+        for name in configured_custom_secret_env_names(environment):
+            environment.pop(name, None)
         scrub_github_credentials(environment)
         for name in tuple(environment):
             if name.endswith("_API_KEY"):
@@ -346,7 +353,14 @@ class OpenHandsChildProcess:
             "SENPAI_OPENHANDS_CONVERSATION_ID",
         ):
             environment.pop(name, None)
-        environment.update(self._config.command_secrets)
+        custom_secret_names = tuple(
+            name
+            for name in self._config.conversation_secrets
+            if name not in BUILTIN_CONVERSATION_SECRET_ENV_NAMES
+        )
+        environment[CUSTOM_SECRET_ENV_NAMES_ENV] = ",".join(custom_secret_names)
+        configured_custom_secret_env_names(environment)
+        environment.update(self._config.conversation_secrets)
         profiles = self._config.profiles()
         environment.update(
             {profile.api_key_env: profile.api_key for profile in profiles}

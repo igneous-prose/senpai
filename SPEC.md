@@ -35,8 +35,8 @@ dependencies.
    checkout.
 8. Senpai does not prune conversation history.
 9. Only the student image carries CUDA, PyTorch, and the training stack.
-10. Secrets are passed at narrow executor boundaries and redacted before
-    monitored content is attached.
+10. Secret values are passed at narrow executor boundaries and redacted before
+    monitored content is attached. Custom secret names are explicit.
 11. Hivemind is disabled, not redesigned, in this change.
 
 ## Control loop and remote protocol
@@ -217,6 +217,11 @@ program path and renders the role's `{{VARIABLE}}` placeholders once from an
 explicit non-secret allowlist. A missing referenced value fails the launch;
 unrelated environment variables and credentials are never considered. The
 rendered role is persisted in role state and reused across worker restarts.
+
+The launcher renders `timeout_minutes` and `max_epochs` into the launch context
+as agent policy. It does not export dedicated timeout or epoch environment
+variables, and the training supervisor has no launch-wide timeout default or
+ceiling. Each training run supplies its own positive `timeout_seconds` value.
 
 At process startup, the runner loads the harness, rendered role, `program.md`,
 and authoritative launch context into one immutable
@@ -567,7 +572,7 @@ monitor_training(
 ) -> MonitorTrainingObservation
 ```
 
-`TrainingSupervisor` owns one process group, the configured timeout ceiling,
+`TrainingSupervisor` owns one process group, each run's requested timeout,
 TERM/KILL cleanup, restart identity checks using PID/PGID/create-time, a bounded
 8 KiB error tail, streamed 64 KiB log parsing, persisted state, and discovered
 W&B run IDs. Run IDs are persisted while training is still running so metric
@@ -579,9 +584,9 @@ a terminal-state monitor bound to the current conversation. `monitor_training`
 is an optional policy upgrade for useful metric gates or staleness detection;
 repeating it replaces the default or previous policy.
 
-The timeout is a total wall-clock ceiling, not merely the point at which
-shutdown begins. TERM is sent early enough that the configured grace period
-ends at the deadline, after which the complete process group is killed.
+Each run's requested timeout is a total wall-clock ceiling, not merely the
+point at which shutdown begins. TERM is sent early enough that the configured
+grace period ends at the deadline, after which the complete process group is killed.
 `cancel_training` follows the same process-group cleanup path and does not
 return until the supervisor has persisted a terminal state. Target training
 code remains responsible for handling SIGTERM and flushing external services
@@ -651,6 +656,22 @@ Generic child processes receive no GitHub token and no GitHub tools. Main-role
 GitHub operations remain typed and lease/state guarded. Terminal and hook
 policies are behavioral guardrails, not a credential-containment boundary.
 
+`custom_secret_env_names` is an explicit, shared list of additional
+environment-variable names. Names must be unique and match
+`[A-Za-z_][A-Za-z0-9_]*`. Built-in launch credential names and names beginning
+with `GH_`, `GITHUB_`, or `SENPAI_` are reserved. Launcher-owned and
+process-control environment-variable names are also reserved. The launcher
+resolves each value from the shell and then the repository-root `.env`. It
+reads `.env` values literally without variable interpolation. A missing listed
+value fails the launch. It writes values only to the per-launch Kubernetes
+Secret and injects them into every advisor and student environment. The
+corresponding names, but not the values, are model-visible so agents can
+reference them during tool execution. OpenHands makes the values available at
+execution boundaries and propagates them to delegated children. Dry-run
+manifests validate names and contain deterministic placeholders instead of
+resolved values. Custom secrets receive no service-specific
+authentication preflight.
+
 Git operations use a temporary askpass helper rather than a persistent
 credential store. The runner repository cannot push, and a target pre-push hook
 enforces the exact role/branch matrix. Images run as an unprivileged user, and
@@ -658,13 +679,14 @@ the Kubernetes containers drop every Linux capability, disallow privilege
 escalation, and use the runtime-default seccomp profile.
 
 Weave content capture applies a longest-first transform over all configured
-API keys, tokens, passwords, secrets, credentials, and the selected custom
-model credential before content is sent. The pinned `weave-openhands`
-integration is initialized before OpenHands imports. Each conversation run is
-an agent trace with child LLM and tool spans, all carrying the durable
-OpenHands conversation ID. These OTLP records are stored in Weave Agent
-Observability and queried with `get_agent_spans()`, not the legacy Calls API;
-`OPENHANDS_RUN.weave_url` links directly to the conversation.
+API keys, tokens, passwords, secrets, credentials, custom secrets, and the
+selected custom model credential before content is sent. Custom secrets do not
+depend on naming conventions for redaction. The pinned
+`weave-openhands` integration is initialized before OpenHands imports. Each
+conversation run is an agent trace with child LLM and tool spans, all carrying
+the durable OpenHands conversation ID. These OTLP records are stored in Weave
+Agent Observability and queried with `get_agent_spans()`, not the legacy Calls
+API; `OPENHANDS_RUN.weave_url` links directly to the conversation.
 
 ## Images and launch acceptance
 
@@ -684,10 +706,12 @@ out that exact revision.
 Launch preflight verifies:
 
 - target-repository push and branch access;
-- the Anthropic key;
+- every model-provider credential referenced by the configured profiles;
 - the Exa key with one `type="instant"`, publication-category, one-result
-  search; and
-- the W&B key with a minimal viewer query.
+  search;
+- the W&B key with a minimal viewer query; and
+- the presence of every configured custom secret, without attempting
+  a service-specific authentication check.
 
 Exa is a progressive skill/script integration, not an always-connected MCP
 server.
@@ -741,7 +765,9 @@ The change is acceptable when:
 - browser smoke succeeds in both image builds;
 - no operational prompt advertises a missing tool or service;
 - no runtime role requires Claude Code semantics;
-- secrets do not appear in serialized tool specs or captured content;
+- secret values do not appear in serialized tool specs or captured content;
+- every configured custom secret reaches advisor, student, and child tool
+  execution with its output and trace content redacted;
 - monitor wakes resume the original student UUID;
 - cutoff arming completes after a bounded readiness window even when a pod
   never becomes Ready; and
