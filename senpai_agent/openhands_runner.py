@@ -131,7 +131,6 @@ COMMAND_SECRET_ENV_NAMES = (
 )
 EVENT_TEXT_LIMIT = 20000
 MAX_INLINE_CHILD_RESULT_TOKENS = 15_000
-MAX_CHILD_RESULT_SUMMARY_TOKENS = 1_500
 DEFAULT_INBOX_MAX_STALLED_ATTEMPTS = 3
 DEFAULT_INBOX_MAX_RECOVERY_GENERATIONS = 1
 
@@ -1459,8 +1458,10 @@ def compact_child_result(
             exclude_event_ids=existing_event_ids,
         )
         summary_tokens = _result_token_count(llm, summary)
-        if not 0 < summary_tokens <= MAX_CHILD_RESULT_SUMMARY_TOKENS:
-            raise RuntimeError("summary exceeds the child result limit")
+        if not 0 < summary_tokens <= MAX_INLINE_CHILD_RESULT_TOKENS:
+            raise RuntimeError(
+                "summary token count is unavailable or exceeds the child result limit"
+            )
     except Exception as error:
         raise RuntimeError(
             f"oversized child report saved at {artifact}; summarization failed"
@@ -1812,7 +1813,6 @@ def run_openhands(
                 child_result,
                 run_deadline,
             )
-            status = conversation.state.execution_status
     finally:
         primary_exception = sys.exc_info()[1]
         primary_error = primary_exception is not None

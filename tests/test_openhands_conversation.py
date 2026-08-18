@@ -954,9 +954,13 @@ def test_oversized_child_result_is_spilled_then_replaced_by_one_summary(
     raw_report = "RAW_REPORT_MUST_NOT_REACH_THE_PARENT"
     summary = "The strongest evidence points to the scheduler boundary."
     task_id = "task-1"
+    target_checkout = tmp_path / "target"
+    target_checkout.mkdir()
     role_state = tmp_path / "role-state"
     captured = {}
-    token_counts = iter([initial_token_count, 200])
+    token_counts = iter(
+        [initial_token_count, runner.MAX_INLINE_CHILD_RESULT_TOKENS]
+    )
     monkeypatch.setattr(
         runner,
         "LocalConversation",
@@ -978,6 +982,7 @@ def test_oversized_child_result_is_spilled_then_replaced_by_one_summary(
         runtime_config(
             tmp_path,
             child=True,
+            workspace=target_checkout,
             delegation_root_state_dir=role_state,
             delegation_task_id=task_id,
         ),
@@ -991,6 +996,7 @@ def test_oversized_child_result_is_spilled_then_replaced_by_one_summary(
     assert "approxinately 1,500 tokens" in captured["prompts"][1]
     assert str(artifact) in captured["prompts"][1]
     assert artifact.read_text(encoding="utf-8") == raw_report
+    assert not artifact.is_relative_to(target_checkout)
     assert artifact.parent.stat().st_mode & 0o777 == 0o700
     assert artifact.stat().st_mode & 0o777 == 0o600
     assert result["result"] == f"{summary}\n\nFull report: {artifact}"
@@ -1000,7 +1006,11 @@ def test_oversized_child_result_is_spilled_then_replaced_by_one_summary(
 
 @pytest.mark.parametrize(
     ("summary", "summary_token_count"),
-    [(None, 200), ("UNKNOWN_COUNT", 0), ("STILL_TOO_LARGE", 1_501)],
+    [
+        (None, 200),
+        ("UNKNOWN_COUNT", 0),
+        ("STILL_TOO_LARGE", runner.MAX_INLINE_CHILD_RESULT_TOKENS + 1),
+    ],
 )
 def test_oversized_child_result_fails_closed_when_compression_fails(
     tmp_path,
