@@ -14,7 +14,7 @@ from senpai_agent.controller import (
     TurnResult,
     _activity_lease,
     _full_prompt,
-    _inference_lease,
+    _inference_state_lease,
 )
 from senpai_agent.inbox import (
     InboxTurnQuarantined,
@@ -1444,11 +1444,11 @@ def test_activity_lease_write_failure_does_not_escape_the_event_path(
     )
 
 
-def test_inference_lease_write_failure_does_not_mask_the_model_result(capsys):
+def test_inference_state_lease_write_failure_does_not_mask_the_model_result(capsys):
     def update_llm_request(_started_at, _heartbeat_at):
         raise OSError("lease volume unavailable")
 
-    publish = _inference_lease(
+    publish = _inference_state_lease(
         SimpleNamespace(update_llm_request=update_llm_request)
     )
 

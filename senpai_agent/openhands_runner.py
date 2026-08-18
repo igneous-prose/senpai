@@ -1463,7 +1463,7 @@ def run_openhands(
     inbox_turn_id: str | None = None,
     recovery_prompt: str | None = None,
     on_activity: Callable[[], None] | None = None,
-    on_inference_heartbeat: (
+    on_inference_state: (
         Callable[[float | None, float | None], None] | None
     ) = None,
 ) -> int:
@@ -1548,12 +1548,13 @@ def run_openhands(
     configure_delegation(delegation_config(config, deadline_epoch=run_deadline))
     scrub_github_credentials(os.environ)
     conversation = None
+    inference_heartbeat = None
     cleanup_error: BaseException | None = None
     active_inbox_turn_id = inbox_turn_id
     try:
         inference_heartbeat = (
-            InferenceHeartbeat(on_inference_heartbeat)
-            if on_inference_heartbeat is not None
+            InferenceHeartbeat(on_inference_state)
+            if on_inference_state is not None
             else None
         )
         llm = LLM(
@@ -1796,6 +1797,8 @@ def run_openhands(
                         cleanup_error = error
         clear_github_credentials()
         configure_delegation(None)
+        if inference_heartbeat is not None:
+            inference_heartbeat.close()
         if conversation is not None:
             conversation.close()
         if cleanup_error is not None and not primary_error:

@@ -145,7 +145,7 @@ def _activity_lease(
     return renew
 
 
-def _inference_lease(
+def _inference_state_lease(
     progress: ProgressLease,
 ) -> Callable[[float | None, float | None], None]:
     def publish(started_at: float | None, heartbeat_at: float | None) -> None:
@@ -170,7 +170,7 @@ class OpenHandsTurnRunner:
         github_mailbox: GitHubMailbox | None = None,
         active_poll_interval_seconds: float = 30,
         on_activity: Callable[[], None] | None = None,
-        on_inference_heartbeat: (
+        on_inference_state: (
             Callable[[float | None, float | None], None] | None
         ) = None,
     ):
@@ -179,7 +179,7 @@ class OpenHandsTurnRunner:
         self.github_mailbox = github_mailbox
         self.active_poll_interval_seconds = active_poll_interval_seconds
         self.on_activity = on_activity
-        self.on_inference_heartbeat = on_inference_heartbeat
+        self.on_inference_state = on_inference_state
 
     def run(
         self,
@@ -213,8 +213,8 @@ class OpenHandsTurnRunner:
                 )
             if self.on_activity is not None:
                 options["on_activity"] = self.on_activity
-            if self.on_inference_heartbeat is not None:
-                options["on_inference_heartbeat"] = self.on_inference_heartbeat
+            if self.on_inference_state is not None:
+                options["on_inference_state"] = self.on_inference_state
             return options
 
         def run_turn() -> int:
@@ -919,8 +919,8 @@ def controller_main(
             if progress is not None
             else None
         ),
-        on_inference_heartbeat=(
-            _inference_lease(progress) if progress is not None else None
+        on_inference_state=(
+            _inference_state_lease(progress) if progress is not None else None
         ),
     )
     controller = Controller(
