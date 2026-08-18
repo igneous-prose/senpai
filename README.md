@@ -139,10 +139,12 @@ example, configure Claude Fable 5 as `anthropic/claude-fable-5`. Anthropic
 provider-native and is sent as `output_config.effort: max`; it does not enable
 OpenAI Pro mode.
 
-`compaction_trigger_tokens` is one provider-native token threshold for OpenAI
-Responses and direct Anthropic models. The provider performs the authoritative
-token count after rendering messages, tools, and system instructions; Senpai
-does not approximate it with a local tokenizer.
+`compaction_trigger_tokens` is Senpai's only compaction trigger setting. Senpai
+translates the same value to each supported provider's native request field.
+The provider performs the authoritative token count after rendering messages,
+tools, and system instructions; Senpai does not approximate it with a local
+tokenizer. Models without a native compaction API retain the OpenHands
+condenser.
 
 If using W&B Inference use `wandb/` provider as the provider. For example `wandb/zai-org/GLM-5.2`, SENPAI
 uses `WANDB_API_KEY` for auth.

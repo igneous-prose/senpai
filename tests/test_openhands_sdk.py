@@ -11,8 +11,8 @@ from pydantic import SecretStr
 
 from senpai_agent.openhands_runner import (
     EVENT_TEXT_LIMIT,
-    anthropic_compaction_configuration,
     apply_reasoning_profile,
+    compaction_configuration,
     conversation_prompt_cache_key,
     event_summary,
     model_runtime_configuration,
@@ -157,10 +157,7 @@ def test_prompt_cache_configuration_is_provider_specific(model: str, expected):
 
 
 def test_openai_response_configuration_is_accepted_by_the_pinned_sdk():
-    configuration = openai_responses_configuration(
-        "openai/gpt-5.6-sol",
-        compaction_trigger_tokens=TEST_COMPACTION_TRIGGER_TOKENS,
-    )
+    configuration = openai_responses_configuration("openai/gpt-5.6-sol")
     llm = LLM(
         model="openai/gpt-5.6-sol",
         api_key=SecretStr("test-key"),
@@ -174,20 +171,12 @@ def test_openai_response_configuration_is_accepted_by_the_pinned_sdk():
         "reasoning_context": "all_turns",
         "responses_store": True,
         "responses_use_previous_response_id": True,
-        "responses_compact_threshold": TEST_COMPACTION_TRIGGER_TOKENS,
     }
     assert llm.uses_responses_api() is True
     assert llm.reasoning_effort == "max"
     assert llm.responses_store is True
     assert llm.responses_use_previous_response_id is True
-    assert llm.responses_compact_threshold == TEST_COMPACTION_TRIGGER_TOKENS
-    assert (
-        openai_responses_configuration(
-            "anthropic/claude-opus-4-8",
-            compaction_trigger_tokens=TEST_COMPACTION_TRIGGER_TOKENS,
-        )
-        == {}
-    )
+    assert openai_responses_configuration("anthropic/claude-opus-4-8") == {}
 
 
 def test_openai_max_uses_pro_mode_on_the_wire():
@@ -397,9 +386,34 @@ def test_pro_mode_is_only_enabled_by_openai_max(model, effort):
     assert "reasoning" not in extra_body
 
 
-def test_anthropic_compaction_configuration_is_accepted_by_the_pinned_sdk():
-    configuration = anthropic_compaction_configuration(
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        (
+            "openai/gpt-5.6",
+            {"responses_compact_threshold": TEST_COMPACTION_TRIGGER_TOKENS},
+        ),
+        (
+            "anthropic/claude-opus-4-8",
+            {"anthropic_compact_threshold": TEST_COMPACTION_TRIGGER_TOKENS},
+        ),
+        ("gemini/gemini-3-pro", {}),
+    ],
+)
+def test_compaction_configuration_translates_the_universal_trigger(
+    model,
+    expected,
+):
+    assert (
+        compaction_configuration(model, TEST_COMPACTION_TRIGGER_TOKENS)
+        == expected
+    )
+
+
+def test_universal_compaction_configuration_reaches_anthropic_sdk():
+    configuration = model_runtime_configuration(
         "anthropic/claude-opus-4-8",
+        "max",
         compaction_trigger_tokens=TEST_COMPACTION_TRIGGER_TOKENS,
     )
     llm = LLM(
@@ -416,21 +430,15 @@ def test_anthropic_compaction_configuration_is_accepted_by_the_pinned_sdk():
         )
     )
 
-    assert configuration == {
-        "anthropic_compact_threshold": TEST_COMPACTION_TRIGGER_TOKENS
-    }
+    assert (
+        configuration["anthropic_compact_threshold"]
+        == TEST_COMPACTION_TRIGGER_TOKENS
+    )
     assert llm.uses_anthropic_compaction() is True
     assert call_kwargs["context_management"]["edits"][0]["trigger"] == {
         "type": "input_tokens",
         "value": TEST_COMPACTION_TRIGGER_TOKENS,
     }
-    assert (
-        anthropic_compaction_configuration(
-            "openai/gpt-5.6",
-            compaction_trigger_tokens=TEST_COMPACTION_TRIGGER_TOKENS,
-        )
-        == {}
-    )
 
 
 def test_gpt56_marks_only_the_stable_system_cache_boundary():
@@ -438,10 +446,7 @@ def test_gpt56_marks_only_the_stable_system_cache_boundary():
         model="openai/gpt-5.6",
         api_key=SecretStr("test-key"),
         **prompt_cache_configuration("openai/gpt-5.6"),
-        **openai_responses_configuration(
-            "openai/gpt-5.6",
-            compaction_trigger_tokens=TEST_COMPACTION_TRIGGER_TOKENS,
-        ),
+        **openai_responses_configuration("openai/gpt-5.6"),
     )
     instructions, inputs = llm.format_messages_for_responses(
         [

@@ -1010,8 +1010,6 @@ def conversation_prompt_cache_key(config: RunnerConfig) -> str | None:
 def openai_responses_configuration(
     model: str,
     reasoning_effort: str | None = None,
-    *,
-    compaction_trigger_tokens: int,
 ) -> dict[str, object]:
     if model.split("/", 1)[0].lower() != "openai":
         return {}
@@ -1022,13 +1020,25 @@ def openai_responses_configuration(
         "reasoning_context": "all_turns",
         "responses_store": True,
         "responses_use_previous_response_id": True,
-        "responses_compact_threshold": compaction_trigger_tokens,
     }
     if reasoning := _openai_pro_reasoning(model, reasoning_effort):
         configuration["litellm_extra_body"] = {
             "reasoning": reasoning,
         }
     return configuration
+
+
+def compaction_configuration(
+    model: str,
+    trigger_tokens: int,
+) -> dict[str, int]:
+    """Translate the universal token trigger to the provider SDK field."""
+    provider = model_provider(model)
+    if provider == "openai":
+        return {"responses_compact_threshold": trigger_tokens}
+    if provider == "anthropic":
+        return {"anthropic_compact_threshold": trigger_tokens}
+    return {}
 
 
 def model_runtime_configuration(
@@ -1071,15 +1081,8 @@ def model_runtime_configuration(
     extra_body: dict[str, object] = {}
     for options in (
         prompt_cache_configuration(model),
-        openai_responses_configuration(
-            model,
-            reasoning_effort,
-            compaction_trigger_tokens=compaction_trigger_tokens,
-        ),
-        anthropic_compaction_configuration(
-            model,
-            compaction_trigger_tokens=compaction_trigger_tokens,
-        ),
+        openai_responses_configuration(model, reasoning_effort),
+        compaction_configuration(model, compaction_trigger_tokens),
     ):
         for key, value in options.items():
             if key == "litellm_extra_body":
@@ -1089,16 +1092,6 @@ def model_runtime_configuration(
     if extra_body:
         configuration["litellm_extra_body"] = extra_body
     return configuration
-
-
-def anthropic_compaction_configuration(
-    model: str,
-    *,
-    compaction_trigger_tokens: int,
-) -> dict[str, int]:
-    if model.split("/", 1)[0].lower() != "anthropic":
-        return {}
-    return {"anthropic_compact_threshold": compaction_trigger_tokens}
 
 
 def local_event_db_path(config: RunnerConfig) -> Path:
