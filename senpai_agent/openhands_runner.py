@@ -23,7 +23,6 @@ os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
 
 from senpai_agent.advisor import (
     AdvisorEventPump,
-    AdvisorEventStore,
     advisor_conversation_id,
 )
 from senpai_agent.delegation import (
@@ -91,6 +90,7 @@ from senpai_agent.github.tools import (
 )
 from senpai_agent.inference_heartbeat import InferenceHeartbeat
 from senpai_agent.launch_context import LAUNCH_CONTEXT_ENV, decode_launch_context
+from senpai_agent.local_events import LocalEventStore
 from senpai_agent.program_context import (
     PROGRAM_PATH_ENV,
     load_program_system_prompt,
@@ -1832,7 +1832,7 @@ def run_openhands(
                 inbox.record_inference_attempt(active_inbox_turn_id)
             with graceful_interrupts(conversation) as stop_requested:
                 if not config.child:
-                    with AdvisorEventStore(
+                    with LocalEventStore(
                         local_event_db_path(config)
                     ) as event_store:
                         event_pump = AdvisorEventPump(

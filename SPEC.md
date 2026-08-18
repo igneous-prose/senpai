@@ -82,6 +82,11 @@ GitHub state is level-triggered:
 - trusted human comments and reviews on one assigned open `status:wip` or
   `status:review` PR wake its exact student assignment conversation;
 - `status:review` is a durable advisor wake;
+- a configured student with no open assignment labeled `status:wip` or
+  `status:review` emits `student_available_for_assignment`. This event describes
+  assignment routing, not the student process or GPU state. A later successful
+  GitHub poll retracts the event while it is still queued and unclaimed if the
+  student now has an open assignment labeled `status:wip` or `status:review`;
 - when the configured research base changes from an active assignment's
   recorded base SHA, `research_base_changed` gives the advisor
   `required_base_sha`, `current_base_sha`, and a compare URL without cancelling
@@ -111,12 +116,14 @@ ledger. Oldest unacknowledged events are delivered in bounded count/byte
 batches; immediate post-turn polls drain later batches without dropping them.
 
 While an OpenHands turn is running, `ActiveGitHubWatcher` polls the same GitHub
-state. It enqueues all newly visible advisor events. For students, it maps
-authenticated human Issues and assignment-bound PR feedback into the active
-UUID. Authenticated humans are the interrupt tier: tools get up to 60 seconds
-to finish before Senpai interrupts and resumes the run, even when its inbox
-batch is full. Student assignments and trusted PR feedback share a FIFO queue
-tier; feedback waits for the next completed agent step without cancelling it.
+state. It enqueues newly visible GitHub events except student-assignment
+availability, which the foreground poll reconciles before the next turn. For
+students, it maps authenticated human Issues and assignment-bound PR feedback
+into the active UUID. Authenticated humans are the interrupt tier: tools get up
+to 60 seconds to finish before Senpai interrupts and resumes the run, even when
+its inbox batch is full. Student assignments and trusted PR feedback share a
+FIFO queue tier; feedback waits for the next completed agent step without
+cancelling it.
 Ordinary events remain FIFO. Turn formation and non-human attachments are
 bounded to 16 events or 64 KiB; prioritized overflow remains pending to lead
 the next turn.

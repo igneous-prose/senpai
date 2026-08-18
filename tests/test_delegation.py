@@ -11,7 +11,6 @@ import pytest
 import psutil
 from openhands.sdk.llm import Message, TextContent
 
-from senpai_agent.advisor import AdvisorEventStore
 from senpai_agent.delegation import (
     AgentTask,
     DelegationConfig,
@@ -27,6 +26,7 @@ from senpai_agent.launch_context import (
     LAUNCH_CONTEXT_ENV,
     PLACEHOLDER,
 )
+from senpai_agent.local_events import LocalEventStore
 from senpai_agent.openhands_runner import delegation_config as runner_delegation_config
 from senpai_agent.program_context import PROGRAM_PATH_ENV
 from senpai_agent.secrets import CUSTOM_SECRET_ENV_NAMES_ENV
@@ -420,7 +420,7 @@ def test_late_result_event_is_acknowledged_when_await_collected_first(tmp_path: 
         },
     )
 
-    with AdvisorEventStore(event_path) as events:
+    with LocalEventStore(event_path) as events:
         assert events.pending() == []
 
 

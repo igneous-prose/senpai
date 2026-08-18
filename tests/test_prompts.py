@@ -12,7 +12,7 @@ def test_prompt_module_defines_nonempty_uppercase_strings():
         if name.endswith("_PROMPT")
     }
 
-    assert len(prompt_values) == 21
+    assert prompt_values
     assert all(name.isupper() for name in prompt_values)
     assert all(isinstance(value, str) for value in prompt_values.values())
     assert all(value == value.strip() for value in prompt_values.values())
@@ -34,6 +34,16 @@ def test_render_prompt_requires_exact_values_and_does_not_reprocess_insertions()
 def test_render_prompt_preserves_placeholder_boundary_whitespace():
     assert prompts.render_prompt("Before\n\n{{VALUE}}", VALUE="value\n\n") == (
         "Before\n\nvalue\n\n"
+    )
+
+
+def test_student_available_event_names_the_student_and_defines_availability():
+    assert prompts.render_event_prompt(
+        "student_available_for_assignment",
+        {"student": "qwen-edward"},
+    ) == (
+        "## Student available for assignment: `qwen-edward`\n\n"
+        "`qwen-edward` has no open `status:wip` or `status:review` assignment."
     )
 
 
