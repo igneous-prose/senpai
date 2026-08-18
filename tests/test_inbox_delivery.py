@@ -129,6 +129,60 @@ def test_event_identity_cannot_hide_a_changed_payload(tmp_path: Path):
         inbox.enqueue(CONVERSATION_ID, "event:1", "changed after acknowledgement")
 
 
+def test_retract_pending_removes_only_unclaimed_native_events(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    slot_key = "student_slot_available:Fern"
+    other_key = "review_ready:17:abc"
+    inbox.enqueue(CONVERSATION_ID, slot_key, "slot available")
+    inbox.enqueue(CONVERSATION_ID, other_key, "review ready")
+
+    assert inbox.retract_pending_prefix(
+        CONVERSATION_ID,
+        "student_slot_available:",
+    ) == frozenset({slot_key})
+    assert inbox.retract_pending_prefix(
+        CONVERSATION_ID,
+        "student_slot_available:",
+    ) == frozenset()
+    assert inbox.pending_count(CONVERSATION_ID) == 1
+    assert inbox.enqueue(CONVERSATION_ID, slot_key, "slot available") is True
+
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    assert turn.event_keys == (other_key, slot_key)
+
+
+def test_retract_pending_preserves_a_claimed_turn(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    slot_key = "student_slot_available:Fern"
+    inbox.enqueue(CONVERSATION_ID, slot_key, "slot available")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+
+    assert inbox.retract_pending_prefix(
+        CONVERSATION_ID,
+        "student_slot_available:",
+    ) == frozenset()
+    assert PersistentInbox(inbox.path).turn(turn.turn_id).event_keys == (slot_key,)
+
+
+def test_retract_pending_preserves_unclaimed_legacy_events(tmp_path: Path):
+    slot_key = "student_slot_available:Fern"
+    legacy_path = tmp_path / "pending-message-deliveries.json"
+    legacy_path.write_text(
+        json.dumps({str(CONVERSATION_ID): {slot_key: str(UUID(int=122))}}),
+        encoding="utf-8",
+    )
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3", legacy_path=legacy_path)
+    inbox.enqueue(CONVERSATION_ID, slot_key, "legacy slot available")
+
+    assert inbox.retract_pending_prefix(
+        CONVERSATION_ID,
+        "student_slot_available:",
+    ) == frozenset()
+    assert inbox.pending_count(CONVERSATION_ID) == 1
+
+
 def test_crash_before_append_reuses_turn_and_appends_each_message_once(tmp_path: Path):
     """
     Requirement: a crash before append retries the same durable delivery normally.

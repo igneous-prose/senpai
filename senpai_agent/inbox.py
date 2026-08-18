@@ -341,6 +341,59 @@ class PersistentInbox:
                 body,
             )
 
+    def retract_pending_prefix(
+        self,
+        conversation_id: UUID | str,
+        event_key_prefix: str,
+        *,
+        retained_keys: Sequence[str] = (),
+    ) -> frozenset[str]:
+        """Remove matching native events not attached to a model turn."""
+
+        if not event_key_prefix:
+            raise ValueError("event key prefix must not be empty")
+        retained = tuple(dict.fromkeys(retained_keys))
+        retention_clause = ""
+        if retained:
+            placeholders = ",".join("?" for _ in retained)
+            retention_clause = f"AND event_key NOT IN ({placeholders})"
+        conversation = str(conversation_id)
+        parameters = (
+            conversation,
+            len(event_key_prefix),
+            event_key_prefix,
+            *retained,
+        )
+        with self._transaction() as database:
+            rows = database.execute(
+                f"""
+                SELECT event_key
+                FROM inbox_messages
+                WHERE conversation_id = ?
+                  AND substr(event_key, 1, ?) = ?
+                  {retention_clause}
+                  AND state = 'pending'
+                  AND turn_id IS NULL
+                  AND legacy = 0
+                """,
+                parameters,
+            ).fetchall()
+            retracted = frozenset(str(row["event_key"]) for row in rows)
+            if retracted:
+                placeholders = ",".join("?" for _ in retracted)
+                database.execute(
+                    f"""
+                    DELETE FROM inbox_messages
+                    WHERE conversation_id = ?
+                      AND event_key IN ({placeholders})
+                      AND state = 'pending'
+                      AND turn_id IS NULL
+                      AND legacy = 0
+                    """,
+                    (conversation, *retracted),
+                )
+            return retracted
+
     def next_turn(
         self,
         conversation_id: UUID | str,

@@ -345,6 +345,39 @@ def test_active_watcher_retries_after_a_transient_github_read_error(
     assert "SENPAI_GITHUB_WATCHER_POLL_ERROR" in capsys.readouterr().err
 
 
+def test_active_watcher_does_not_queue_slot_availability(tmp_path: Path):
+    event = ControllerEvent(
+        kind="student_slot_available",
+        dedupe_key="student_slot_available:Fern",
+        payload={"student": "Fern"},
+    )
+
+    class Mailbox:
+        def __init__(self):
+            self.calls = 0
+
+        def poll(self):
+            self.calls += 1
+            return (event,)
+
+    mailbox = Mailbox()
+    store_path = tmp_path / "advisor-events.sqlite3"
+    with ActiveGitHubWatcher(
+        mailbox,
+        store_path,
+        known_keys=frozenset(),
+        poll_interval_seconds=0.001,
+    ) as watcher:
+        deadline = time.monotonic() + 1
+        while mailbox.calls < 2 and time.monotonic() < deadline:
+            time.sleep(0.001)
+
+    assert mailbox.calls >= 2
+    assert watcher.enqueued_keys == set()
+    with AdvisorEventStore(store_path) as store:
+        assert store.pending() == []
+
+
 def test_context_exhaustion_retries_once_on_a_fresh_branch_with_the_same_id(
     tmp_path: Path,
     monkeypatch,

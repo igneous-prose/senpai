@@ -77,8 +77,10 @@ GitHub state is level-triggered:
   `status:review` PR wake its exact student assignment conversation;
 - `status:review` is a durable advisor wake;
 - a configured student with no open assignment labeled `status:wip` or
-  `status:review` emits `student_slot_available`; this event describes
-  assignment routing, not the student process or GPU state;
+  `status:review` emits `student_slot_available`. This event describes
+  assignment routing, not the student process or GPU state. A later successful
+  GitHub poll retracts the event while it is still queued and unclaimed if the
+  slot has become reserved;
 - when the configured research base changes from an active assignment's
   recorded base SHA, `research_base_changed` gives the advisor
   `required_base_sha`, `current_base_sha`, and a compare URL without cancelling

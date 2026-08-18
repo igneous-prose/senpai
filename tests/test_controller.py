@@ -19,7 +19,7 @@ from senpai_agent.inbox import (
     PersistentInbox,
     deliver_turn_messages,
 )
-from senpai_agent.mailbox import ControllerEvent
+from senpai_agent.mailbox import ControllerEvent, SlotAvailabilityMailbox
 from senpai_agent.program_context import ProgramSystemPrompt
 from senpai_agent.state import StartedConversationLedger, WorkspaceDivergenceLedger
 from senpai_agent.supervisor import ProgressLease, WorkerLease
@@ -228,6 +228,37 @@ def test_successful_turn_repolls_immediately_and_continues_without_full_brief():
     assert "programme" in turns.calls[0][0]
     assert "programme" not in turns.calls[1][0]
     assert mailbox.calls == 3
+
+
+def test_post_turn_snapshot_retracts_slot_queued_during_active_turn(
+    tmp_path: Path,
+):
+    slot = ControllerEvent(
+        kind="student_slot_available",
+        dedupe_key="student_slot_available:student-1",
+        payload={"student": "student-1"},
+    )
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    source = Mailbox([(review_event(),), ()])
+    mailbox = SlotAvailabilityMailbox(
+        source,
+        inbox=inbox,
+        conversation_id=CONVERSATION_ID,
+        event_store_path=tmp_path / "advisor-events.sqlite3",
+    )
+
+    class QueuingTurns(Turns):
+        def run(self, *args, **kwargs):
+            result = super().run(*args, **kwargs)
+            inbox.enqueue(CONVERSATION_ID, slot.dedupe_key, slot.to_prompt())
+            return result
+
+    turns = QueuingTurns()
+    controller(mailbox, turns, inbox=inbox).run(max_cycles=1)
+
+    assert len(turns.calls) == 1
+    assert inbox.pending_count(CONVERSATION_ID) == 0
+    assert source.calls == 2
 
 
 def test_post_turn_poll_at_reminder_boundary_only_delivers_new_state(
@@ -778,6 +809,8 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     assert created[0].event_reminder_seconds == 600
     assert created[0].full_prompt == "programme"
     assert created[0].turns.full_prompt == "programme"
+    assert isinstance(created[0].mailbox.mailboxes[0], SlotAvailabilityMailbox)
+    assert created[0].turns.github_mailbox is created[0].mailbox.mailboxes[0]
 
 
 def test_repeated_turn_failures_exit_to_the_supervisor_for_a_clean_restart():

@@ -31,6 +31,7 @@ from senpai_agent.mailbox import (
     LocalAdvisorMailbox,
     LocalStudentMailbox,
     Mailbox,
+    SlotAvailabilityMailbox,
 )
 from senpai_agent.monitor import (
     MonitorMailbox,
@@ -124,7 +125,7 @@ class OpenHandsTurnRunner:
         config: object,
         *,
         full_prompt: str,
-        github_mailbox: GitHubMailbox | None = None,
+        github_mailbox: Mailbox | None = None,
         active_poll_interval_seconds: float = 30,
     ):
         self.config = config
@@ -789,16 +790,21 @@ def controller_main(
         or runner_config.state_dir,
         runner_config.state_dir / f"{role}-events.sqlite3",
     )
+    students = tuple(
+        student.strip()
+        for student in env.get("STUDENT_NAMES", "").split(",")
+        if student.strip()
+    )
+    inbox = PersistentInbox(
+        runner_config.state_dir / "delivery-inbox.sqlite3",
+        legacy_path=runner_config.state_dir / "pending-message-deliveries.json",
+    )
     github_mailbox = GitHubMailbox(
         repo=runner_config.github_repo,
         token=runner_config.github_token,
         role=role,
         advisor_branch=env["ADVISOR_BRANCH"],
-        students=tuple(
-            student.strip()
-            for student in env.get("STUDENT_NAMES", "").split(",")
-            if student.strip()
-        ),
+        students=students,
         student_name=env.get("STUDENT_NAME"),
         stale_wip_seconds=int(env.get("SENPAI_STALE_WIP_SECONDS", "7200")),
         trusted_actor=runner_config.github_trusted_actor,
@@ -810,13 +816,21 @@ def controller_main(
         ),
     )
     mailbox: Mailbox = github_mailbox
+    active_github_mailbox: Mailbox = github_mailbox
     conversation_selector = None
     reconcile = None
 
     if role == "advisor":
-        mailbox = CompositeMailbox(
+        advisor_event_store = runner_config.state_dir / "advisor-events.sqlite3"
+        active_github_mailbox = SlotAvailabilityMailbox(
             github_mailbox,
-            LocalAdvisorMailbox(runner_config.state_dir / "advisor-events.sqlite3"),
+            inbox=inbox,
+            conversation_id=runner_config.conversation_id,
+            event_store_path=advisor_event_store,
+        )
+        mailbox = CompositeMailbox(
+            active_github_mailbox,
+            LocalAdvisorMailbox(advisor_event_store),
         )
     else:
         training, monitor_store = training_runtime(
@@ -847,14 +861,10 @@ def controller_main(
         )
 
     full_prompt = _full_prompt(env)
-    inbox = PersistentInbox(
-        runner_config.state_dir / "delivery-inbox.sqlite3",
-        legacy_path=runner_config.state_dir / "pending-message-deliveries.json",
-    )
     turns = OpenHandsTurnRunner(
         runner_config,
         full_prompt=full_prompt,
-        github_mailbox=github_mailbox,
+        github_mailbox=active_github_mailbox,
         active_poll_interval_seconds=float(
             env.get("SENPAI_ACTIVE_GITHUB_POLL_INTERVAL_S", "30")
         ),

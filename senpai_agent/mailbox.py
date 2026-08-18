@@ -7,9 +7,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
 from senpai_agent.advisor import AdvisorEventStore
+from senpai_agent.inbox import PersistentInbox
 from senpai_agent.PROMPTS import render_event_prompt
+
+
+_SLOT_EVENT_PREFIX = "student_slot_available:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +63,46 @@ class CompositeMailbox:
     def acknowledge(self, dedupe_keys: Sequence[str]) -> None:
         for mailbox in self.mailboxes:
             mailbox.acknowledge(dedupe_keys)
+
+
+class SlotAvailabilityMailbox:
+    """Reconcile queued slot events from each successful GitHub snapshot."""
+
+    def __init__(
+        self,
+        mailbox: Mailbox,
+        *,
+        inbox: PersistentInbox,
+        conversation_id: UUID | str,
+        event_store_path: Path,
+    ):
+        self.mailbox = mailbox
+        self.inbox = inbox
+        self.conversation_id = conversation_id
+        self.event_store_path = event_store_path
+
+    def poll(self) -> tuple[ControllerEvent, ...]:
+        events = tuple(self.mailbox.poll())
+        current = {
+            event.dedupe_key
+            for event in events
+            if event.kind == "student_slot_available"
+            and event.dedupe_key.startswith(_SLOT_EVENT_PREFIX)
+        }
+        with AdvisorEventStore(self.event_store_path) as store:
+            store.discard_prefix(
+                _SLOT_EVENT_PREFIX,
+                retained_keys=tuple(current),
+            )
+        self.inbox.retract_pending_prefix(
+            self.conversation_id,
+            _SLOT_EVENT_PREFIX,
+            retained_keys=tuple(current),
+        )
+        return events
+
+    def acknowledge(self, dedupe_keys: Sequence[str]) -> None:
+        self.mailbox.acknowledge(dedupe_keys)
 
 
 class LocalAdvisorMailbox:

@@ -11,9 +11,7 @@ from typing import Self
 
 from senpai_agent.advisor import AdvisorEvent, AdvisorEventStore
 from senpai_agent.github.http import GitHubReadError
-from senpai_agent.mailbox import ControllerEvent
-
-from .core import GitHubMailbox
+from senpai_agent.mailbox import ControllerEvent, Mailbox
 
 
 class ActiveGitHubWatcher:
@@ -21,7 +19,7 @@ class ActiveGitHubWatcher:
 
     def __init__(
         self,
-        mailbox: GitHubMailbox,
+        mailbox: Mailbox,
         store_path: Path,
         *,
         known_keys: frozenset[str],
@@ -57,6 +55,8 @@ class ActiveGitHubWatcher:
                         continue
                     current = {event.dedupe_key for event in events}
                     for event in events:
+                        if event.kind == "student_slot_available":
+                            continue
                         if event.dedupe_key in self.known_keys:
                             continue
                         local_event = self.map_event(event)

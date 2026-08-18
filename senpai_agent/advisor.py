@@ -132,6 +132,33 @@ class AdvisorEventStore:
             )
             self._connection.commit()
 
+    def discard_prefix(
+        self,
+        dedupe_key_prefix: str,
+        *,
+        retained_keys: Sequence[str] = (),
+    ) -> int:
+        """Remove staged level-triggers absent from the current snapshot."""
+
+        if not dedupe_key_prefix:
+            raise ValueError("dedupe key prefix must not be empty")
+        retained = tuple(dict.fromkeys(retained_keys))
+        retention_clause = ""
+        if retained:
+            placeholders = ",".join("?" for _ in retained)
+            retention_clause = f"AND dedupe_key NOT IN ({placeholders})"
+        with self._lock:
+            cursor = self._connection.execute(
+                f"""
+                DELETE FROM advisor_events
+                WHERE substr(dedupe_key, 1, ?) = ?
+                  {retention_clause}
+                """,
+                (len(dedupe_key_prefix), dedupe_key_prefix, *retained),
+            )
+            self._connection.commit()
+            return cursor.rowcount
+
     def acknowledged(self, dedupe_keys: Sequence[str]) -> set[str]:
         if not dedupe_keys:
             return set()
