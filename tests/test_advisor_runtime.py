@@ -423,10 +423,18 @@ def test_event_pump_accepts_an_in_memory_inbox(tmp_path: Path):
         )
 
 
-def test_human_issue_steers_the_active_turn_after_the_tool_boundary(tmp_path: Path):
+@pytest.mark.parametrize(
+    "kind",
+    ["human_issue", "human_pr_comment"],
+    ids=["human-issue", "human-pr-comment"],
+)
+def test_human_instruction_steers_the_active_turn_after_the_tool_boundary(
+    tmp_path: Path,
+    kind: str,
+):
     event = LocalEvent(
-        kind="human_issue",
-        dedupe_key="human_issue:1",
+        kind=kind,
+        dedupe_key=f"{kind}:1",
         payload={"message": "Change direction."},
     )
     inbox, active, conversation = active_steering_turn(tmp_path)
@@ -456,10 +464,18 @@ def test_human_issue_steers_the_active_turn_after_the_tool_boundary(tmp_path: Pa
     assert conversation.messages[-1] == event.to_inbox_message()
 
 
-def test_event_pump_drops_an_already_acknowledged_human_issue(tmp_path: Path):
+@pytest.mark.parametrize(
+    "kind",
+    ["human_issue", "human_pr_comment"],
+    ids=["human-issue", "human-pr-comment"],
+)
+def test_event_pump_drops_an_acknowledged_human_instruction(
+    tmp_path: Path,
+    kind: str,
+):
     event = LocalEvent(
-        kind="human_issue",
-        dedupe_key="human_issue:1",
+        kind=kind,
+        dedupe_key=f"{kind}:1",
         payload={"message": "Change direction."},
     )
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
@@ -480,7 +496,7 @@ def test_event_pump_drops_an_already_acknowledged_human_issue(tmp_path: Path):
         inbox.record_processed(first.turn_id)
         inbox.acknowledge(first.turn_id)
 
-        store.discard_prefix("human_issue:")
+        store.discard_prefix(event.dedupe_key)
         assert store.enqueue(event)
         assert pump._transfer_to_inbox() == 1
 

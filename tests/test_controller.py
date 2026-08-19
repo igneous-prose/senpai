@@ -145,6 +145,16 @@ def human_event(message_id=101):
     )
 
 
+def human_pr_comment_event(comment_id=601):
+    return ControllerEvent(
+        kind="human_pr_comment",
+        dedupe_key=(
+            f"human_pr_comment:v2:issue_comment:17:{comment_id}:abc"
+        ),
+        payload={"number": 17, "feedback_id": comment_id},
+    )
+
+
 class MultiGenerationRecoveryTurns:
     def run(
         self,
@@ -691,6 +701,7 @@ def test_fast_poll_defaults_to_ten_minute_level_trigger_reminders(monkeypatch):
             ),
             id="student-comment",
         ),
+        pytest.param(human_pr_comment_event(), id="human-pr-comment"),
     ],
 )
 def test_edge_triggered_event_does_not_repeat_on_reminder_cadence(
@@ -738,6 +749,7 @@ def test_edge_triggered_event_does_not_repeat_on_reminder_cadence(
             ),
             id="student-comment",
         ),
+        pytest.param(human_pr_comment_event(), id="human-pr-comment"),
     ],
 )
 def test_edge_triggered_event_is_not_replayed_after_restart(
@@ -790,10 +802,17 @@ def test_new_human_message_wakes_after_previous_message_is_acknowledged():
     ]
 
 
-def test_acknowledged_human_issue_does_not_replay_after_a_poll_gap(
+@pytest.mark.parametrize(
+    "event",
+    [
+        pytest.param(human_event(), id="human-issue"),
+        pytest.param(human_pr_comment_event(), id="human-pr-comment"),
+    ],
+)
+def test_acknowledged_human_instruction_does_not_replay_after_a_poll_gap(
     tmp_path: Path,
+    event: ControllerEvent,
 ):
-    event = human_event()
     inbox_path = tmp_path / "inbox.sqlite3"
 
     controller(
@@ -1441,7 +1460,16 @@ def test_controller_quarantines_an_exhausted_turn_without_restarting(capsys):
     assert "SENPAI_TURN_QUARANTINED" in capsys.readouterr().err
 
 
-def test_new_human_instruction_reopens_the_same_quarantined_advisor():
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        pytest.param(human_event(), id="human-issue"),
+        pytest.param(human_pr_comment_event(), id="human-pr-comment"),
+    ],
+)
+def test_new_human_instruction_reopens_the_same_quarantined_advisor(
+    instruction,
+):
     runtime = controller(
         Mailbox(((review_event(),), ())),
         QuarantiningTurns(),
@@ -1449,7 +1477,6 @@ def test_new_human_instruction_reopens_the_same_quarantined_advisor():
     )
     runtime.run(max_cycles=1)
     quarantined = runtime.inbox.quarantined_turns()[0]
-    instruction = human_event()
     mailbox = Mailbox(((instruction,), ()))
     turns = Turns()
 
