@@ -169,7 +169,7 @@ class OpenHandsTurnRunner:
         *,
         full_prompt: str,
         github_mailbox: Mailbox | None = None,
-        active_poll_interval_seconds: float = 30,
+        active_poll_interval_seconds: float = 120,
         on_activity: Callable[[], None] | None = None,
         on_inference_state: (
             Callable[[float | None, float | None], None] | None
@@ -921,7 +921,7 @@ def controller_main(
         full_prompt=full_prompt,
         github_mailbox=active_github_mailbox,
         active_poll_interval_seconds=float(
-            env.get("SENPAI_ACTIVE_GITHUB_POLL_INTERVAL_S", "30")
+            env.get("SENPAI_ACTIVE_GITHUB_POLL_INTERVAL_S", "120")
         ),
         on_activity=(
             _activity_lease(progress, turn_lease_seconds)
