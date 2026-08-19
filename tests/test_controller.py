@@ -825,7 +825,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     assert created[0].event_reminder_seconds == 600
     assert created[0].full_prompt == "programme"
     assert created[0].turns.full_prompt == "programme"
-    assert created[0].turns.active_poll_interval_seconds == 120
+    assert created[0].turns.active_poll_interval_seconds == 75
     assert isinstance(
         created[0].mailbox.mailboxes[0],
         StudentAssignmentAvailabilityMailbox,
