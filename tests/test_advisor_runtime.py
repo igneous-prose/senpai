@@ -506,7 +506,7 @@ def test_student_feedback_waits_for_the_step_and_marks_a_clean_unwind(
 def test_review_ready_waits_for_the_step_without_interrupting_current_work(
     tmp_path: Path,
 ):
-    event = AdvisorEvent(
+    event = LocalEvent(
         kind="review_ready",
         dedupe_key="review_ready:29:abc123",
         payload={"pr": 29, "head_sha": "abc123"},
@@ -514,7 +514,7 @@ def test_review_ready_waits_for_the_step_without_interrupting_current_work(
     inbox, active, conversation = active_steering_turn(tmp_path)
     conversation.state.acquire()
 
-    with AdvisorEventStore(tmp_path / "events.sqlite3") as store:
+    with LocalEventStore(tmp_path / "events.sqlite3") as store:
         pump = AdvisorEventPump(
             store,
             conversation,
