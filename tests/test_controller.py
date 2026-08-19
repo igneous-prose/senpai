@@ -6,6 +6,11 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from openhands.sdk.conversation.exceptions import ConversationRunError
+from openhands.sdk.llm.exceptions import (
+    LLMAuthenticationError,
+    LLMServiceUnavailableError,
+)
 
 import senpai_agent.controller as controller_module
 from senpai_agent.controller import (
@@ -15,6 +20,7 @@ from senpai_agent.controller import (
     _activity_lease,
     _full_prompt,
     _inference_state_lease,
+    _provider_retry_delay,
 )
 from senpai_agent.inbox import (
     InboxTurnQuarantined,
@@ -77,6 +83,36 @@ class Turns:
                 inbox.record_delivered(message.delivery_id, message.body)
             inbox.record_processed(inbox_turn_id)
         return outcome
+
+
+class ProviderTurns(Turns):
+    def __init__(self, outcomes):
+        super().__init__(outcomes)
+        self.turn_ids = []
+
+    def run(self, *args, inbox, inbox_turn_id, **kwargs):
+        self.turn_ids.append(inbox_turn_id)
+        if isinstance(self.outcomes[0], Exception):
+            mark_turn_delivered(inbox, inbox_turn_id)
+            inbox.record_inference_attempt(inbox_turn_id)
+        return super().run(
+            *args,
+            inbox=inbox,
+            inbox_turn_id=inbox_turn_id,
+            **kwargs,
+        )
+
+
+def provider_error() -> ConversationRunError:
+    return ConversationRunError(
+        CONVERSATION_ID,
+        LLMServiceUnavailableError("anthropic overloaded"),
+    )
+
+
+def mark_turn_delivered(inbox: PersistentInbox, turn_id: str) -> None:
+    for message in inbox.turn(turn_id).messages:
+        inbox.record_delivered(message.delivery_id, message.body)
 
 
 def controller(mailbox, turns, **overrides):
@@ -833,6 +869,7 @@ def test_controller_main_does_not_derive_reminders_from_fast_polling(
     import senpai_agent.weave_monitoring as weave_module
 
     config = SimpleNamespace(
+        model="anthropic/claude-opus-4-8",
         github_token="token",
         github_repo="acme/widgets",
         github_trusted_actor=None,
@@ -954,6 +991,96 @@ def test_exhausted_context_recovery_defers_then_retries_without_failure_streak(
     log = capsys.readouterr().err
     assert "SENPAI_TURN_DEFERRED" in log
     assert "retry_after_seconds=600" in log
+
+
+def test_transient_provider_failure_defers_and_retries_the_same_turn(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+):
+    path = tmp_path / "inbox.sqlite3"
+    event = review_event(17)
+    clock = [1_700_000_000.0]
+    monkeypatch.setattr(controller_module.random, "uniform", lambda _low, _high: 0)
+    monkeypatch.setattr(controller_module.time, "time", lambda: clock[0])
+    failed_turn = ProviderTurns([provider_error()])
+    inbox = PersistentInbox(path)
+    Controller(
+        role="advisor",
+        mailbox=Mailbox([(event,)]),
+        turns=failed_turn,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        inbox=inbox,
+        max_consecutive_turn_failures=1,
+    ).run(max_cycles=1)
+
+    turn_id = failed_turn.turn_ids[0]
+    preserved = inbox.latest_turn(turn_id)
+    assert preserved.recovery_generation == 0
+    assert preserved.quarantine_reason is None
+    assert not inbox.terminal_recovery_due(turn_id, max_attempts=1)
+    inbox.close()
+
+    waiting_turn = ProviderTurns([TurnResult(exit_code=0)])
+    Controller(
+        role="advisor",
+        mailbox=Mailbox([()]),
+        turns=waiting_turn,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        inbox=PersistentInbox(path),
+    ).run(max_cycles=1)
+    assert waiting_turn.calls == []
+
+    clock[0] += 30
+    resumed_turn = ProviderTurns([TurnResult(exit_code=0)])
+    mailbox = Mailbox([()])
+    restarted_inbox = PersistentInbox(path)
+    Controller(
+        role="advisor",
+        mailbox=mailbox,
+        turns=resumed_turn,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        inbox=restarted_inbox,
+    ).run(max_cycles=1)
+
+    assert resumed_turn.turn_ids == [turn_id]
+    assert restarted_inbox.provider_cooldown() is None
+    assert mailbox.acknowledged == [(event.dedupe_key,)]
+    assert "SENPAI_PROVIDER_COOLDOWN" in capsys.readouterr().err
+
+
+def test_permanent_provider_failure_exits_without_a_controller_retry():
+    error = ConversationRunError(
+        CONVERSATION_ID,
+        LLMAuthenticationError("invalid provider key"),
+    )
+    turns = ProviderTurns([error])
+
+    with pytest.raises(ConversationRunError):
+        controller(
+            Mailbox([(review_event(),)]),
+            turns,
+            max_consecutive_turn_failures=2,
+        ).run(max_cycles=2)
+
+    assert len(turns.calls) == 1
+
+
+def test_provider_cooldown_schedule_honors_retry_after_and_adds_jitter(monkeypatch):
+    monkeypatch.setattr(controller_module.random, "uniform", lambda _low, high: high)
+
+    assert [_provider_retry_delay(failure, 0) for failure in range(6)] == [
+        36,
+        72,
+        144,
+        288,
+        360,
+        360,
+    ]
+    assert _provider_retry_delay(0, 90) == 96
 
 
 def test_context_retry_deadline_survives_a_transiently_absent_event(
