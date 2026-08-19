@@ -20,6 +20,7 @@ from uuid import UUID
 from senpai_agent.agent_markdown import strip_spdx_header
 from senpai_agent.github.mailbox import ActiveGitHubWatcher, GitHubMailbox
 from senpai_agent.inbox import (
+    EXACT_ONCE_EVENT_KINDS,
     QUEUE_PRIORITY,
     STEERING_PRIORITIES,
     DeliveryState,
@@ -59,9 +60,10 @@ from senpai_agent.supervisor import LEASE_ENV, ProgressLease
 from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergence
 
 
-_EDGE_TRIGGERED_EVENT_KINDS = frozenset(
-    {"human_issue", "research_base_changed", "student_assignment_comment"}
-)
+_EDGE_TRIGGERED_EVENT_KINDS = EXACT_ONCE_EVENT_KINDS | {
+    "research_base_changed",
+    "student_assignment_comment",
+}
 _ACTIVITY_LEASE_RENEWAL_SECONDS = 30
 _LLM_PROVIDER_COOLDOWN_SECONDS = (30.0, 60.0, 120.0, 240.0, 300.0)
 
@@ -700,7 +702,7 @@ class Controller:
                         event.dedupe_key,
                         event.to_prompt(),
                         priority=steering_priority,
-                        once=event.kind == "human_issue",
+                        once=event.kind in EXACT_ONCE_EVENT_KINDS,
                     )
                 else:
                     self.inbox.enqueue(
@@ -712,7 +714,7 @@ class Controller:
                             if event.kind == "student_assignment"
                             else 0
                         ),
-                        once=event.kind == "human_issue",
+                        once=event.kind in EXACT_ONCE_EVENT_KINDS,
                     )
 
     def _next_ready_turn(

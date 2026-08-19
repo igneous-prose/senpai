@@ -1,6 +1,7 @@
 import pytest
 from pydantic import SecretStr
 
+from senpai_agent.github.http import GitHubReadError
 from senpai_agent.github.mailbox import GitHubMailbox
 from senpai_agent.github.mailbox.values import payload_digest
 from senpai_agent.models import (
@@ -55,6 +56,7 @@ def mailbox(monkeypatch, pulls, *, students=()):
     )
     monkeypatch.setattr(value, "_pulls", lambda: list(pulls))
     monkeypatch.setattr(value, "_issues", list)
+    monkeypatch.setattr(value._github, "objects", lambda _url: [])
     return value
 
 
@@ -84,6 +86,7 @@ def assignment_comment(
     student: str = "student-1",
     revision_id: str = "revision-2",
     author: str = "senpai-bot",
+    author_type: str = "Bot",
     message: str = "The paired run has started.",
     updated_at: str = "2026-08-11T07:20:00Z",
 ):
@@ -106,8 +109,32 @@ def assignment_comment(
         ),
         "created_at": "2026-08-11T07:20:00Z",
         "updated_at": updated_at,
-        "user": {"login": author, "type": "Bot"},
+        "user": {"login": author, "type": author_type},
         "author_association": "MEMBER",
+    }
+
+
+def human_pr_comment(
+    *,
+    github_id: int,
+    body: str,
+    author: str = "maintainer",
+    author_type: str = "User",
+    association: str = "OWNER",
+    created_at: str = "2026-08-11T07:20:00Z",
+    updated_at: str | None = None,
+):
+    return {
+        "id": github_id,
+        "body": body,
+        "html_url": (
+            "https://github.test/acme/widgets/pull/17"
+            f"#issuecomment-{github_id}"
+        ),
+        "created_at": created_at,
+        "updated_at": updated_at or created_at,
+        "user": {"login": author, "type": author_type},
+        "author_association": association,
     }
 
 
@@ -295,6 +322,292 @@ def test_edited_student_comment_fails_closed(monkeypatch, capsys):
         event.kind == "student_assignment_comment" for event in advisor.poll()
     )
     assert "edited assignment comment rejected" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("status", ["status:wip", "status:review"])
+def test_advisor_receives_every_trusted_human_pr_comment_and_student_message(
+    monkeypatch,
+    status,
+):
+    assigned = pull(
+        labels=("research", "student:student-1", status),
+        body=render_assignment_marker(assignment()),
+        head_sha="7" * 40,
+    )
+    advisor = mailbox(monkeypatch, [assigned], students=("student-1",))
+    visible_comments = [
+        human_pr_comment(
+            github_id=601,
+            body="Owner direction.",
+            association="OWNER",
+        ),
+        human_pr_comment(
+            github_id=602,
+            body="Member direction.",
+            author="member",
+            association="MEMBER",
+        ),
+        human_pr_comment(
+            github_id=603,
+            body="Collaborator direction.",
+            author="collaborator",
+            association="COLLABORATOR",
+        ),
+        assignment_comment(github_id=604, author_type="User"),
+        human_pr_comment(
+            github_id=605,
+            body="Untrusted suggestion.",
+            author="outsider",
+            association="NONE",
+        ),
+        human_pr_comment(
+            github_id=606,
+            body="Bot suggestion.",
+            author="automation",
+            author_type="Bot",
+            association="OWNER",
+        ),
+        human_pr_comment(
+            github_id=607,
+            body="Contributor suggestion.",
+            author="contributor",
+            association="CONTRIBUTOR",
+        ),
+        human_pr_comment(
+            github_id=608,
+            body="   ",
+            author="maintainer",
+            association="OWNER",
+        ),
+    ]
+    reads = []
+
+    def objects(url):
+        reads.append(url)
+        return list(visible_comments)
+
+    monkeypatch.setattr(advisor._github, "objects", objects)
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    events = advisor.poll()
+    human_events = [event for event in events if event.kind == "human_pr_comment"]
+    student_events = [
+        event for event in events if event.kind == "student_assignment_comment"
+    ]
+
+    assert [event.payload["author_association"] for event in human_events] == [
+        "OWNER",
+        "MEMBER",
+        "COLLABORATOR",
+    ]
+    assert [event.payload["message"] for event in human_events] == [
+        "Owner direction.",
+        "Member direction.",
+        "Collaborator direction.",
+    ]
+    assert len(student_events) == 1
+    assert reads == [
+        "/repos/acme/widgets/issues/17/comments?per_page=100"
+    ]
+
+
+def test_student_and_human_parsers_share_a_failed_comment_read(monkeypatch):
+    assigned = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body=render_assignment_marker(assignment()),
+    )
+    advisor = mailbox(monkeypatch, [assigned])
+    reads = []
+
+    def objects(url):
+        reads.append(url)
+        raise GitHubReadError("temporary issue-comment failure")
+
+    monkeypatch.setattr(advisor._github, "objects", objects)
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    events = advisor.poll()
+
+    assert not any(
+        event.kind in {"human_pr_comment", "student_assignment_comment"}
+        for event in events
+    )
+    assert reads.count(
+        "/repos/acme/widgets/issues/17/comments?per_page=100"
+    ) == 1
+
+
+def test_comment_snapshot_survives_a_transient_read_failure(
+    monkeypatch,
+    capsys,
+):
+    assigned = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body=render_assignment_marker(assignment()),
+    )
+    advisor = mailbox(monkeypatch, [assigned])
+    comment = human_pr_comment(github_id=712, body="Keep the wider control.")
+    failing = [False]
+    reads = []
+
+    def objects(url):
+        reads.append(url)
+        if failing[0]:
+            raise GitHubReadError("temporary issue-comment failure")
+        return [comment]
+
+    monkeypatch.setattr(advisor._github, "objects", objects)
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    first = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+    failing[0] = True
+    stale = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+    failing[0] = False
+    recovered = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+
+    assert stale == first
+    assert recovered == first
+    assert len(reads) == 3
+    assert "SENPAI_PULL_COMMENT_STALE_FALLBACK" in capsys.readouterr().err
+
+
+def test_advisor_receives_trusted_human_comment_without_a_valid_assignment(
+    monkeypatch,
+):
+    malformed = pull(
+        labels=("research",),
+        body="This PR has no assignment marker.",
+    )
+    advisor = mailbox(monkeypatch, [malformed])
+    monkeypatch.setattr(
+        advisor._github,
+        "objects",
+        lambda _url: [
+            human_pr_comment(
+                github_id=611,
+                body="Repair the assignment metadata before continuing.",
+            )
+        ],
+    )
+
+    event = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+
+    assert event.payload["number"] == 17
+    assert event.payload["message"] == (
+        "Repair the assignment metadata before continuing."
+    )
+
+
+def test_human_pr_comment_versions_edits_but_not_pull_metadata(monkeypatch):
+    assigned = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body=render_assignment_marker(assignment()),
+    )
+    comment = human_pr_comment(github_id=621, body="Use the narrow control.")
+    advisor = mailbox(monkeypatch, [assigned])
+    monkeypatch.setattr(advisor._github, "objects", lambda _url: [comment])
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    first = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+    assigned["head"]["sha"] = "8" * 40
+    assigned["labels"] = [
+        {"name": "research"},
+        {"name": "student:student-1"},
+        {"name": "status:review"},
+    ]
+    unchanged = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+    comment["author_association"] = "MEMBER"
+    metadata_changed = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+    comment["body"] = "Use the wide control."
+    comment["updated_at"] = "2026-08-11T07:25:00Z"
+    edited = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+    comment["body"] = "Use the narrow control."
+    comment["updated_at"] = "2026-08-11T07:30:00Z"
+    reverted = next(
+        event for event in advisor.poll() if event.kind == "human_pr_comment"
+    )
+
+    assert unchanged == first
+    assert len(
+        {
+            first.dedupe_key,
+            metadata_changed.dedupe_key,
+            edited.dedupe_key,
+            reverted.dedupe_key,
+        }
+    ) == 4
+    assert metadata_changed.payload["author_association"] == "MEMBER"
+
+
+def test_shared_actor_plain_human_comment_is_visible_but_protocol_output_is_not(
+    monkeypatch,
+):
+    assigned = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body=render_assignment_marker(assignment()),
+    )
+    advisor = mailbox(monkeypatch, [assigned])
+    monkeypatch.setattr(
+        advisor._github,
+        "objects",
+        lambda _url: [
+            human_pr_comment(
+                github_id=631,
+                body="Human direction from the shared account.",
+                author="senpai-bot",
+            ),
+            human_pr_comment(
+                github_id=632,
+                body=(
+                    "<!-- senpai-assignment-feedback:v1:{} -->\n\n"
+                    "Advisor protocol output."
+                ),
+                author="senpai-bot",
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    events = [event for event in advisor.poll() if event.kind == "human_pr_comment"]
+
+    assert len(events) == 1
+    assert events[0].payload["feedback_id"] == 631
 
 
 def test_review_label_wakes_the_advisor_and_keeps_the_student_assigned(monkeypatch):

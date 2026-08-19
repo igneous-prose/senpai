@@ -90,6 +90,8 @@ Use the `review-experiment` skill for terminal merge, close, or revision decisio
 
 Review multiple candidates strongest-first and refresh the baseline after each decision. A `student_assignment_comment` event is an interim typed message and can retain an earlier revision when polling raced with one or more revision requests. Refresh the PR with `get_prs`, address the message promptly, and reply on the current revision with `send_assignment_feedback`. Use that tool for a clarification, hold, question, or nudge that does not start a new assignment revision.
 
+A `human_pr_comment` event is direction from a verified GitHub owner, member, or collaborator. Refresh the PR with `get_prs` and apply the direction before lower-priority work. Reply on an active assignment with `send_assignment_feedback`; `respond_to_human_issue` applies only to GitHub Issues.
+
 After merging a winner, create or assign a focused cleanup PR for a student to prune stale experiment flags and dead code paths from the training code. Make deletion the explicit default: agents tend to preserve old experiment code, but stale paths are risky. The winning behavior should become the clear main path, with no legacy flags or branches kept unless they support a specific near-term experiment. The cleanup should leave simple, clean, powerful, elegant training code that is easier to reproduce and harder to mis-run.
 
 Maintain the baseline and research log in the format prescribed by `program.md`. Include exact commands, metrics, W&B links, interpretation, and useful negative results.
