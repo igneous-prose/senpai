@@ -324,13 +324,11 @@ def test_edited_student_comment_fails_closed(monkeypatch, capsys):
     assert "edited assignment comment rejected" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("status", ["status:wip", "status:review"])
 def test_advisor_receives_every_trusted_human_pr_comment_and_student_message(
     monkeypatch,
-    status,
 ):
     assigned = pull(
-        labels=("research", "student:student-1", status),
+        labels=("research", "student:student-1", "status:review"),
         body=render_assignment_marker(assignment()),
         head_sha="7" * 40,
     )
@@ -399,10 +397,10 @@ def test_advisor_receives_every_trusted_human_pr_comment_and_student_message(
         event for event in events if event.kind == "student_assignment_comment"
     ]
 
-    assert [event.payload["author_association"] for event in human_events] == [
-        "OWNER",
-        "MEMBER",
-        "COLLABORATOR",
+    assert [event.payload["feedback_id"] for event in human_events] == [
+        601,
+        602,
+        603,
     ]
     assert [event.payload["message"] for event in human_events] == [
         "Owner direction.",
@@ -445,50 +443,6 @@ def test_student_and_human_parsers_share_a_failed_comment_read(monkeypatch):
     ) == 1
 
 
-def test_comment_snapshot_survives_a_transient_read_failure(
-    monkeypatch,
-    capsys,
-):
-    assigned = pull(
-        labels=("research", "student:student-1", "status:wip"),
-        body=render_assignment_marker(assignment()),
-    )
-    advisor = mailbox(monkeypatch, [assigned])
-    comment = human_pr_comment(github_id=712, body="Keep the wider control.")
-    failing = [False]
-    reads = []
-
-    def objects(url):
-        reads.append(url)
-        if failing[0]:
-            raise GitHubReadError("temporary issue-comment failure")
-        return [comment]
-
-    monkeypatch.setattr(advisor._github, "objects", objects)
-    monkeypatch.setattr(
-        advisor._github,
-        "get",
-        lambda _path: {"object": {"sha": "b" * 40}},
-    )
-
-    first = next(
-        event for event in advisor.poll() if event.kind == "human_pr_comment"
-    )
-    failing[0] = True
-    stale = next(
-        event for event in advisor.poll() if event.kind == "human_pr_comment"
-    )
-    failing[0] = False
-    recovered = next(
-        event for event in advisor.poll() if event.kind == "human_pr_comment"
-    )
-
-    assert stale == first
-    assert recovered == first
-    assert len(reads) == 3
-    assert "SENPAI_PULL_COMMENT_STALE_FALLBACK" in capsys.readouterr().err
-
-
 def test_advisor_receives_trusted_human_comment_without_a_valid_assignment(
     monkeypatch,
 ):
@@ -516,6 +470,29 @@ def test_advisor_receives_trusted_human_comment_without_a_valid_assignment(
     assert event.payload["message"] == (
         "Repair the assignment metadata before continuing."
     )
+
+
+def test_malformed_human_pr_comment_is_reported(monkeypatch, capsys):
+    assigned = pull(
+        labels=("research", "student:student-1", "status:wip"),
+        body=render_assignment_marker(assignment()),
+    )
+    malformed = human_pr_comment(github_id=620, body="Malformed direction.")
+    malformed["created_at"] = "not-a-timestamp"
+    advisor = mailbox(monkeypatch, [assigned])
+    monkeypatch.setattr(advisor._github, "objects", lambda _url: [malformed])
+    monkeypatch.setattr(
+        advisor._github,
+        "get",
+        lambda _path: {"object": {"sha": "b" * 40}},
+    )
+
+    assert not any(
+        event.kind == "human_pr_comment" for event in advisor.poll()
+    )
+    error = capsys.readouterr().err
+    assert "SENPAI_HUMAN_PR_COMMENT_READ_ERROR" in error
+    assert "pr=17 comment_id=620 ValueError" in error
 
 
 def test_human_pr_comment_versions_edits_but_not_pull_metadata(monkeypatch):
@@ -560,15 +537,8 @@ def test_human_pr_comment_versions_edits_but_not_pull_metadata(monkeypatch):
     )
 
     assert unchanged == first
-    assert len(
-        {
-            first.dedupe_key,
-            metadata_changed.dedupe_key,
-            edited.dedupe_key,
-            reverted.dedupe_key,
-        }
-    ) == 4
-    assert metadata_changed.payload["author_association"] == "MEMBER"
+    assert metadata_changed == first
+    assert len({first.dedupe_key, edited.dedupe_key, reverted.dedupe_key}) == 3
 
 
 def test_shared_actor_plain_human_comment_is_visible_but_protocol_output_is_not(

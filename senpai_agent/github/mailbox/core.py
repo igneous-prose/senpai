@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
@@ -63,7 +62,6 @@ class GitHubMailbox:
             int,
             list[dict[str, object]] | GitHubReadError,
         ] = {}
-        self._pull_comment_snapshots: dict[int, list[dict[str, object]]] = {}
         self._github = GitHubReader(
             token,
             api_url=api_url,
@@ -96,19 +94,8 @@ class GitHubMailbox:
                     f"/repos/{self.repo}/issues/{number}/comments?per_page=100"
                 )
                 self._pull_comment_cache[number] = comments
-                self._pull_comment_snapshots[number] = comments
             except GitHubReadError as error:
-                snapshot = self._pull_comment_snapshots.get(number)
-                if snapshot is None:
-                    self._pull_comment_cache[number] = error
-                else:
-                    print(
-                        "SENPAI_PULL_COMMENT_STALE_FALLBACK "
-                        f"pr={number} {type(error).__name__}: {error}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    self._pull_comment_cache[number] = snapshot
+                self._pull_comment_cache[number] = error
         comments = self._pull_comment_cache[number]
         if isinstance(comments, GitHubReadError):
             raise comments
