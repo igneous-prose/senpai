@@ -456,6 +456,38 @@ def test_human_issue_steers_the_active_turn_after_the_tool_boundary(tmp_path: Pa
     assert conversation.messages[-1] == event.to_inbox_message()
 
 
+def test_event_pump_drops_an_already_acknowledged_human_issue(tmp_path: Path):
+    event = LocalEvent(
+        kind="human_issue",
+        dedupe_key="human_issue:1",
+        payload={"message": "Change direction."},
+    )
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    conversation = SteeringConversation()
+
+    with LocalEventStore(tmp_path / "events.sqlite3") as store:
+        pump = AdvisorEventPump(
+            store,
+            conversation,
+            inbox=inbox,
+            conversation_id=STEERING_CONVERSATION_ID,
+        )
+        assert store.enqueue(event)
+        assert pump._transfer_to_inbox() == 1
+        first = inbox.next_turn(STEERING_CONVERSATION_ID, "controller prompt")
+        assert first is not None
+        deliver_turn_messages(conversation, inbox, first.turn_id)
+        inbox.record_processed(first.turn_id)
+        inbox.acknowledge(first.turn_id)
+
+        store.discard_prefix("human_issue:")
+        assert store.enqueue(event)
+        assert pump._transfer_to_inbox() == 1
+
+        assert store.pending() == []
+        assert inbox.next_turn(STEERING_CONVERSATION_ID, "controller prompt") is None
+
+
 def test_student_feedback_waits_for_the_step_and_marks_a_clean_unwind(
     tmp_path: Path,
 ):

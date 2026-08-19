@@ -210,6 +210,7 @@ class AdvisorEventPump:
                         event.dedupe_key,
                         event.to_inbox_message(),
                         priority=mode,
+                        once=event.kind == "human_issue",
                     )
                     if steering is not None:
                         turn_id, state = steering
@@ -236,6 +237,7 @@ class AdvisorEventPump:
                     self._conversation_id,
                     event.dedupe_key,
                     event.to_inbox_message(),
+                    once=event.kind == "human_issue",
                 )
             self._store.acknowledge(event.dedupe_key)
             transferred += 1

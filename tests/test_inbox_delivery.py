@@ -134,6 +134,81 @@ def test_event_identity_cannot_hide_a_changed_payload(tmp_path: Path):
         inbox.enqueue(CONVERSATION_ID, "event:1", "changed after acknowledgement")
 
 
+def test_once_event_is_not_recreated_after_acknowledgement(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+
+    assert inbox.enqueue(
+        CONVERSATION_ID,
+        "human_issue:1",
+        "human instruction",
+        once=True,
+    )
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    deliver_turn_messages(Conversation(), inbox, turn.turn_id)
+    inbox.record_processed(turn.turn_id)
+    inbox.acknowledge(turn.turn_id)
+
+    assert not inbox.enqueue(
+        CONVERSATION_ID,
+        "human_issue:1",
+        "human instruction",
+        once=True,
+    )
+    assert inbox.next_turn(CONVERSATION_ID, "controller prompt") is None
+
+
+def test_once_event_remains_live_until_acknowledgement(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+
+    assert inbox.enqueue(
+        CONVERSATION_ID,
+        "human_issue:1",
+        "human instruction",
+        once=True,
+    )
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+
+    assert not inbox.enqueue(
+        CONVERSATION_ID,
+        "human_issue:1",
+        "human instruction",
+        once=True,
+    )
+    assert inbox.turn(turn.turn_id).event_keys == ("human_issue:1",)
+
+
+def test_once_event_has_one_live_delivery_across_conversations(tmp_path: Path):
+    inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
+    other_conversation = UUID(int=18)
+
+    assert inbox.enqueue(
+        CONVERSATION_ID,
+        "human_issue:1",
+        "human instruction",
+        once=True,
+    )
+    assert not inbox.enqueue(
+        other_conversation,
+        "human_issue:1",
+        "human instruction",
+        once=True,
+    )
+    assert (
+        inbox.steer(
+            other_conversation,
+            "human_issue:1",
+            "human instruction",
+            priority=STEER_PRIORITY,
+            once=True,
+        )
+        is None
+    )
+
+    assert inbox.ready_conversation_ids() == (str(CONVERSATION_ID),)
+
+
 def test_retract_pending_removes_only_unclaimed_events(tmp_path: Path):
     inbox = PersistentInbox(tmp_path / "inbox.sqlite3")
     availability_key = "student_available_for_assignment:Fern"

@@ -646,6 +646,7 @@ def test_fast_poll_defaults_to_ten_minute_level_trigger_reminders(monkeypatch):
     "event",
     [
         pytest.param(research_base_event(), id="research-base"),
+        pytest.param(human_event(), id="human-issue"),
         pytest.param(
             ControllerEvent(
                 kind="student_assignment_comment",
@@ -686,12 +687,77 @@ def test_edge_triggered_event_does_not_repeat_on_reminder_cadence(
     ]
 
 
-def test_student_assignment_comment_is_not_replayed_after_restart(tmp_path: Path):
-    event = ControllerEvent(
-        kind="student_assignment_comment",
-        dedupe_key="student_assignment_comment:v2:message-1",
-        payload={"comment_id": "message-1", "message": "STUDENT: Running."},
-    )
+@pytest.mark.parametrize(
+    "event",
+    [
+        pytest.param(human_event(), id="human-issue"),
+        pytest.param(
+            ControllerEvent(
+                kind="student_assignment_comment",
+                dedupe_key="student_assignment_comment:v2:message-1",
+                payload={
+                    "comment_id": "message-1",
+                    "message": "STUDENT: Running.",
+                },
+            ),
+            id="student-comment",
+        ),
+    ],
+)
+def test_edge_triggered_event_is_not_replayed_after_restart(
+    tmp_path: Path,
+    monkeypatch,
+    event: ControllerEvent,
+):
+    inbox_path = tmp_path / "inbox.sqlite3"
+    clock = [0.0]
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+
+    controller(
+        Mailbox([(event,), (event,)]),
+        Turns(),
+        inbox=PersistentInbox(inbox_path),
+    ).run(max_cycles=1)
+    restarted_turns = Turns()
+
+    Controller(
+        role="advisor",
+        mailbox=Mailbox([(event,), (event,)]),
+        turns=restarted_turns,
+        conversation_id=CONVERSATION_ID,
+        full_prompt="programme",
+        inbox=PersistentInbox(inbox_path),
+        sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+        poll_interval_seconds=1,
+        jitter_seconds=0,
+        event_reminder_seconds=1,
+    ).run(max_cycles=2)
+
+    assert restarted_turns.calls == []
+
+
+def test_new_human_message_wakes_after_previous_message_is_acknowledged():
+    first = human_event(101)
+    follow_up = human_event(102)
+
+    class HumanMailbox(Mailbox):
+        def poll(self):
+            self.calls += 1
+            return (first,) if self.calls <= 2 else (follow_up,)
+
+    turns = Turns()
+    controller(HumanMailbox([]), turns).run(max_cycles=2)
+
+    assert [call[2] for call in turns.calls] == [
+        frozenset({first.dedupe_key}),
+        frozenset({follow_up.dedupe_key}),
+    ]
+
+
+def test_acknowledged_human_issue_does_not_replay_after_a_poll_gap(
+    tmp_path: Path,
+):
+    event = human_event()
     inbox_path = tmp_path / "inbox.sqlite3"
 
     controller(
@@ -702,10 +768,10 @@ def test_student_assignment_comment_is_not_replayed_after_restart(tmp_path: Path
     restarted_turns = Turns()
 
     controller(
-        Mailbox([(event,)]),
+        Mailbox([(), (event,), (event,)]),
         restarted_turns,
         inbox=PersistentInbox(inbox_path),
-    ).run(max_cycles=1)
+    ).run(max_cycles=2)
 
     assert restarted_turns.calls == []
 

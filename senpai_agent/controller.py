@@ -59,7 +59,7 @@ from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergen
 
 
 _EDGE_TRIGGERED_EVENT_KINDS = frozenset(
-    {"research_base_changed", "student_assignment_comment"}
+    {"human_issue", "research_base_changed", "student_assignment_comment"}
 )
 _ACTIVITY_LEASE_RENEWAL_SECONDS = 30
 
@@ -582,6 +582,7 @@ class Controller:
                         event.dedupe_key,
                         event.to_prompt(),
                         priority=steering_priority,
+                        once=event.kind == "human_issue",
                     )
                 else:
                     self.inbox.enqueue(
@@ -593,6 +594,7 @@ class Controller:
                             if event.kind == "student_assignment"
                             else 0
                         ),
+                        once=event.kind == "human_issue",
                     )
 
     def _next_ready_turn(

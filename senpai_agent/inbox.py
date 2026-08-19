@@ -270,18 +270,22 @@ class PersistentInbox:
         *,
         requires_ack: bool = True,
         priority: int = 0,
+        once: bool = False,
     ) -> bool:
+        """Queue an event, optionally suppressing its key after acknowledgement."""
+
         conversation = str(conversation_id)
         with self._transaction() as database:
-            _sequence, _turn_id, _state, created = self._enqueue(
+            queued = self._enqueue(
                 database,
                 conversation,
                 event_key,
                 body,
                 requires_ack=requires_ack,
                 priority=priority,
+                once=once,
             )
-            return created
+            return queued is not None and queued[3]
 
     def _enqueue(
         self,
@@ -292,14 +296,18 @@ class PersistentInbox:
         *,
         requires_ack: bool,
         priority: int,
-    ) -> tuple[int, str | None, DeliveryState, bool]:
+        once: bool,
+    ) -> tuple[int, str | None, DeliveryState, bool] | None:
         if not event_key:
             raise ValueError("event key must not be empty")
         if not body:
             raise ValueError("event body must not be empty")
-        _require_event_payload(database, conversation, event_key, body)
-        existing = self._live_event_message(database, conversation, event_key)
+        scope = None if once else conversation
+        _require_event_payload(database, scope, event_key, body)
+        existing = self._live_event_message(database, scope, event_key)
         if existing is not None:
+            if once and existing["conversation_id"] != conversation:
+                return None
             if requires_ack and not existing["requires_ack"]:
                 database.execute(
                     "UPDATE inbox_messages SET requires_ack = 1 WHERE sequence = ?",
@@ -316,6 +324,8 @@ class PersistentInbox:
                 DeliveryState(existing["state"]),
                 False,
             )
+        if once and self._has_acknowledged_event(database, event_key):
+            return None
         legacy = database.execute(
             """
             SELECT delivery_id
@@ -374,21 +384,26 @@ class PersistentInbox:
         body: str,
         *,
         priority: int = QUEUE_PRIORITY,
+        once: bool = False,
     ) -> tuple[str, DeliveryState] | None:
-        """Prioritize one event and attach it to the active turn when possible."""
+        """Prioritize an event and attach it unless its once-only key was handled."""
 
         conversation = str(conversation_id)
         reopened = False
         quarantined_turn = False
         with self._transaction() as database:
-            sequence, owner_turn_id, state, _created = self._enqueue(
+            queued = self._enqueue(
                 database,
                 conversation,
                 event_key,
                 body,
                 requires_ack=True,
                 priority=priority,
+                once=once,
             )
+            if queued is None:
+                return None
+            sequence, owner_turn_id, state, _created = queued
             turn_id = self._active_turn_id(database, conversation)
             if turn_id is None:
                 if priority != STEER_PRIORITY:
@@ -1316,7 +1331,7 @@ class PersistentInbox:
     @staticmethod
     def _live_event_message(
         database: sqlite3.Connection,
-        conversation_id: str,
+        conversation_id: str | None,
         event_key: str,
     ) -> sqlite3.Row | None:
         return database.execute(
@@ -1324,7 +1339,7 @@ class PersistentInbox:
             SELECT message.*
             FROM inbox_messages AS message
             LEFT JOIN inbox_turns AS turn ON turn.turn_id = message.turn_id
-            WHERE message.conversation_id = ?
+            WHERE (? IS NULL OR message.conversation_id = ?)
               AND message.event_key = ?
               AND (
                   message.turn_id IS NULL
@@ -1336,8 +1351,28 @@ class PersistentInbox:
             ORDER BY message.sequence DESC
             LIMIT 1
             """,
-            (conversation_id, event_key),
+            (conversation_id, conversation_id, event_key),
         ).fetchone()
+
+    @staticmethod
+    def _has_acknowledged_event(
+        database: sqlite3.Connection,
+        event_key: str,
+    ) -> bool:
+        return (
+            database.execute(
+                """
+                SELECT 1
+                FROM inbox_messages AS message
+                JOIN inbox_turns AS turn ON turn.turn_id = message.turn_id
+                WHERE message.event_key = ?
+                  AND turn.acknowledged = 1
+                LIMIT 1
+                """,
+                (event_key,),
+            ).fetchone()
+            is not None
+        )
 
     def _latest_turn(
         self,
@@ -1709,7 +1744,7 @@ def _event_call_ids(event: object) -> set[str]:
 
 def _require_event_payload(
     database: sqlite3.Connection,
-    conversation_id: str,
+    conversation_id: str | None,
     event_key: str,
     body: str,
 ) -> None:
@@ -1717,13 +1752,13 @@ def _require_event_payload(
         """
         SELECT 1
         FROM inbox_messages
-        WHERE conversation_id = ?
+        WHERE (? IS NULL OR conversation_id = ?)
           AND event_key = ?
           AND legacy = 0
           AND body != ?
         LIMIT 1
         """,
-        (conversation_id, event_key, body),
+        (conversation_id, conversation_id, event_key, body),
     ).fetchone()
     if conflict is not None:
         raise RuntimeError(
