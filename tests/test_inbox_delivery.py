@@ -694,6 +694,41 @@ def test_terminal_recovery_policy_survives_restart_and_bounds_attempts(
     )
 
 
+def test_provider_failure_refund_and_cooldown_survive_restart(
+    tmp_path: Path,
+):
+    path = tmp_path / "inbox.sqlite3"
+    inbox = PersistentInbox(path)
+    inbox.enqueue(CONVERSATION_ID, "event:1", "canonical event")
+    turn = inbox.next_turn(CONVERSATION_ID, "controller prompt")
+    assert turn is not None
+    deliver_turn_messages(Conversation(), inbox, turn.turn_id)
+
+    for attempt in range(MAX_INFERENCE_ATTEMPTS_PER_TURN):
+        inbox.record_inference_attempt(turn.turn_id)
+        cooldown = inbox.defer_provider_retry(
+            turn.turn_id,
+            1_700_000_090,
+        )
+
+    preserved = inbox.latest_turn(turn.turn_id)
+    assert preserved.turn_id == turn.turn_id
+    assert preserved.state is DeliveryState.DELIVERED
+    assert preserved.superseded_by is None
+    assert preserved.quarantine_reason is None
+    assert cooldown.failure_count == MAX_INFERENCE_ATTEMPTS_PER_TURN
+    assert not inbox.terminal_recovery_due(turn.turn_id, max_attempts=1)
+    inbox.close()
+
+    restarted = PersistentInbox(path)
+    cooldown = restarted.provider_cooldown()
+    assert cooldown is not None
+    assert cooldown.failure_count == MAX_INFERENCE_ATTEMPTS_PER_TURN
+    assert cooldown.retry_at == 1_700_000_090
+    restarted.clear_provider_cooldown()
+    assert restarted.provider_cooldown() is None
+
+
 def test_progressing_retries_have_a_durable_attempt_backstop(tmp_path: Path):
     path = tmp_path / "inbox.sqlite3"
     inbox = PersistentInbox(path)
