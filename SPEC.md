@@ -309,7 +309,9 @@ count after provider rendering; Senpai does not load a local tokenizer. This
 trigger is not a context-size cap. LiteLLM's normalized `prompt_tokens` can
 exceed it because that field sums the compaction and post-compaction sampling
 iterations; diagnose compaction from the raw iteration usage and returned
-compaction block. The local condenser is disabled for these conversations.
+compaction block. Senpai leaves Anthropic's compaction instructions unset so
+the provider uses its model-specific native prompt. The local condenser is
+disabled for these conversations.
 Other providers retain the high-quality OpenHands condenser.
 
 The complete durable transcript remains available as plain event JSON under

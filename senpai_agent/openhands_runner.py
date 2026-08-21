@@ -1059,13 +1059,16 @@ def openai_responses_configuration(
 def compaction_configuration(
     model: str,
     trigger_tokens: int,
-) -> dict[str, int]:
+) -> dict[str, int | None]:
     """Translate the universal token trigger to the provider SDK field."""
     provider = model_provider(model)
     if provider == "openai":
         return {"responses_compact_threshold": trigger_tokens}
     if provider == "anthropic":
-        return {"anthropic_compact_threshold": trigger_tokens}
+        return {
+            "anthropic_compact_threshold": trigger_tokens,
+            "anthropic_compaction_instructions": None,
+        }
     return {}
 
 
