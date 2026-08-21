@@ -213,12 +213,12 @@ The model receives:
 1. OpenHands' native base system prompt and tool schemas.
 2. One stable system suffix assembled from:
    - `system_instructions/SENPAI-HARNESS.md`; and
-   - the rendered advisor or student role charter, including its non-secret
-     runtime identity; and
+   - the rendered advisor or student role charter; and
    - the selected target-repository `program.md` under
      `# program.md - <path>`; and
    - the rendered `system_instructions/SENPAI-LAUNCH-CONTEXT.md`, containing
-     authoritative runtime and isolation rules after `program.md`. A blank
+     authoritative runtime identity, limits, and isolation rules after
+     `program.md`. A blank
      `program_path` searches root
      `program.md` and one-level `*/program.md` paths and requires exactly one
      total match.
