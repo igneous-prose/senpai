@@ -343,6 +343,7 @@ are not installed into autoresearch pods.
 |---|---|
 | [Assign an experiment](plugins/senpai/skills/assign-experiment/SKILL.md) | Turn a hypothesis into a typed student branch and draft PR. |
 | [Delegate subagents](plugins/senpai/skills/delegate-subagents/SKILL.md) | Launch and coordinate bounded parallel research, review, and implementation help. |
+| [Maintain research state](plugins/senpai/skills/maintain-research-state/SKILL.md) | Keep advisor-owned research direction, ideas, and dataset knowledge current and publish them safely. |
 | [Submit experiment results](plugins/senpai/skills/submit-experiment-results/SKILL.md) | Commit the tested implementation and publish a structured, evidence-backed result. |
 | [Review an experiment](plugins/senpai/skills/review-experiment/SKILL.md) | Merge a reproducible winner, close a useful negative, or request the missing evidence. |
 | [Handle human Issues](plugins/senpai/skills/check-human-issues/SKILL.md) | Respond to authenticated human-to-agent messages delivered through GitHub Issues. |
@@ -436,7 +437,7 @@ Pod startup and liveness probes read the supervisor lease. Container restarts re
 
 GitHub coordination works across Docker, cloud VMs, or local hosts without private networking. The current repository does not yet provide a Compose or direct-host launcher: the Kubernetes manifests perform the source clone, environment assembly, skill installation, token handoff, mounts, and entrypoint selection.
 
-To build another launcher, reproduce [entrypoint-advisor.sh](k8s/entrypoint-advisor.sh) or [entrypoint-student.sh](k8s/entrypoint-student.sh), render `SENPAI-LAUNCH-CONTEXT.md` with `render_launch_context`, and provide it as base64 in `SENPAI_LAUNCH_CONTEXT_B64`. Pass the built-in role template and its explicit identity values to the Python supervisor, which renders the non-secret identity once and persists that role snapshot. Keep optional operator guidance in `EXTRA_INSTRUCTIONS_B64`. Persist `/var/lib/senpai/<tag>/advisor` for the advisor and use the container healthcheck with a restart policy. Student execution requires Linux, an NVIDIA runtime, and compatible CUDA hardware; Docker Desktop on macOS cannot run the GPU student image.
+To build another launcher, reproduce [entrypoint-advisor.sh](k8s/entrypoint-advisor.sh) or [entrypoint-student.sh](k8s/entrypoint-student.sh), render `SENPAI-LAUNCH-CONTEXT.md` with runtime identity, limits, and isolation through `render_launch_context`, and provide it as base64 in `SENPAI_LAUNCH_CONTEXT_B64`. Pass the built-in role template and its required non-secret values to the Python supervisor, which renders and persists that role snapshot. Keep optional operator guidance in `EXTRA_INSTRUCTIONS_B64`. Persist `/var/lib/senpai/<tag>/advisor` for the advisor and use the container healthcheck with a restart policy. Student execution requires Linux, an NVIDIA runtime, and compatible CUDA hardware; Docker Desktop on macOS cannot run the GPU student image.
 
 ## Development and reference
 

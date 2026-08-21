@@ -208,6 +208,7 @@ def test_native_senpai_plugin_loads_its_runtime_skills():
         "check-human-issues",
         "delegate-subagents",
         "exa-search",
+        "maintain-research-state",
         "review-experiment",
         "senpai-status-check",
         "submit-experiment-results",
@@ -513,6 +514,11 @@ def test_event_guidance_lives_in_the_shared_harness():
     )
     assert event_guidance not in advisor
     assert event_guidance in harness
+    assert "A `student_assignment_comment` event is interim feedback" in harness
+    assert "may refer to an earlier assignment revision" in harness
+    assert "respond on the current revision" in harness
+    assert "A `research_base_changed` event means" in harness
+    assert "Do not cancel in-flight work solely because the base changed" in harness
 
 
 def test_shared_harness_omits_project_instructions_and_generic_reminders():
@@ -688,7 +694,7 @@ def test_delegation_guidance_lives_in_the_plugin_skill():
     assert "high-leverage research and technical judgment" in readme
 
 
-def test_advisor_prompt_uses_general_research_domains_and_typed_assignment_body():
+def test_advisor_prompt_uses_general_research_domains_and_an_actionable_brief():
     advisor = " ".join(
         (REPO_ROOT / "system_instructions" / "ADVISOR.md")
         .read_text(encoding="utf-8")
@@ -696,7 +702,79 @@ def test_advisor_prompt_uses_general_research_domains_and_typed_assignment_body(
     )
 
     assert "adjacent research fields such as physics, chemistry or biology" in advisor
-    assert "Pass the complete actionable experiment brief in `body`" in advisor
+    assert "deliver a complete, actionable experiment brief safely" in advisor
+    for operational_detail in ("create_assignment", "assign-experiment", "`body`"):
+        assert operational_detail not in advisor
+
+
+def test_advisor_prompt_keeps_policy_and_moves_operational_details():
+    advisor = (
+        REPO_ROOT / "system_instructions" / "ADVISOR.md"
+    ).read_text(encoding="utf-8")
+
+    for retained in (
+        "Do not run training or evaluation",
+        "Use the operation-specific typed GitHub tools",
+        "W&B Report",
+        "{{GPUS_PER_STUDENT}}",
+        "Use subagents when an independent perspective",
+        "Schmidhuber",
+        "## Writing style",
+        "ASD-STE100",
+    ):
+        assert retained in advisor
+
+    for moved_or_removed in (
+        "## Runtime identity",
+        "board message",
+        "one durable conversation",
+        "$GPUS_PER_STUDENT",
+        "get_prs",
+        "review-experiment",
+        "research_base_changed",
+        "accept_result_on_current_base",
+        "current_base_sha",
+        "request_assignment_revision",
+        "required_base_sha",
+        "student_assignment_comment",
+        "send_assignment_feedback",
+        "create_assignment",
+        "assign-experiment",
+        "publish_advisor_branch",
+        "research/RESEARCH_IDEAS_",
+        "research/CURRENT_RESEARCH_STATE.md",
+        "research/DATASET_ANALYSIS.md",
+        "Epoch and wall-clock limits",
+        "injected launch-runtime context",
+    ):
+        assert moved_or_removed not in advisor
+
+
+def test_research_state_skill_owns_artifacts_and_publication():
+    advisor = (
+        REPO_ROOT / "system_instructions" / "ADVISOR.md"
+    ).read_text(encoding="utf-8")
+    skill = (
+        PLUGIN_DIR / "skills" / "maintain-research-state" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    frontmatter = " ".join(skill.split("---", 2)[1].split())
+
+    for trigger in (
+        "research focus or direction",
+        "durable research ideas",
+        "dataset understanding",
+    ):
+        assert trigger in frontmatter
+
+    for owned_detail in (
+        "research/CURRENT_RESEARCH_STATE.md",
+        "research/RESEARCH_IDEAS_<YYYY-MM-DD_HH:MM>.md",
+        "research/DATASET_ANALYSIS.md",
+        "publish_advisor_branch",
+        "living, pruned view",
+    ):
+        assert owned_detail in skill
+        assert owned_detail not in advisor
 
 
 def test_harness_states_bounded_delegation_tree_contract():

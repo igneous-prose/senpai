@@ -123,6 +123,7 @@ def test_agent_context_installer_builds_loadable_sanitized_runtime_copies(
         "check-human-issues",
         "delegate-subagents",
         "exa-search",
+        "maintain-research-state",
         "review-experiment",
         "senpai-status-check",
         "submit-experiment-results",
