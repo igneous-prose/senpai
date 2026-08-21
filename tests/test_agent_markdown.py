@@ -145,9 +145,10 @@ def test_delegate_subagents_skill_advertises_frontier_research_judgment():
     skill = (
         PLUGIN_DIR / "skills" / "delegate-subagents" / "SKILL.md"
     ).read_text(encoding="utf-8")
-    frontmatter = skill.split("---", 2)[1]
+    frontmatter = " ".join(skill.split("---", 2)[1].split())
 
     assert "every task requires an" in frontmatter
     assert "explicit model tier" in frontmatter
+    assert "delegation-capable subagents" in frontmatter
     assert "research ideation" in frontmatter
     assert "expensive experiment portfolios" in frontmatter

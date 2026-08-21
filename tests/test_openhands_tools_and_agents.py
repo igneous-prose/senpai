@@ -369,15 +369,17 @@ def test_markdown_agents_register_and_construct_with_the_native_loader(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_search_agent_receives_skills_from_the_runtime_plugin(
+@pytest.mark.parametrize("agent_file", ["search.md", "general-purpose.md"])
+def test_subagents_receive_skills_from_the_runtime_plugin(
     monkeypatch,
     tmp_path,
+    agent_file,
 ):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("SENPAI_ROLE", "advisor")
     register_default_tools(enable_browser=False)
     register_senpai_tools()
-    definition = AgentDefinition.load(AGENT_DIR / "search.md")
+    definition = AgentDefinition.load(AGENT_DIR / agent_file)
     agent = agent_definition_to_factory(definition, work_dir=tmp_path)(
         LLM(
             model="anthropic/claude-opus-4-8",
@@ -397,6 +399,7 @@ def test_search_agent_receives_skills_from_the_runtime_plugin(
     conversation._ensure_plugins_loaded()
     try:
         assert {skill.name for skill in conversation.agent.agent_context.skills} >= {
+            "delegate-subagents",
             "exa-search",
             "alphaxiv-paper-lookup",
         }
@@ -632,6 +635,9 @@ def test_delegation_guidance_lives_in_the_plugin_skill():
     ):
         assert trigger in normalized_advisor
 
+    assert "Instruct the researcher-agent to think creatively" in advisor
+    assert "Schmidhuber" in advisor
+
     for implementation_detail in (
         "researcher-agent-instructions",
         "agent specialization",
@@ -666,13 +672,12 @@ def test_delegation_guidance_lives_in_the_plugin_skill():
         "difficult debugging or optimization of code that is already highly optimized",
         "disagreement between local and external evaluation",
         "substantial GPU time or external-evaluation budget",
-        "complete relevant experiment history",
-        "positive, negative, failed, and in-flight work",
-        "review that evidence before proposing ideas",
         "ask for research, critique, diagnosis, ideas, or a plan rather than edits",
         "timeout of at most 300 seconds",
     ):
         assert required in normalized_skill
+
+    assert "complete relevant experiment history" not in normalized_skill
 
     spec = (REPO_ROOT / "SPEC.md").read_text(encoding="utf-8")
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")

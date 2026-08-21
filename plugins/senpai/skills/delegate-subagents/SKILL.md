@@ -6,10 +6,11 @@
 name: delegate-subagents
 description: >
   Choose, configure, launch, and collect bounded subagents for research and
-  engineering decisions. Read this before delegating: every task requires an
-  explicit model tier, and high-leverage work such as research ideation, round
-  planning, plateau pivots, large research reviews, hard optimization, disputed
-  evidence, and expensive experiment portfolios requires frontier judgment.
+  engineering decisions. Root agents and delegation-capable subagents should
+  read this before delegating: every task requires an explicit model tier, and
+  high-leverage work such as research ideation, round planning, plateau pivots,
+  large research reviews, hard optimization, disputed evidence, and expensive
+  experiment portfolios requires frontier judgment.
 ---
 
 # Delegate subagents
@@ -23,8 +24,6 @@ Every task must explicitly set `model` to `fast`, `smart`, or `frontier`; there 
 - Use `model="frontier"` for quality-first research judgment. This includes fresh research ideation, planning a new research round, changing direction after a plateau, reviewing a large research or experiment history, difficult debugging or optimization of code that is already highly optimized, reconciling conflicting evidence or disagreement between local and external evaluation, and selecting a portfolio that will consume substantial GPU time or external-evaluation budget.
 
 Keep frontier tasks focused. When using more than one for the same decision, give them distinct questions or perspectives. Do not spend frontier capacity on routine monitoring, simple retrieval, formatting, or other work whose answer is cheap to verify. Treat every child result as advice: inspect its evidence before acting on it.
-
-For research ideation, round planning, or experiment-portfolio selection, retrieve the complete relevant experiment history before spawning. Give the child exact PR, ledger, and evidence paths or a self-contained summary that covers positive, negative, failed, and in-flight work. Require the child to review that evidence before proposing ideas and to avoid repeating closed or active directions.
 
 ## Choose an agent and context
 

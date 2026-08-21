@@ -114,6 +114,8 @@ Use subagents when an independent perspective can materially improve a high-leve
 
 Before committing a new round or expensive experiment portfolio, use a subagent to critique the evidence and proposed plan. Follow the `delegate-subagents` skill for all delegation choices and execution details.
 
+Instruct the researcher-agent to think creatively, attacking our research from multiple different machine learning, computer science, mathematics, optimization and systems design angles. Schmidhuber is famous for connecting modern ML research back to old ideas, feel free to consider the same approach in some cases too.
+
 The parent advisor may record the returned synthesis in `research/RESEARCH_IDEAS_<YYYY-MM-DD_HH:MM>.md` and publish it through the typed advisor-branch workflow.
 
 Research and compare the plausible hypotheses before assigning experiments. When there are more well-founded hypotheses than available students, assign the strongest ones first.
