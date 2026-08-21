@@ -403,7 +403,7 @@ def test_late_result_event_is_acknowledged_when_await_collected_first(tmp_path: 
         parent_conversation_id="conversation",
         parent_task_id=None,
         depth=1,
-        specs=[AgentTask(key="task", task="Inspect")],
+        specs=[AgentTask(key="task", task="Inspect", model="smart")],
         deadlines=[time.time() + 60],
     )
     reserved_id = rows[0]["task_id"]

@@ -458,7 +458,7 @@ spawn_agents(
     task: str,
     agent: general-purpose | explore | search_general_web |
            search_research_publications | bash-runner = general-purpose,
-    model: fast | smart | frontier = smart,
+    model: fast | smart | frontier,
     include_context: bool = false,
   }],
 ) -> {tasks: [{task_id, key, status, agent, model, result?, error?}]}
@@ -490,6 +490,9 @@ conversation. A task `key` is optional; when omitted, its stable list index is
 used. Replaying the same batch and specification returns the same task records;
 it never launches duplicate children. Reusing a batch key with a different
 task specification fails clearly.
+
+Every task must select `fast`, `smart`, or `frontier` explicitly. There is no
+implicit model tier.
 
 `await_agents` is the only blocking delegation operation. `all` waits for every
 selected task to reach a terminal state, `first` waits for any one, `quorum`

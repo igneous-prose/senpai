@@ -283,9 +283,13 @@ immediately. A timed-out wait returns current state and suggests non-blocking
 next steps; it does not cancel the children. Every child runs in a fresh
 OpenHands conversation and separate process group.
 
+Every task must set `model` explicitly to `fast`, `smart`, or `frontier`; there
+is no implicit model tier. Read the `delegate-subagents` skill before choosing
+the tier, agent specialization, and context policy.
+
 | Agent | Best for | Recommended tier |
 |---|---|---|
-| [General Purpose](.agents/agents/general-purpose.md) | Bounded work combining terminal investigation, code editing, task tracking, tests, and one controlled level of leaf delegation. | `smart` for ordinary implementation or review; `frontier` for the hardest generalist work. |
+| [General Purpose](.agents/agents/general-purpose.md) | Bounded work combining terminal investigation, code editing, task tracking, tests, and one controlled level of leaf delegation. | `smart` for ordinary implementation or review; `frontier` for the high-leverage research and technical judgment defined by the delegation skill. |
 | [Explore](.agents/agents/explore.md) | Read-only search across code, data, experiment artifacts, papers, or durable conversation history. It returns conclusions with paths and line numbers rather than dumping source. | `fast` for mechanical exploration; `smart` when relationships are subtle. |
 | [Search](.agents/agents/search.md) | External research through Exa via the explicit `search_general_web` or `search_research_publications` task form, with primary-source links. | `smart`. |
 | [Bash Runner](.agents/agents/bash-runner.md) | Tests, builds, linters, dependency commands, Git inspection, and noisy CLI work. It returns counts and actionable failures rather than raw logs. | `fast`. |
@@ -294,8 +298,8 @@ The model tier is independent of the agent specialization. With the default
 `agent=general-purpose`, `model=frontier` launches GPT-5.6 Sol at `max`, sent
 to the Responses API with `reasoning.mode: pro`
 with the general-purpose terminal and code-editing toolset. Pair `frontier`
-with `search_general_web` or `search_research_publications` when the hard task
-is external research.
+with `search_general_web` or `search_research_publications` when the
+high-leverage task is external research.
 
 A root spawn batch and its descendants form one delegation tree, which may
 create at most eight children total. A role runs at most eight active tasks
