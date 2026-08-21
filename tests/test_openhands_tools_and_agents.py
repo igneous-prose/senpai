@@ -614,11 +614,40 @@ def test_delegation_guidance_lives_in_the_plugin_skill():
         / "SKILL.md"
     ).read_text(encoding="utf-8")
     normalized_harness = " ".join(harness.split())
+    normalized_advisor = " ".join(advisor.split())
     normalized_skill = " ".join(skill.split())
 
     assert "`delegate-subagents` skill" in normalized_harness
     assert "`spawn_agents`" not in advisor
     assert "`spawn_agents`" not in student
+
+    for trigger in (
+        "fresh research ideation",
+        "planning a new research round",
+        "changing direction after a plateau",
+        "reviewing a large body of research or experiment evidence",
+        "difficult debugging or optimization of code that is already highly optimized",
+        "disagreement between local and external evaluation",
+        "substantial GPU time or external-evaluation budget",
+    ):
+        assert trigger in normalized_advisor
+
+    for implementation_detail in (
+        "researcher-agent-instructions",
+        "agent specialization",
+        "model tier",
+        '`model="frontier"`',
+        '`agent="general-purpose"`',
+        "`fast`",
+        "`smart`",
+        "`frontier`",
+        "`general-purpose`",
+        "`bash-runner`",
+        "include_context",
+        "search_research_publications",
+        "search_general_web",
+    ):
+        assert implementation_detail not in advisor
 
     for required in (
         "`spawn_agents`",
@@ -629,10 +658,29 @@ def test_delegation_guidance_lives_in_the_plugin_skill():
         "`search_research_publications`",
         '`model="frontier"`',
         '`agent="general-purpose"`',
-        "ask for research, critique, ideas, or a plan rather than edits",
+        "Every task must explicitly set `model`",
+        "fresh research ideation",
+        "planning a new research round",
+        "changing direction after a plateau",
+        "reviewing a large research or experiment history",
+        "difficult debugging or optimization of code that is already highly optimized",
+        "disagreement between local and external evaluation",
+        "substantial GPU time or external-evaluation budget",
+        "complete relevant experiment history",
+        "positive, negative, failed, and in-flight work",
+        "review that evidence before proposing ideas",
+        "ask for research, critique, diagnosis, ideas, or a plan rather than edits",
         "timeout of at most 300 seconds",
     ):
         assert required in normalized_skill
+
+    spec = (REPO_ROOT / "SPEC.md").read_text(encoding="utf-8")
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "model: fast | smart | frontier," in spec
+    assert "model: fast | smart | frontier = smart," not in spec
+    assert "Every task must set `model` explicitly" in readme
+    assert "the hardest generalist work" not in readme
+    assert "high-leverage research and technical judgment" in readme
 
 
 def test_advisor_prompt_uses_general_research_domains_and_typed_assignment_body():

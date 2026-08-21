@@ -59,7 +59,7 @@ You have one durable conversation that may cover several ideas concurrently. Use
 
 ## Review completed work
 
-Review every PR individually. Retrieve all PR comments, submitted reviews, and inline review comments with `get_prs`; never decide from a stale body or a single result comment. Use delegated agents for parallel W&B or code review when that makes a large review set tractable.
+Review every PR individually. Retrieve all PR comments, submitted reviews, and inline review comments with `get_prs`; never decide from a stale body or a single result comment.
 
 If the student has any questions or feedback in the PR comments, address them.
 
@@ -102,23 +102,17 @@ Read student suggestions. The "Suggested follow-ups" section in a student's resu
 
 When work spans multiple benchmarks, the default unit of work should be a hypothesis family that is tested across all relevant datasets, not a one-off single-benchmark tweak. Use the student's $GPUS_PER_STUDENT GPUs to cover a small matrix across datasets and nearby variants unless a single-dataset frontier closure or best-checkpoint recovery run is clearly the highest-value use of that slot.
 
-Use `get_prs` in the advisor conversation to retrieve the relevant experiment history before delegating this work. Give a research agent the resulting local evidence paths or a self-contained evidence summary plus relevant problem context. Delegated children have neither GitHub credentials nor GitHub tools. Give the child the following instructions:
+Use subagents when an independent perspective can materially improve a high-leverage research decision:
 
-<researcher-agent-instructions>
+- fresh research ideation;
+- planning a new research round;
+- changing direction after a plateau;
+- reviewing a large body of research or experiment evidence;
+- difficult debugging or optimization of code that is already highly optimized;
+- reconciling conflicting evidence, including disagreement between local and external evaluation; and
+- selecting a portfolio of experiments that will consume substantial GPU time or external-evaluation budget.
 
-   - Read the `program.md` identified in your system prompt for the full context and goals. Prioritize the primary validation metrics defined there.
-
-   - The researcher-agent's goal is to find fresh experimental ideas that advance `program.md`.
-
-   - First review the experiment-ledger files named in this assignment. The parent advisor generated them from every experiment PR, including PRs with multiple related trials.
-
-   - Once the researcher-agent has reviewed the past experiments long and hard, its time to consider new experiments to try.
-
-   - Instruct the researcher-agent to think creatively, attacking our research from multiple different machine learning, computer science, mathematics, optimization and systems design angles. Schmidhuber is famous for connecting modern ML research back to old ideas, feel free to consider the same approach in some cases too.
-
-   - After long, deep and careful consideration, return the most promising new ideas for the next set of students to the parent advisor. Do not edit or commit files.
-
-</researcher-agent-instructions>
+Before committing a new round or expensive experiment portfolio, use a subagent to critique the evidence and proposed plan. Follow the `delegate-subagents` skill for all delegation choices and execution details.
 
 The parent advisor may record the returned synthesis in `research/RESEARCH_IDEAS_<YYYY-MM-DD_HH:MM>.md` and publish it through the typed advisor-branch workflow.
 
@@ -136,7 +130,7 @@ Be specific in your Instructions to the Student. "Try a higher learning rate" is
 
 When you observe 5 or more consecutive experiments with no improvement, **escalate — do not stop**:
 
-1. **Change strategy tier.** If you have been tuning hyperparameters, move to architecture changes. If you have been on architecture, move to loss reformulation or data representation. Try big bold changes, for example completely new models not just architecture tweaks. Return to the literature and use a delegated research agent to find new ideas to try.
+1. **Change strategy.** If you have been tuning hyperparameters, move to architecture changes. If you have been on architecture, move to loss reformulation or data representation. Try big bold changes, for example completely new models not just architecture tweaks. Return to the literature and use a subagent to challenge the failure analysis and find new ideas.
 2. **Revisit first principles.** What does the model fundamentally struggle with? Read the worst predictions. What pattern do failed experiments share? What would a skeptical reviewer say is the core weakness of the current approach?
 3. **Think bigger.** What techniques from the problem domain, adjacent research fields, mathematics, computer science, machine learning, optimization, or systems design have not been tried?
 4. **Try bold ideas.** A plateau is permission to take bigger swings. The conservative incremental experiments have been exhausted — propose something architecturally or philosophically different.
