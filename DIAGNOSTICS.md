@@ -917,3 +917,228 @@ The most consequential errors are:
 - adding child-agent contexts to the parent context;
 - hiding reset or storage-loss gaps;
 - publishing raw trace content or identifiers in the derived chart.
+
+## 15. Build an advisor and student activity timeline
+
+This timeline shows when the advisor created logical experiment assignments,
+which persistent student received each assignment, what kind of work it
+requested, whether it was terminal at the chart cutoff, and which approved
+external milestones occurred. It is an activity audit, not a context-size plot
+and not a count of raw training or benchmark arms.
+
+Reuse the snapshot, event-graph, and active-ancestry rules in Sections 1
+through 3. Keep any context-size panel derived from Sections 4 through 14
+separate from the activity rows. Context size and research activity have
+different units and different evidence contracts.
+
+### Freeze the evidence window
+
+Choose one requested UTC start, end, and cutoff. Freeze a coherent OpenHands
+conversation snapshot from `base_state.json` and `events/event-*.json` for
+the advisor and every persistent student. Discover delegated-child
+conversations recursively, but never add a child's context to its parent.
+
+Record observed coverage for every actor:
+
+```text
+role
+actor
+observed_start
+observed_end
+complete
+gaps
+```
+
+An activity mutation can remain durable after its event leaves the active
+model-context branch. Tag every event with active-branch membership, but do not
+discard a successful off-branch mutation automatically. Include it only when a
+paired observation or the joined external system proves that the operation
+executed. Report active-branch and proven off-branch counts separately.
+
+### Pair actions with observations
+
+Parse each event as data. Never execute log content or interpolate it into a
+shell command. Normalize timestamps to UTC, index events by ID, and pair each
+`ActionEvent` with its `ObservationEvent` through `action_id`. Use
+`tool_call_id` only as a checked fallback. When both the typed action and the
+serialized tool-call arguments exist, require them to agree.
+
+Create one assignment row only after a `create_assignment` action has a
+paired, non-error `GitHubMutationObservation` whose state is
+`assignment_created`. The contracts are in
+[`senpai_agent/github/tools/contracts.py`](senpai_agent/github/tools/contracts.py),
+and the executors are in
+[`senpai_agent/github/tools/advisor.py`](senpai_agent/github/tools/advisor.py).
+
+Use this private normalized row:
+
+```text
+assignment_id
+requested_at
+student
+category
+category_source
+status_at_cutoff
+terminal_at
+pr_number
+resource_url
+active_branch
+source_action_event_id
+source_observation_event_id
+```
+
+Apply these lifecycle rules:
+
+1. Key and deduplicate assignments by `assignment_id`. An idempotent replay
+   with `changed=false` is not a new experiment.
+2. Use the timestamp of the paired `create_assignment` action for
+   `requested_at`. A GitHub `createdAt` timestamp may replace it only after
+   the PR URL or number and trusted assignment marker match.
+3. Do not create another experiment point for feedback, routing repair, a
+   requested revision, result publication, or a submission retry. Attach those
+   events to the same assignment.
+4. Mark an assignment terminal only when a successful paired observation
+   reports `experiment_merged` or `experiment_closed` at or before the
+   cutoff. Otherwise mark it active at that cutoff.
+5. Do not apply the current GitHub state retrospectively to an earlier cutoff.
+   A merged assignment means that the task completed; it does not mean that the
+   experiment produced a scientific win.
+6. Join W&B runs through typed `ExperimentResult.runs[].run_id` values. Treat
+   runs as evidence for the logical assignment. Do not draw one point for each
+   arm, rung, retry, or replicate.
+
+### Record delegated-child requests separately
+
+Persistent-student assignments and delegated-child tasks are different work
+units. Do not mix their counts.
+
+Extract child requests from `spawn_agents`. Join action task specifications
+to `SpawnAgentsObservation.tasks` by `key`. If keys are absent, first
+require equal list lengths, then use the executor-defined list order. Deduplicate
+by the returned `task_id`.
+
+Retain these private fields:
+
+```text
+task_id
+parent_actor
+requested_at
+returned_at
+status_at_cutoff
+agent_type
+model_tier
+provider_model
+include_context
+category
+active_branch
+```
+
+The supported `agent_type` values are `general-purpose`, `explore`,
+`bash-runner`, `search_general_web`, and
+`search_research_publications`. The `model_tier` value is `fast`,
+`smart`, or `frontier`; it is a routing tier, not necessarily the provider
+model name. Read the exact provider model from the child's frozen
+`base_state.agent.llm.model`. Leave it unknown when that state is
+unavailable.
+
+Use the first terminal `finished`, `failed`, or `cancelled` state from a
+paired `await_agents`, `agent_status`, or `cancel_agents` observation.
+When only durable controller state proves termination, require its structured
+task ID and timestamp. A task with no terminal evidence before the cutoff
+remains active.
+
+The delegation schemas are in
+[`senpai_agent/delegation.py`](senpai_agent/delegation.py).
+[`tools/senpai_tool_telemetry.py`](tools/senpai_tool_telemetry.py) contains
+reusable patterns for recursive discovery, role and model inference, timestamp
+normalization, and tool pairing. It does not reconstruct branch membership,
+logical assignment lifecycles, or child task specifications, so running it
+alone does not produce this timeline.
+
+### Classify the primary research intent
+
+Assign exactly one category from the assignment's primary preregistered
+intervention. Display these one-line definitions below the chart legend:
+
+| Category | Definition |
+| --- | --- |
+| Diagnose / model | Measure, attribute, or predict a bottleneck without requiring a shipped mechanism. |
+| Kernel / runtime | Change executed kernels, dispatch, memory, or scheduling to remove cost. |
+| Policy / head | Change or price draft decisions or proposal-head/readout behavior. |
+| Validate / transfer | Reproduce, integrate, or test whether a result survives another base, host, or end-to-end path. |
+
+Use this deterministic resolution order:
+
+1. Evidence-only replication, transfer, exactness, or a ship gate with no new
+   mechanism is `validate_transfer`.
+2. A changed shipped policy, proposal head, or readout decision is
+   `policy_head`.
+3. A changed on-path kernel or runtime implementation is `kernel_runtime`.
+4. Measurement, ablation, screening, oracle analysis, attribution, or a cost
+   model is `diagnose_model`.
+5. Insufficient evidence is `unclassified`. Do not guess or send raw logs to
+   an external classifier.
+
+Store the ruleset version. Use a versioned assignment-ID override table for
+reviewed mixed cases, with one short rationale per override. Label category
+selection as deterministic interpretation, not provider-exact fact.
+
+### Join board and intervention events
+
+Keep external evaluation events on a separate Board lane. Join each event by
+an immutable receipt and candidate or source SHA. Preserve the evaluator's
+state and exact UTC timestamps for queue, rejection, cancellation, and
+promotion. Do not infer a board event from advisor prose, and do not reinterpret
+an evaluator's displayed percentage unless its definition supports that use.
+
+Add a harness or configuration marker only from a sourced UTC event and exact
+revision. Treat it as an annotation, not as proof of a causal effect. Never
+infer deployment time from the first later tool call.
+
+### Render the timeline
+
+Use one UTC axis over the requested window:
+
+- Draw one Board lane and one lane for every persistent student.
+- Draw one point per logical assignment at `requested_at`.
+- Use a circle when the assignment was terminal by the cutoff and a diamond
+  when it was active.
+- Use color only for the four research categories.
+- Put concise, approved assignment details and terminal state in the tooltip.
+- Draw external queue and terminal events on the Board lane.
+- Optionally shade the pre-intervention interval and draw a vertical
+  intervention marker.
+- Derive before/after category shares and per-student totals from the same
+  assignment rows so every count reconciles.
+- Put delegated-child requests in a separate strip or table. Show agent type,
+  model tier, provider model when known, request category, and terminal state.
+- Show requested and observed bounds and make every coverage gap visible.
+
+Publish only a sanitized derivative. Omit conversation IDs, event IDs,
+assignment IDs, task IDs, raw prompts, task bodies, subagent results, local
+paths, and unapproved PR identifiers. Treat every retained string as untrusted.
+Build browser labels with `textContent` or escape them before inserting HTML.
+
+### Validate before sharing
+
+Check every item:
+
+- Every actor has requested and observed coverage, including restart or
+  state-loss gaps.
+- Event IDs are unique, timestamps are valid UTC values, and action/observation
+  pairs are unambiguous.
+- Every assignment mark has a successful durable creation observation.
+- Assignment IDs and child task IDs are unique after deduplication.
+- Status is evaluated at the selected cutoff, with no future-state leakage.
+- Active-branch and proven off-branch counts are reported separately.
+- Every assignment has one category or fails explicitly as `unclassified`.
+- Lane points, category totals, status totals, before/after bars, and
+  per-student totals reconcile.
+- Model tier and provider model remain separate fields.
+- Board events join one-to-one to immutable evaluator receipts.
+- No raw prompts, tool output, credentials, or unapproved identifiers appear
+  in the shareable dataset or chart.
+- The approved secret scanner passes on the exact JSON, HTML, and Markdown
+  selected for sharing or Git staging.
+- Interactive charts have no browser errors, clipped labels, overlapping text,
+  or horizontal overflow in light and dark themes.
