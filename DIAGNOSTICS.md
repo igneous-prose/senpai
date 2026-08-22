@@ -4,11 +4,16 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-PackageName: senpai
 -->
 
-# Advisor context diagnostics
+# Senpai advisor diagnostics
 
-This guide explains how to reconstruct and plot a Senpai advisor's OpenHands
-context. It covers context composition, context growth, native compaction, and
-the parent-visible boundaries of delegated agents.
+This guide contains independent workflows for diagnosing a Senpai advisor.
+Sections 1 through 14 reconstruct and plot OpenHands context. Section 15
+measures advisor delegation and model use. Section 16 builds an advisor and
+student activity timeline. Use only the sections that answer the diagnostic
+question.
+
+The context workflow covers context composition, context growth, native
+compaction, and the parent-visible boundaries of delegated agents.
 
 The procedure does not depend on one Kubernetes cluster or storage layout. It
 requires a readable OpenHands conversation directory and, for exact Anthropic
@@ -918,7 +923,421 @@ The most consequential errors are:
 - hiding reset or storage-loss gaps;
 - publishing raw trace content or identifiers in the derived chart.
 
-## 15. Build an advisor and student activity timeline
+## 15. Analyze advisor delegation and model usage
+
+Use this workflow to determine whether a Senpai advisor delegated more work,
+whether it changed model tiers, and whether a change came from runtime
+availability or advisor behavior. It applies to deployments that retain W&B
+Weave spans and OpenHands conversation state. A Senpai delegation registry adds
+the most reliable task and parent-child evidence.
+
+### Define the units before counting
+
+Keep these quantities separate:
+
+| Quantity | Definition | Preferred evidence |
+| --- | --- | --- |
+| Delegation decision | One successful `spawn_agents` action | Paired OpenHands action and observation |
+| Requested child task | One task accepted by the delegation controller | One unique registry `task_id` |
+| Started child conversation | One child that reached `invoke_agent` | One root Weave `invoke_agent` span per child conversation |
+| Provider request | One model call inside a child conversation | Weave `chat` spans |
+| Requested model tier | The `fast`, `smart`, or `frontier` routing choice | Registry `tasks.model` or the spawn specification |
+| Observed provider model | The concrete model that served the child | Root Weave span `request_model` and frozen child state |
+| Recursive request | A task whose `parent_task_id` is not null | Registry task row |
+
+Do not call model requests, tool spans, or provider turns “delegated
+conversations.” Count each child conversation once by its root `invoke_agent`
+span or unique task ID. Keep the requested tier separate from the observed
+provider model. Read the tier-to-model mapping from the deployment revision;
+do not infer it from a model name.
+
+### Freeze matched comparison windows
+
+Record the rollout or intervention timestamp from a deployment record, commit,
+or controller event. Select equal-duration, non-overlapping UTC windows around
+it. Use half-open intervals so a boundary event belongs to only one window:
+
+```text
+pre  = [cutoff - duration, cutoff)
+post = [cutoff, cutoff + duration)
+```
+
+Record requested and observed coverage separately for the advisor, delegation
+registry, child state, and Weave. Mark pod replacement, missing storage,
+controller downtime, and trace-ingestion gaps. Never interpret a zero during an
+unobserved interval as zero delegation.
+
+For each window, calculate at least:
+
+- accepted task count and tasks per observed advisor hour;
+- successful spawn-decision count and mean tasks per decision;
+- requested tier counts and shares;
+- observed provider-model counts and shares;
+- recursive task count and share;
+- task start rate and terminal status counts at the selected cutoff;
+- `process_start_time - created_at` launch delay;
+- root-span duration and error rate; and
+- tasks present in only one source.
+
+Normalize by advisor turns or eligible decision events when those values are
+available. “Eligible” means a research-round plan, plateau pivot, large review,
+difficult optimization or debugging decision, conflicting-evidence review, or
+expensive portfolio choice. A busier research window can increase delegation
+without any policy change.
+
+### Use each source for what it proves
+
+Use the sources in this order:
+
+1. The read-only delegation registry proves accepted tasks, requested tiers,
+   task status, launch time, depth, and exact parent relationships.
+2. Paired OpenHands actions and observations prove advisor decisions, batch
+   size, and what the parent learned. They also expose failed tool calls that
+   created no task.
+3. Root Weave `invoke_agent` spans prove that a conversation reached the traced
+   agent runtime. They provide the observed provider model, duration, and trace
+   status.
+4. Child `chat` and tool spans explain work inside a conversation. They do not
+   add conversations to the count.
+
+Weave cannot observe a child that fails before the first traced agent call.
+OpenHands state can disappear with ephemeral storage. The registry and
+conversation logs can also outlive a missing Weave span. Report discrepancies;
+do not silently select the larger count.
+
+### Query Weave without exposing prompts
+
+The W&B Agents data plane is separate from ordinary Weave call queries. Query
+`/agents/spans/query` through `agent_spans_query`, and select root
+`invoke_agent` spans. Page until `total_count` is satisfied. The following
+example returns normalized metadata only and never prints message content or a
+raw span dump:
+
+```python
+import os
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+import weave
+from weave.trace_server.agents.types import AgentSpansQueryReq, Query
+
+
+def utc(name):
+    value = os.environ[name].replace("Z", "+00:00")
+    return datetime.fromisoformat(value).astimezone(timezone.utc)
+
+
+def equal(field, value):
+    return {"$eq": [{"$getField": field}, {"$literal": value}]}
+
+
+def normalized_time(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def root_invocations(client, agent_name, start, end):
+    query = Query.model_validate(
+        {
+            "$expr": {
+                "$and": [
+                    equal("agent_name", agent_name),
+                    equal("operation_name", "invoke_agent"),
+                ]
+            }
+        }
+    )
+    spans = []
+    offset = 0
+    while True:
+        page = client.server.agent_spans_query(
+            AgentSpansQueryReq(
+                project_id=client.project_id,
+                query=query,
+                include_details=False,
+                started_after=start,
+                started_before=end,
+                limit=1000,
+                offset=offset,
+            )
+        )
+        spans.extend(page.spans)
+        if not page.spans or len(spans) >= page.total_count:
+            break
+        offset += len(page.spans)
+
+    # Enforce the half-open interval locally, independent of endpoint behavior.
+    selected = []
+    for span in spans:
+        started_at = normalized_time(span.started_at)
+        if started_at is not None and start <= started_at < end:
+            selected.append(span)
+    return selected
+
+
+client = weave.init(
+    f"{os.environ['WANDB_ENTITY']}/{os.environ['WANDB_PROJECT']}",
+    settings={"print_call_link": False},
+)
+all_roots = root_invocations(
+    client,
+    os.environ.get("DIAG_AGENT_NAME", "advisor"),
+    utc("DIAG_START"),
+    utc("DIAG_END"),
+)
+
+child_ids = set(
+    Path(os.environ["DIAG_CHILD_CONVERSATION_IDS_PATH"]).read_text().splitlines()
+)
+conversations = {}
+for span in all_roots:
+    if span.conversation_id in child_ids:
+        conversations.setdefault(span.conversation_id, []).append(span)
+
+provider_models = Counter()
+error_conversations = 0
+for roots in conversations.values():
+    models = {root.request_model for root in roots if root.request_model}
+    if len(models) != 1:
+        raise ValueError(f"expected one provider model, got {len(models)}")
+    provider_models[next(iter(models))] += 1
+    error_conversations += any(root.status_code == "ERROR" for root in roots)
+
+print("conversations", len(conversations))
+print("provider_models", dict(provider_models))
+print("error_conversations", error_conversations)
+```
+
+Set `DIAG_CHILD_CONVERSATION_IDS_PATH` to a private newline-delimited file built
+from the registry and frozen child state. Do not commit it. Current Senpai
+versions derive a child's conversation ID from its task ID in
+`OpenHandsChildProcess`; verify that rule in the analyzed revision before using
+it. If no exact join is available, a local check for the stable delegated task
+prompt in `input_messages` can backfill old traces. Label that check as a
+heuristic, never print the matching content, and validate a sample against
+OpenHands state.
+
+Group by `request_model` only after selecting child root invocations. A query
+that counts all spans for a model will multiply long conversations by their
+number of model turns.
+
+When older OpenHands action files are unavailable, use Weave as a historical
+fallback for spawn decisions. Query spans with `agent_name=advisor`,
+`operation_name=execute_tool`, and `tool_name=spawn_agents`. A spawn span whose
+`conversation_id` is in the verified child-ID set is recursive. Parse only the
+task count and requested `model` values from `tool_call_arguments`, then discard
+the arguments. Count errors from structured status and result fields. This
+trace-observed count is weaker than a paired OpenHands action and observation,
+so label it separately.
+
+### Read the delegation registry without task text
+
+The registry normally lives at
+`<delegation-root-state>/delegation/tasks.sqlite3`. Open it in read-only mode.
+Do not select or print `task`, `result`, `error`, paths, task IDs, or
+conversation IDs when aggregate data is sufficient.
+
+```python
+import os
+import sqlite3
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+from statistics import median
+from urllib.parse import quote
+
+
+def timestamp(name):
+    value = os.environ[name].replace("Z", "+00:00")
+    return datetime.fromisoformat(value).astimezone(timezone.utc).timestamp()
+
+
+registry_path = Path(os.environ["SENPAI_DELEGATION_REGISTRY_PATH"])
+registry_uri = quote(str(registry_path.expanduser().resolve()), safe="/")
+database = sqlite3.connect(f"file:{registry_uri}?mode=ro", uri=True)
+database.row_factory = sqlite3.Row
+start = timestamp("DIAG_START")
+end = timestamp("DIAG_END")
+rows = database.execute(
+    """
+    SELECT parent_task_id, depth, model, status,
+           created_at, updated_at, process_start_time
+    FROM tasks
+    WHERE created_at >= ? AND created_at < ?
+    """,
+    (start, end),
+).fetchall()
+
+launch_delays = [
+    row["process_start_time"] - row["created_at"]
+    for row in rows
+    if row["process_start_time"] is not None and row["process_start_time"] < end
+]
+print("tasks", len(rows))
+print("requested_tiers", dict(Counter(row["model"] for row in rows)))
+print("current_statuses", dict(Counter(row["status"] for row in rows)))
+print("recursive", sum(row["parent_task_id"] is not None for row in rows))
+started = sum(
+    row["process_start_time"] is not None and row["process_start_time"] < end
+    for row in rows
+)
+print("start_rate", started / len(rows) if rows else None)
+print("median_launch_delay_s", median(launch_delays) if launch_delays else None)
+```
+
+Snapshot the live SQLite database with the SQLite backup API when a long query
+or transfer is necessary. Do not copy the main file without its write-ahead log
+while the controller is active. The example prints each task's current status.
+Do not back-project that value into an earlier cutoff. Use a registry snapshot
+captured at the cutoff or timestamped OpenHands terminal evidence.
+
+To count decisions and batch sizes, use the action-observation pairing rules in
+Section 16. Count only successful `spawn_agents` observations. Join returned
+task IDs to the registry, then discard task bodies and results. The registry's
+`parent_task_id` and `depth` fields provide the exact recursive split. Use the
+parent event time for the decision timestamp and the task `created_at` time for
+the controller-acceptance timestamp.
+
+### Reconcile before interpreting
+
+Build one private row per accepted task, then join its successful OpenHands
+spawn observation and Weave root span. Report these sets explicitly:
+
+```text
+registry task, successful spawn observation, root Weave span
+registry task, successful spawn observation, no root Weave span
+failed spawn action, no registry task, no root Weave span
+root Weave span, no retained registry or OpenHands record
+```
+
+The second set usually indicates a pre-trace launch failure, timeout before
+agent startup, or trace gap. The fourth usually indicates expired local state,
+an incorrect evidence window, or an incomplete conversation-ID join. Inspect
+aggregate status and timestamps first. Read raw text only when those fields do
+not resolve the discrepancy.
+
+For future exact joins, add these non-content attributes to the child root
+span: `task_id`, `tree_id`, `parent_task_id`, `depth`, `spawn_operation_key`,
+and `requested_model_tier`. Also retain `conversation_id` and the observed
+provider model. These fields let an analyst distinguish task creation from
+invocation start, identify pre-trace failures, and measure direct and recursive
+work without scanning prompts. Treat the identifiers as private even though
+they contain no task text.
+
+Use the following interpretation rules:
+
+| Evidence after a rollout | Most likely explanation |
+| --- | --- |
+| More uptime or start success, shorter launch delay, but stable decisions per eligible event | Operational improvement |
+| More successful spawn decisions, larger batches, or more recursion, with stable start success and duration | Advisor behavior change |
+| More eligible research events, but stable decisions per eligible event | Workload or opportunity mix |
+| Restored uptime and more decisions per eligible event | Mixed operational and behavior change |
+| Higher task count but stable Frontier share | More delegation, not a Frontier-specific selection shift |
+
+These are observational diagnoses, not randomized causal estimates. Compare the
+deployed code and prompt diff. Classify a change as operational only when it
+touches process launch, admission, concurrency, timeouts, recovery, storage, or
+telemetry. Classify guidance, skill visibility, delegation triggers, and
+model-selection requirements as behavior-policy changes.
+
+### Worked example: delegation-policy rollout
+
+One Senpai deployment supplied a useful mixed case. The rollout occurred at
+2026-08-21 18:07:30 UTC. A local stable-prompt check classified child root
+invocations without retaining or printing prompt content. Equal 24-hour
+windows produced:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Provider-observed child conversations | 10 | 50 |
+| Conversations served by Fable, the configured Frontier provider model | 2 | 11 |
+| Fable share | 20.0% | 22.0% |
+| Finished root invocations | 10/10 | 50/50 |
+| Root-invocation errors | 0 | 0 |
+| Median root duration | 623 seconds | 589 seconds |
+| 95th-percentile root duration | 1,182 seconds | 1,323 seconds |
+| Recursive spawn decisions | 1 | 8 |
+| Tasks requested by recursive decisions | 3 | 19 |
+
+The raw conversation count rose 5x. However, the before window contained 9
+hours, 37 minutes, and 30 seconds with no advisor delegation activity while an
+old pod was gone and its replacement was not ready. Dividing by observed active
+time changed the before rate to 10 / 14.375 = 0.70 conversations per hour and
+the after rate to 50 / 24 = 2.08 conversations per hour. The estimated rate
+change therefore fell from 5x to about 3x.
+
+Launch reliability was already 100% in the observed before sample. Median root
+duration improved by only about 5.5%, while the 95th percentile became slower.
+This result describes children that reached Weave; it cannot measure tasks that
+failed before their first traced agent call.
+
+The advisor already delegated before the rollout. The prompt-policy review
+compared revisions `97769de0` and `5a1ae8d0`. The two policy changes broadened
+the advisor's recurring delegation triggers and made a critique before a new
+research round or expensive portfolio explicit. They also required a deliberate
+model-tier choice and expanded the guidance available to delegation-capable
+children. The existing child skill-loading path did not change. These revisions
+did not change child launch, concurrency, timeouts, recovery, or Weave
+instrumentation. Fable's mapping to the Frontier tier came from deployment
+configuration, not these revisions.
+
+Recursive children made 16 more task requests after the rollout. That increase
+equals 40% of the net increase of 40 root conversations, although the registry
+must confirm exact one-to-one lineage. The remaining non-recursive increase was
+also large. The recursive task mix moved from three `smart` requests before the
+rollout to 16 `smart`, one `fast`, and two `frontier` requests after it. The
+strongest explanation is therefore a behavior-policy change, amplified by
+restored uptime and possibly by a different research-opportunity mix. The
+nearly flat Fable share shows that the increase was broad delegation rather
+than a material Frontier-specific shift. A two-sided Fisher exact test of 2/10
+against 11/50 gives `p = 1.0`; the small before sample provides no evidence of
+a conditional Fable-share change.
+
+The post-rollout registry contained 65 tasks created in the same requested
+window: 43 direct and 22 recursive; 32 requested `frontier`, 22 requested
+`smart`, and 11 requested `fast`. At collection time, 62 were finished and
+three had failed. Do not compare 65 registry tasks directly with 50 traced
+child conversations. The registry uses task-creation time, Weave uses
+invocation-start time, failed tasks can be absent from Weave, and the traces did
+not carry a durable task ID for an exact join. The before registry had already
+disappeared, so these registry values cannot establish a before-and-after tier
+change.
+
+The deployed image also advanced across more revisions than the two reviewed
+prompt-policy changes and started a fresh pod and conversation. Earlier bundled
+changes included provider retry and compaction work. Compare the exact before
+and after image SHAs before ruling out an operational contribution. The causal
+diagnosis is therefore mixed: there is direct evidence of more delegation
+decisions and recursion after the policy change, while restored uptime and
+possibly bundled runtime changes increased the opportunity to complete them.
+The retained data cannot assign a causal percentage to either component.
+
+### Validate before publishing
+
+Check every item:
+
+- The before and after windows have equal requested durations and one sourced
+  intervention timestamp.
+- Coverage gaps and observed advisor uptime are explicit.
+- Every child is counted once, from a task ID or root invocation.
+- Provider turns and tool spans are not counted as conversations.
+- Requested tier and observed provider model are separate.
+- Registry tasks, successful spawn observations, and root spans reconcile.
+- Pre-trace failures remain visible instead of disappearing from the rate.
+- Recursive tasks use `parent_task_id` or equivalent structured evidence.
+- Task rate is normalized by observed uptime and, when possible, eligible
+  advisor decision events.
+- The deployment diff distinguishes runtime changes from policy changes.
+- Conclusions use “consistent with” or “strongest explanation” unless the
+  deployment was randomized.
+- Published tables contain no prompts, task bodies, results, credentials,
+  conversation IDs, trace IDs, task IDs, or local paths.
+
+## 16. Build an advisor and student activity timeline
 
 This timeline shows when the advisor created logical experiment assignments,
 which persistent student received each assignment, what kind of work it
