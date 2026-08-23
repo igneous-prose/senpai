@@ -9,8 +9,8 @@ SPDX-PackageName: senpai
 This guide contains independent workflows for diagnosing a Senpai advisor.
 Sections 1 through 14 reconstruct and plot OpenHands context. Section 15
 measures advisor delegation and model use. Section 16 builds an advisor and
-student activity timeline. Use only the sections that answer the diagnostic
-question.
+student activity timeline. Section 17 measures end-to-end research iteration
+speed. Use only the sections that answer the diagnostic question.
 
 The context workflow covers context composition, context growth, native
 compaction, and the parent-visible boundaries of delegated agents.
@@ -1561,3 +1561,134 @@ Check every item:
   selected for sharing or Git staging.
 - Interactive charts have no browser errors, clipped labels, overlapping text,
   or horizontal overflow in light and dark themes.
+
+## 17. Measure research iteration speed
+
+Measure how quickly Senpai converts a hypothesis into durable evidence and,
+when configured, external evaluation feedback. Reuse the frozen OpenHands
+snapshots and action-observation pairing from Sections 1 through 3 and 16.
+
+The primary unit is one logical assignment and its terminal advisor decision.
+Do not treat model calls, tool calls, W&B runs, benchmark arms, retries, PR
+comments, or external submissions as interchangeable research iterations.
+
+### Normalize the lifecycle
+
+Build one private UTC event table from structured state rather than agent
+narration:
+
+| Event | Preferred evidence |
+| --- | --- |
+| Assignment created | Successful paired `create_assignment` observation |
+| Job launched or terminated | Persisted supervisor or monitor state |
+| Terminal signal delivered | Controller inbox event and delivery receipt |
+| Conversation resumed | First OpenHands response after delivery |
+| Result published | Successful paired `submit_experiment_result` observation |
+| Advisor decision | Successful merge, close, or revision observation |
+| W&B run started or finished | Run metadata joined through the typed result |
+| External submission changed state | Immutable evaluator receipt |
+| Frontier changed | Evaluator-reported promoted state |
+
+Retain immutable join keys privately: assignment and revision identity, PR
+number, commit SHA, run ID, training ID, monitor dedupe key, evaluator receipt,
+conversation ID, and source event IDs. Publish only sanitized aggregates.
+
+Keep these distinctions:
+
+- Replicates, retries, and arms belong to their logical assignment.
+- A W&B run is evidence, not necessarily a complete experiment.
+- Local and W&B metrics are not external or official scores.
+- A rejected external result can still be a valid scientific iteration.
+- Current PR, run, or evaluator state must not be projected backward.
+
+For wake diagnostics, retain each available boundary separately:
+
+```text
+job_terminal_at
+monitor_signal_created_at
+signal_delivered_at
+conversation_resumed_at
+first_relevant_action_at
+result_published_at
+```
+
+These timestamps separate monitor polling, controller delivery, model response,
+and scientific follow-up. Do not infer them from log-line order when structured
+timestamps exist.
+
+### Compare fair pre/post windows
+
+Source the intervention from the deployment or fresh conversation that
+actually loaded the change. A commit timestamp alone is insufficient. Use a
+deployment band when rollout took time.
+
+Choose equal, non-overlapping half-open windows:
+
+```text
+pre  = [cutoff - duration, cutoff)
+post = [cutoff, cutoff + duration)
+```
+
+For a live post window, stop at the latest common observed timestamp and give
+the pre window the same duration. Record coverage for the advisor, students,
+controller, GitHub, W&B, and any external evaluator. Normalize rates by
+observed hours. Report active or inherited cycles that cross a boundary rather
+than silently excluding them.
+
+Record concurrent changes in model, reasoning effort, prompt, hardware,
+student count, evaluator availability, queue policy, and research baseline.
+
+### Calculate speed and outcome together
+
+| Measure | Definition |
+| --- | --- |
+| Assignment throughput | Logical assignments created per observed advisor hour |
+| Evidence throughput | Assignments with terminal evidence per observed hour |
+| Decision throughput | Merge, close, or revision decisions per observed hour |
+| Assignment cycle | Assignment creation to terminal advisor decision |
+| Experiment time | Assignment creation to result publication |
+| Review latency | Result publication to terminal advisor decision |
+| Wake latency | Monitor signal creation to resumed conversation |
+| Reaction latency | Signal delivery to first relevant action |
+| Submission cadence | Submissions per evaluator-available hour and consecutive interval |
+| Controllable handoff | Previous external terminal result to next queue time |
+| Evaluator service | Queue time to terminal evaluator result |
+| Merge or promotion rate | Positive outcomes divided by terminal decisions |
+| Progress | Best official metric and gap to the promoted frontier |
+
+Report counts, medians, and 90th percentiles. For OpenHands, also report model
+calls, input tokens, model-visible tool-output bytes, compactions, FinishActions,
+and response gaps per terminal decision. These measure coordination overhead,
+not scientific output.
+
+Keep evaluator service time separate from controllable handoff. A serialized
+evaluator can dominate the submission interval even when Senpai reacts quickly.
+
+### Draw and verify the charts
+
+Use three coordinated views:
+
+1. A production-feedback timeline with one mark per external submission,
+   official metric, terminal state, best-so-far line, and intervention band.
+2. An equal-window comparison of assignment, evidence, decision, merge, W&B,
+   and submission counts or rates. Show raw counts and observed hours.
+3. A latency view for assignment-to-result, result-to-decision,
+   terminal-job-to-action, controllable handoff, evaluator service, and model
+   response-tail percentiles.
+
+Add advisor and student lanes only when concurrency or idle capacity is the
+question. Derive every panel from the same normalized rows so totals reconcile.
+Use UTC axes. Mark local, W&B-only, and external evidence distinctly. State
+whether higher or lower is better for every measure.
+
+For responsive HTML, verify approximately 360, 736, and 1,024 pixels in light
+and dark themes. Check legends, tooltips, intervention annotations, clipped or
+overlapping labels, horizontal overflow, and browser errors. Build untrusted
+labels with `textContent` and embed only sanitized data.
+
+Interpret a speedup with its scientific yield. Pair cycle-time and submission
+claims with validity gates, merge rate, promotion rate, official progress, and
+frontier gap. Disclose small samples, censored work, inherited candidates,
+coverage gaps, evaluator availability, and time-of-day effects. Unless the
+intervention was randomized, describe the result as consistent with the
+deployed change rather than proven causal.
