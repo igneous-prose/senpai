@@ -107,39 +107,22 @@ def fetch_github_refs(
             fetched = {
                 destination: resolved[source] for source, destination in refs
             }
-            target_keep: Path | None = None
-            remove_keep = False
             if incoming_pack.exists():
                 staging = temporary / "staging.git"
-                pack_hash = _index_pack(incoming_pack, staging)
+                _index_pack(incoming_pack, staging)
                 for object_id in fetched.values():
                     if not _object_exists(staging, object_id, commit=True):
                         raise RuntimeError(
                             f"GitHub pack omitted commit {object_id}"
                         )
-                target_keep = (
-                    git_directory
-                    / "objects"
-                    / "pack"
-                    / f"pack-{pack_hash}.keep"
-                )
-                remove_keep = not target_keep.exists() or (
-                    target_keep.read_bytes() == b"senpai-ref-sync\n"
-                )
                 _import_pack(staging / "objects", git_directory / "objects")
             for object_id in fetched.values():
                 if not _object_exists(git_directory, object_id, commit=True):
                     raise RuntimeError(
                         f"GitHub object {object_id} is not an available commit"
                     )
-            try:
-                _update_refs(git_directory, fetched)
-            except BaseException:
-                remove_keep = False
-                raise
-            finally:
-                if remove_keep and target_keep is not None:
-                    target_keep.unlink(missing_ok=True)
+            _update_refs(git_directory, fetched)
+            _remove_senpai_keep_files(git_directory / "objects" / "pack")
             return fetched
 
 
@@ -328,6 +311,15 @@ def _copy_object(source: Path, destination: Path) -> None:
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _remove_senpai_keep_files(pack_directory: Path) -> None:
+    for path in pack_directory.glob("pack-*.keep"):
+        try:
+            if path.read_bytes() == b"senpai-ref-sync\n":
+                path.unlink()
+        except FileNotFoundError:
+            continue
 
 
 def _update_refs(git_directory: Path, refs: dict[str, str]) -> None:

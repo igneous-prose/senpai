@@ -249,6 +249,64 @@ def test_invalid_pack_leaves_refs_and_the_object_store_unchanged(
     assert after == before
 
 
+def test_successful_retry_removes_a_keep_left_by_a_failed_ref_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    _remote, seed, workspace = repositories(tmp_path)
+    common = Path(
+        git(
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            cwd=workspace,
+        )
+    )
+    monkeypatch.setattr(
+        "senpai_agent.git_refs.download_github_pack",
+        pack_downloader(seed),
+    )
+    from senpai_agent import git_refs
+
+    update_refs = git_refs._update_refs
+    attempts = 0
+
+    def fail_once(git_directory, refs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("simulated ref transaction failure")
+        update_refs(git_directory, refs)
+
+    monkeypatch.setattr("senpai_agent.git_refs._update_refs", fail_once)
+
+    with pytest.raises(RuntimeError, match="simulated"):
+        sync_github_branches(
+            workspace,
+            repo="acme/widgets",
+            token=SecretStr("typed-token"),
+            branches=("student/candidate",),
+        )
+
+    pack_directory = common / "objects" / "pack"
+    keeps = tuple(pack_directory.glob("pack-*.keep"))
+    assert len(keeps) == 1
+    assert keeps[0].read_bytes() == b"senpai-ref-sync\n"
+
+    sync_github_branches(
+        workspace,
+        repo="acme/widgets",
+        token=SecretStr("typed-token"),
+        branches=("student/candidate",),
+    )
+
+    assert attempts == 2
+    assert not tuple(pack_directory.glob("pack-*.keep"))
+    assert git(
+        "rev-parse", "refs/remotes/origin/student/candidate", cwd=workspace
+    ) == git("rev-parse", "student/candidate", cwd=seed)
+
+
 @pytest.mark.parametrize(
     ("source", "destination"),
     (
