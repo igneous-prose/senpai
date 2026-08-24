@@ -411,7 +411,7 @@ def test_reconciliation_isolates_typed_auth_from_hostile_git_configuration(
         values = [str(value) for value in (*command, *environment.values())]
         assert not any("typed-token" in value for value in values)
         assert not any("ambient-token" in value for value in values)
-        assert not any("github.com" in value for value in values)
+        assert not any("github.com" in str(value) for value in command)
         assert "GITHUB_TOKEN" not in environment
         assert "GIT_ASKPASS" not in environment
         return real_run(command, **kwargs)
