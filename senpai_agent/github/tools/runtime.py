@@ -259,13 +259,18 @@ def configured_student_names(value: Sequence[str] | str | None) -> frozenset[str
     return frozenset(name for item in items if (name := item.strip()))
 
 
-def tool_annotations(title: str, *, read_only: bool = False) -> ToolAnnotations:
+def tool_annotations(
+    title: str,
+    *,
+    read_only: bool = False,
+    destructive: bool | None = None,
+) -> ToolAnnotations:
     """Describe one GitHub tool's side-effect contract."""
 
     return ToolAnnotations(
         title=title,
         readOnlyHint=read_only,
-        destructiveHint=not read_only,
+        destructiveHint=not read_only if destructive is None else destructive,
         idempotentHint=True,
         openWorldHint=True,
     )

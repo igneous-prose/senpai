@@ -360,6 +360,7 @@ Assignment-scoped advisor and student operations share this object:
 
 | Tool | Role | Input beyond the shared `assignment` object |
 |---|---|---|
+| `sync_git_refs` | advisor or student | one to 32 exact branch names from the configured repository |
 | `create_assignment` | advisor | `assignment_id`, `revision_id`, `student`, `expected_base_sha`, `head_branch`, `title`, `body`; the base is the configured advisor branch |
 | `publish_advisor_branch` | advisor | `remote_branch_sha_before_push`, `local_commit_sha` |
 | `repair_assignment_routing` | advisor | `working_state` (`wip` or `review`) and a `blockers` list containing only `blocked`, `hold`, or `needs-rebase` |
@@ -688,6 +689,19 @@ model-facing tool schemas, and agent terminal contain no GitHub token.
 Generic child processes receive no GitHub token and no GitHub tools. Main-role
 GitHub operations remain typed and lease/state guarded. Terminal and hook
 policies are behavioral guardrails, not a credential-containment boundary.
+
+`sync_git_refs` gives both main roles authenticated read access without making
+the token available to their terminals. It fetches only named branches from the
+runtime-bound GitHub repository through fixed-host Git protocol v2 in the
+trusted controller process. It writes only the credential-free pack response to
+temporary storage. An offline Git child validates that self-contained pack in a
+temporary bare repository without receiving the token, authorization header,
+network URL, or inherited descriptor. Under a common-Git-directory lock, the
+controller imports the content-addressed pack and installs direct
+`refs/remotes/origin/` refs in one no-dereference transaction. The operation
+does not trust the target checkout's remote URL, credential helper, proxy,
+redirect, hooks, or Git configuration, and it does not change HEAD, the current
+branch, index, worktree, tags, remotes, or credentials.
 
 `custom_secret_env_names` is an explicit, shared list of additional
 environment-variable names. Names must be unique and match

@@ -23,7 +23,9 @@ Read the current baseline and `program.md`, then write one complete assignment:
 - commands, run limits, metrics, and stopping conditions; and
 - one student, one branch, and one experiment.
 
-Fetch the configured advisor branch and record its exact remote SHA. Call
+Call `sync_git_refs` with the configured advisor branch, then record the exact
+SHA it returns for that branch. The tool installs that commit at
+`refs/remotes/origin/<advisor-branch>`. Call
 `create_assignment` with this operation-specific payload; the runtime supplies
 and enforces the configured advisor branch and student allowlist:
 
@@ -45,5 +47,5 @@ adds the exact routing labels, embeds the typed assignment marker, verifies the
 result, and rejects a second active assignment for the student.
 
 Do not create the branch, PR, labels, or assignment marker through shell
-commands. If the tool reports stale state, refresh the named SHA and
+commands. If the tool reports stale state, sync the branch again and
 re-evaluate rather than bypassing the precondition.

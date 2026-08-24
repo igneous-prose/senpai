@@ -34,6 +34,11 @@ from .pull_requests import (
     GetPRsTool,
     PRManifestObservation,
 )
+from .ref_sync import (
+    SyncGitRefsAction,
+    SyncGitRefsObservation,
+    SyncGitRefsTool,
+)
 from .runtime import (
     GitHubCredentials,
     GitHubToolRuntime,
@@ -74,6 +79,9 @@ __all__ = (
     "SendAssignmentFeedbackTool",
     "SubmitExperimentResultAction",
     "SubmitExperimentResultTool",
+    "SyncGitRefsAction",
+    "SyncGitRefsObservation",
+    "SyncGitRefsTool",
     "clear_github_credentials",
     "configure_github_credentials",
 )

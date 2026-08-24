@@ -20,6 +20,7 @@ from senpai_agent.github.tools import (
     SendAssignmentFeedbackTool,
     SubmitExperimentResultAction,
     SubmitExperimentResultTool,
+    SyncGitRefsTool,
 )
 
 
@@ -63,6 +64,7 @@ EXPECTED_FIELDS = {
         "remote_branch_sha_before_push",
         "result",
     },
+    "sync_git_refs": {"branches"},
 }
 
 OPTIONAL_FIELDS = {
@@ -93,6 +95,7 @@ def github_tools(tmp_path: Path):
         CloseExperimentTool,
         RespondToHumanIssueTool,
         SubmitExperimentResultTool,
+        SyncGitRefsTool,
     )
     return [tool_type.create(runtime)[0] for tool_type in tool_types]
 
