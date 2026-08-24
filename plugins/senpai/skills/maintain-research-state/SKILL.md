@@ -37,11 +37,8 @@ Maintain these advisor-owned artifacts:
 - Save rigorous dataset analysis and durable future dataset insights in
   `research/DATASET_ANALYSIS.md`.
 
-Commit only advisor-owned changes. First call `sync_git_refs` for the configured
-advisor branch. Reconcile the local branch with the returned
-SHA at `refs/remotes/origin/<advisor-branch>` without discarding either remote
-merges or local work. Do not publish a local commit that omits the returned
-remote SHA. Then call `publish_advisor_branch` with that remote SHA as the lease:
+Commit only advisor-owned changes. Read the current remote advisor-branch SHA
+and the local commit SHA, then call `publish_advisor_branch`:
 
 ```json
 {

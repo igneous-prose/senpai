@@ -25,7 +25,6 @@ from .definitions import (
     SubmitExperimentResultTool,
 )
 from .pull_requests import GetPRsAction, GetPRsObservation, GetPRsTool
-from .ref_sync import SyncGitRefsTool
 from .runtime import (
     GitHubToolRuntime,
     configured_student_names,
@@ -100,7 +99,6 @@ class GitHubWorkflowToolSet(
                 state_dir=state_dir,
                 workspace=workspace,
             ),
-            *SyncGitRefsTool.create(runtime),
             *RespondToHumanIssueTool.create(runtime),
         )
         if role == "student":
