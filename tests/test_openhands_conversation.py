@@ -1292,7 +1292,6 @@ def test_runtime_credentials_remain_configured_through_lazy_tool_initialization(
             "post_assignment_comment",
             "respond_to_human_issue",
             "submit_experiment_result",
-            "sync_git_refs",
         },
         "spawn_agents": {"spawn_agents"},
     }

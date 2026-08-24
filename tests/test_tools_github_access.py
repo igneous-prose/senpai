@@ -16,8 +16,6 @@ from senpai_agent.github.tools import (
     GitHubWorkflowToolSet,
     RespondToHumanIssueAction,
     RespondToHumanIssueTool,
-    SyncGitRefsAction,
-    SyncGitRefsTool,
     clear_github_credentials,
     configure_github_credentials,
 )
@@ -36,14 +34,12 @@ ADVISOR_GITHUB_TOOLS = {
     "accept_result_on_current_base",
     "merge_experiment",
     "close_experiment",
-    "sync_git_refs",
 }
 STUDENT_GITHUB_TOOLS = {
     "get_prs",
     "post_assignment_comment",
     "respond_to_human_issue",
     "submit_experiment_result",
-    "sync_git_refs",
 }
 
 
@@ -55,8 +51,6 @@ def test_github_tools_package_preserves_public_contract_types():
         "GitHubCredentials",
         "PostAssignmentCommentAction",
         "PostAssignmentCommentTool",
-        "SyncGitRefsAction",
-        "SyncGitRefsTool",
     }
 
     assert expected <= set(github_tools_module.__all__)
@@ -168,50 +162,6 @@ def test_both_roles_can_respond_to_a_verified_human_message(
             },
         )
     ]
-
-
-@pytest.mark.parametrize("role", ["advisor", "student"])
-def test_both_roles_can_sync_named_refs_without_receiving_the_token(
-    monkeypatch: pytest.MonkeyPatch,
-    role: str,
-    tmp_path: Path,
-):
-    calls = []
-
-    def sync(workspace, *, repo, token, branches):
-        calls.append((workspace, repo, token, branches))
-        return {branch: str(index) * 40 for index, branch in enumerate(branches, 1)}
-
-    monkeypatch.setattr(
-        "senpai_agent.github.tools.ref_sync.sync_github_branches",
-        sync,
-    )
-    runtime = GitHubToolRuntime(
-        workflow=SimpleNamespace(repo="acme/widgets"),
-        workspace=tmp_path,
-        git_token=SecretStr("github-secret"),
-        role=role,
-        advisor_branch="advisor-branch" if role == "advisor" else None,
-        student_names=frozenset({"student-one"}) if role == "advisor" else frozenset(),
-        student_name="student-one" if role == "student" else None,
-    )
-
-    observation = SyncGitRefsTool.create(runtime)[0](
-        SyncGitRefsAction(branches=("advisor-branch", "student-one/experiment"))
-    )
-
-    assert observation.refs == {
-        "advisor-branch": "1" * 40,
-        "student-one/experiment": "2" * 40,
-    }
-    assert calls[0][0] == tmp_path
-    assert calls[0][1] == "acme/widgets"
-    assert calls[0][2].get_secret_value() == "github-secret"
-    assert calls[0][3] == ("advisor-branch", "student-one/experiment")
-    assert "github-secret" not in repr(observation)
-    tool = SyncGitRefsTool.create(runtime)[0]
-    assert tool.annotations.readOnlyHint is False
-    assert tool.annotations.destructiveHint is False
 
 
 def test_get_prs_is_scoped_to_the_configured_repo_and_credential(tmp_path: Path):
