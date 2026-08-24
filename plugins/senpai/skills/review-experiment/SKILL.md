@@ -107,6 +107,11 @@ still answer the assigned question with one bounded correction.
 
 ## Record the outcome
 
+After a merge, call `sync_git_refs` for the configured advisor branch and
+integrate the returned `refs/remotes/origin/<advisor-branch>` before editing or
+publishing advisor-owned records. This makes the merged commit available
+locally without exposing GitHub credentials.
+
 Update the baseline or research log in the format prescribed by `program.md`, including the PR, metrics, run IDs and links, reproduction command, and conclusion. Commit that advisor-owned change and publish it only through:
 
 ```json

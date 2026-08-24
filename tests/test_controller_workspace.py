@@ -1,12 +1,9 @@
-import base64
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
 from pydantic import SecretStr
 
-from senpai_agent.git_workflow import git_process_env
 from senpai_agent.mailbox import ControllerEvent
 from senpai_agent.workspace import StudentWorkspaceReconciler, WorkspaceDivergence
 
@@ -375,67 +372,48 @@ def test_reconciliation_isolates_typed_auth_from_hostile_git_configuration(
     system_config.write_text(
         "[http]\n\tproxy = http://attacker.invalid:8080\n"
     )
-    github_remote = "https://github.com/acme/widgets.git"
+    fetched = {
+        "refs/heads/student/candidate": git(
+            "--git-dir",
+            str(remote),
+            "rev-parse",
+            "refs/heads/student/candidate",
+        ),
+        "refs/heads/research": git(
+            "--git-dir",
+            str(remote),
+            "rev-parse",
+            "refs/heads/research",
+        ),
+    }
+
+    def controller_download(
+        *,
+        repo,
+        token,
+        sources,
+        destination,
+        object_exists,
+    ):
+        assert repo == "acme/widgets"
+        assert token == SecretStr("typed-token")
+        assert all(object_exists(fetched[source]) for source in sources)
+        assert not destination.exists()
+        return {source: fetched[source] for source in sources}
+
+    monkeypatch.setattr(
+        "senpai_agent.git_refs.download_github_pack",
+        controller_download,
+    )
 
     def guarded_run(command, **kwargs):
-        env = kwargs["env"]
-        assert "typed-token" not in command
-        assert "ambient-token" not in env.values()
-        assert "GITHUB_TOKEN" not in env
-        if github_remote in command:
-            assert Path(kwargs["cwd"]) != workspace
-            assert Path(kwargs["cwd"]).name == "objects.git"
-            assert env["GIT_ALLOW_PROTOCOL"] == "https"
-            assert env["GIT_CONFIG_GLOBAL"] == os.devnull
-            assert env["GIT_CONFIG_SYSTEM"] == os.devnull
-            assert env["GIT_CONFIG_NOSYSTEM"] == "1"
-            assert "HTTPS_PROXY" not in env
-            assert "GIT_SSL_NO_VERIFY" not in env
-            configuration = {
-                env[f"GIT_CONFIG_KEY_{index}"]: env[f"GIT_CONFIG_VALUE_{index}"]
-                for index in range(int(env["GIT_CONFIG_COUNT"]))
-            }
-            assert configuration["credential.helper"] == ""
-            assert configuration["http.proxy"] == ""
-            assert configuration["http.https://github.com/.proxy"] == ""
-            assert configuration["http.sslVerify"] == "true"
-            assert configuration["http.https://github.com/.sslVerify"] == "true"
-            assert configuration["http.followRedirects"] == "false"
-            assert (
-                configuration["http.https://github.com/.followRedirects"]
-                == "false"
-            )
-            assert configuration["http.extraHeader"] == ""
-            encoded = configuration[
-                "http.https://github.com/.extraHeader"
-            ].removeprefix(
-                "Authorization: Basic "
-            )
-            assert base64.b64decode(encoded).decode() == (
-                "x-access-token:typed-token"
-            )
-            command = [*command]
-            command[command.index(github_remote)] = str(remote)
-            replacement_environment = git_process_env(None)
-            for name in tuple(replacement_environment):
-                if name.startswith("GIT_"):
-                    replacement_environment.pop(name)
-            replacement_environment.update(
-                {
-                    "GIT_ALLOW_PROTOCOL": "file",
-                    "GIT_CONFIG_GLOBAL": os.devnull,
-                    "GIT_CONFIG_NOSYSTEM": "1",
-                    "GIT_CONFIG_SYSTEM": os.devnull,
-                }
-            )
-            kwargs["env"] = replacement_environment
-        elif command[1] == "fetch":
-            assert Path(kwargs["cwd"]) == workspace
-            assert env["GIT_ALLOW_PROTOCOL"] == "file"
-            assert any(argument.endswith("/objects.git") for argument in command)
-            assert not any("Authorization:" in value for value in env.values())
-        else:
-            assert not any("typed-token" in value for value in env.values())
+        environment = kwargs.get("env", {})
+        values = [str(value) for value in (*command, *environment.values())]
+        assert not any("typed-token" in value for value in values)
+        assert not any("ambient-token" in value for value in values)
+        assert not any("github.com" in value for value in values)
+        assert "GITHUB_TOKEN" not in environment
+        assert "GIT_ASKPASS" not in environment
         return real_run(command, **kwargs)
 
     monkeypatch.setattr("senpai_agent.workspace.subprocess.run", guarded_run)

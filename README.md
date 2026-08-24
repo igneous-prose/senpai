@@ -251,6 +251,10 @@ new feedback still do.
 
 `get_prs` returns complete PR bodies and discussions. Up to five PRs are returned in context by default; larger selections become a Markdown artifact outside the target checkout so long histories do not pollute the main conversation.
 
+`sync_git_refs` lets either main role hydrate named base or peer branches into
+`refs/remotes/origin/` through the controller-held credential. It never exposes
+the token to the model-facing terminal and never changes the active checkout.
+
 ## Long-running training and monitoring
 
 Students do not start GPU work, stream logs, sleep, or poll through the terminal. Four typed tools make training a durable controller operation:
